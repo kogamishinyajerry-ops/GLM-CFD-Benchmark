@@ -1,0 +1,48 @@
+id: flat_plate_su2
+name: Flat Plate (SU2 Verification)
+category: verification
+description: "Flat plate verification case for SU2 solver, laminar boundary layer."
+physics:
+  flow: incompressible
+  turbulence: none
+  dimensionality: 2d
+  steady: true
+conditions:
+  reynolds: 1000000.0
+  mach: 0.3
+  alpha_deg: 0.0
+geometry:
+  type: external
+  source: null
+mesh:
+  family: structured_hex
+  levels: ["single"]
+  target_y_plus: 1.0
+solvers:
+  - name: su2
+    command: "SU2_CFD {{ run_dir }}/case/{{ case_id }}.cfg"
+    timeout_sec: null
+    steps:
+      - name: solve
+        command: "SU2_CFD {{ run_dir }}/case/{{ case_id }}.cfg"
+        timeout_sec: 600
+        critical: true
+    parameters:
+      mach: 0.3
+      reynolds: 1000000.0
+      aoa: 0.0
+outputs:
+  fields: ["U", "p"]
+  curves: []
+  qoi:
+    - skin_friction_coeff
+reference:
+  type: analytical
+  qoi_values:
+    skin_friction_coeff: 0.00133
+metrics:
+  qoi_relative_tolerance:
+    skin_friction_coeff: 0.1
+budget:
+  max_runtime_sec: 900
+  max_cells: null

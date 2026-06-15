@@ -44,6 +44,15 @@ class MetricsEngine:
         """
         notes: list[str] = []
 
+        # P1-a: dry_run mode — skip QoI checks
+        if run_result.skipped_commands is not None:
+            return MetricsResult(
+                qoi_relative_errors={},
+                qoi_pass=True,
+                overall_status="dry_run",
+                notes=["dry-run mode: QoI check skipped"],
+            )
+
         # 1. If run failed, return fail immediately
         if run_result.exit_code != 0:
             notes.append(f"run exited with code {run_result.exit_code}")

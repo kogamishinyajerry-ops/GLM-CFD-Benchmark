@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -83,6 +83,33 @@ class MeshSpec(BaseModel):
     """Target y+ value (first cell height reference)."""
 
 
+class CommandStep(BaseModel):
+    """Single step command in a multi-step sequence.
+
+    Used for solvers that require multiple commands:
+    blockMesh → decomposePar → simpleFoam → reconstructPar
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    """Step name (e.g. 'block_mesh', 'solve', 'reconstruct'). Used in logs and manifest."""
+
+    command: str
+    """Jinja2 command template. Same variables as SolverConfig.command:
+    {{ case_id }}, {{ solver }}, {{ mesh_level }}, {{ case_dir }}, {{ run_dir }}."""
+
+    timeout_sec: int | None = Field(None, gt=0)
+    """Timeout for this step in seconds. None = no timeout."""
+
+    critical: bool = True
+    """Whether this step is critical.
+    True = failure of this step fails the entire run.
+    False = failure is logged as warning, subsequent steps continue.
+    (In P1-a dry_run mode this field has no behavioral effect — all steps skipped.
+    Takes effect in P1-b real execution.)"""
+
+
 class SolverConfig(BaseModel):
     """Configuration for a single solver."""
 
@@ -99,6 +126,20 @@ class SolverConfig(BaseModel):
 
     timeout_sec: int | None = Field(None, gt=0)
     """Timeout in seconds. None means no timeout."""
+
+    steps: list[CommandStep] | None = None
+    """Multi-step command sequence (P1-a).
+
+    - If provided, adapter executes steps in order (real mode) or records them
+      to skipped_commands (dry_run mode).
+    - If None, adapter falls back to single-command mode (P0 behavior unchanged).
+    - OpenFOAM/SU2 adapters use steps; generic_command adapter continues using command.
+    """
+
+    parameters: dict[str, Any] | None = None
+    """Arbitrary solver-specific parameters injected into Jinja2 template context.
+    Used by SU2 adapter for CFG template variables (mach, reynolds, aoa, etc.)
+    and can be reused by other adapters."""
 
 
 class OutputSpec(BaseModel):
@@ -254,8 +295,8 @@ class RunManifest(BaseModel):
     backend: Literal["local", "docker", "slurm"] = "local"
     """Execution backend."""
 
-    status: Literal["success", "failed", "timeout"]
-    """Run status."""
+    status: Literal["success", "failed", "timeout", "dry_run"]
+    """Run status. P1-a adds 'dry_run' enum value."""
 
     timing: TimingSpec
     """Run timing information."""
@@ -277,6 +318,11 @@ class RunManifest(BaseModel):
 
     cli_args: dict[str, str] | None = None
     """Original CLI arguments for reproducibility."""
+
+    dry_run_skipped_commands: list[str] | None = None
+    """Commands that would have been executed but were skipped in dry_run mode.
+    Each element is the fully-rendered command string.
+    None when not in dry_run mode."""
 
 
 class MetricsResult(BaseModel):

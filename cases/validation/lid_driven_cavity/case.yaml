@@ -1,0 +1,50 @@
+id: lid_driven_cavity
+name: Lid-Driven Cavity (Re=100)
+category: validation
+description: "Classic lid-driven cavity benchmark, OpenFOAM icoFoam, laminar Re=100."
+physics:
+  flow: incompressible
+  turbulence: none
+  dimensionality: 2d
+  steady: false
+conditions:
+  reynolds: 100.0
+geometry:
+  type: internal
+  source: null
+mesh:
+  family: structured_hex
+  levels: ["single"]
+  target_y_plus: null
+solvers:
+  - name: openfoam
+    command: "icoFoam"
+    timeout_sec: null
+    steps:
+      - name: block_mesh
+        command: "blockMesh -case {{ run_dir }}/case"
+        timeout_sec: 60
+        critical: true
+      - name: solve
+        command: "icoFoam -case {{ run_dir }}/case"
+        timeout_sec: 300
+        critical: true
+    parameters:
+      nu: 0.01
+      end_time: 0.5
+      delta_t: 0.005
+outputs:
+  fields: ["U", "p"]
+  curves: []
+  qoi:
+    - centerline_umax
+reference:
+  type: dns
+  qoi_values:
+    centerline_umax: 0.375
+metrics:
+  qoi_relative_tolerance:
+    centerline_umax: 0.05
+budget:
+  max_runtime_sec: 600
+  max_cells: null

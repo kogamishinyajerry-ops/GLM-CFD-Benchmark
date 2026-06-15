@@ -103,6 +103,13 @@ def run(
         bool,
         typer.Option("--report", help="Generate HTML report after run."),
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Render templates and generate case dir, but do not execute solver.",
+        ),
+    ] = False,
 ) -> None:
     """Run a specified case with a given solver and backend."""
     from cfdb.core.runner import Runner
@@ -116,6 +123,8 @@ def run(
         "solver": solver,
         "backend": backend,
     }
+    if dry_run:
+        cli_args["dry_run"] = "true"
 
     manifest = runner.execute(
         case_id=case,
@@ -123,6 +132,7 @@ def run(
         backend=backend,
         generate_report=report,
         cli_args=cli_args,
+        dry_run=dry_run,
     )
 
     typer.echo("=" * 60)
@@ -132,11 +142,17 @@ def run(
     typer.echo(f"Backend:   {manifest.backend}")
     typer.echo(f"Status:    {manifest.status}")
     typer.echo(f"Wall Time: {manifest.timing.wall_time_sec:.3f}s")
+    if manifest.dry_run_skipped_commands:
+        typer.echo(
+            f"[DRY-RUN] Skipped {len(manifest.dry_run_skipped_commands)} command(s):"
+        )
+        for i, cmd in enumerate(manifest.dry_run_skipped_commands, 1):
+            typer.echo(f"  [{i}] {cmd}")
     if manifest.error:
         typer.echo(f"Error:     {manifest.error}", err=True)
     typer.echo("=" * 60)
 
-    raise typer.Exit(code=0 if manifest.status == "success" else 1)
+    raise typer.Exit(code=0 if manifest.status in ("success", "dry_run") else 1)
 
 
 @app.command("report")

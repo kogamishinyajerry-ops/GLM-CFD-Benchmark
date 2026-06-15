@@ -54,6 +54,7 @@ class Runner:
         backend: str = "local",
         generate_report: bool = False,
         cli_args: dict[str, str] | None = None,
+        dry_run: bool = False,
     ) -> RunManifest:
         """Execute a complete case run.
 
@@ -63,6 +64,7 @@ class Runner:
             backend: Execution backend name.
             generate_report: If True, generate HTML report after run.
             cli_args: Original CLI arguments for reproducibility.
+            dry_run: If True, skip solver execution and return synthetic result.
 
         Returns:
             RunManifest with the run result.
@@ -73,7 +75,7 @@ class Runner:
         run_id = generate_run_id(case_id, solver)
         run_dir = self._runs_root / run_id
 
-        adapter = get_adapter(solver)
+        adapter = get_adapter(solver, dry_run=dry_run)
         _ = get_backend(backend)  # Validate backend exists
 
         logger.info("starting run %s for case '%s' with solver '%s'", run_id, case_id, solver)
@@ -95,7 +97,7 @@ class Runner:
             case, artifacts, run_result, timing, case_dir
         )
 
-        status = self._determine_status(run_result)
+        status = self._determine_status(run_result, dry_run=dry_run)
         error_msg = self._build_error_message(run_result, status)
 
         manifest = RunManifest(
@@ -111,6 +113,7 @@ class Runner:
             container_digest=None,
             error=error_msg,
             cli_args=cli_args,
+            dry_run_skipped_commands=run_result.skipped_commands,
         )
 
         self._repo.save_run(manifest, metrics)
@@ -188,15 +191,18 @@ class Runner:
 
             return ArtifactManifest(files={}, qoi_values=None, curves=None)
 
-    def _determine_status(self, run_result) -> str:
+    def _determine_status(self, run_result, dry_run: bool = False) -> str:
         """Determine run status from RunResult.
 
         Args:
             run_result: The execution result.
+            dry_run: Whether this is a dry-run.
 
         Returns:
-            'success', 'failed', or 'timeout'.
+            'success', 'failed', 'timeout', or 'dry_run'.
         """
+        if dry_run:
+            return "dry_run"
         if run_result.timed_out:
             return "timeout"
         if run_result.exit_code != 0:
@@ -211,9 +217,9 @@ class Runner:
             status: The determined status.
 
         Returns:
-            Error message string, or None if success.
+            Error message string, or None if success or dry_run.
         """
-        if status == "success":
+        if status in ("success", "dry_run"):
             return None
         parts: list[str] = []
         if run_result.timed_out:

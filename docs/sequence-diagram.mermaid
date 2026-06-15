@@ -1,0 +1,60 @@
+%% P1-a dry_run 端到端时序图
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant CLI as CLI (cli.py)
+    participant Reg as CaseRegistry
+    participant Run as Runner
+    participant Adp as OpenFOAMAdapter<br/>(dry_run=True)
+    participant ME as MetricsEngine
+    participant Repo as JsonManifestRepository
+
+    U->>CLI: cfdb run --case lid_driven_cavity --solver openfoam --dry-run
+    CLI->>CLI: 解析参数 (Typer), dry_run=True
+    CLI->>Reg: load("lid_driven_cavity")
+    Reg-->>CLI: CaseSpec(solvers=[openfoam with steps])
+
+    CLI->>Run: Runner.execute(case_id, solver="openfoam", dry_run=True)
+    Run->>Run: generate_run_id() → run_id
+    Run->>Run: run_dir = runs/<run_id>/
+    Run->>Adp: get_adapter("openfoam", dry_run=True)<br/>→ OpenFOAMAdapter(dry_run=True)
+
+    Note over Run,Adp: Phase 1: prepare (完整执行)
+    Run->>Adp: adapter.prepare(case, case_dir, run_dir)
+    Adp->>Adp: _build_context(case) → {case_id, reynolds, nu, ...}
+    Adp->>Adp: mkdir run_dir/case/{system,constant,constant/polyMesh,0}
+    Adp->>Adp: 渲染 controlDict.j2 → run_dir/case/system/controlDict
+    Adp->>Adp: 渲染 fvSchemes.j2 → run_dir/case/system/fvSchemes
+    Adp->>Adp: 渲染 fvSolution.j2 → run_dir/case/system/fvSolution
+    Adp->>Adp: 渲染 transportProperties.j2 → constant/transportProperties
+    Adp->>Adp: 渲染 turbulenceProperties.j2 → constant/turbulenceProperties
+    Adp->>Adp: 写 0/U, 0/p 占位文件
+    Adp-->>Run: (prepare 完成, 无异常)
+
+    Note over Run,Adp: Phase 2: run (跳过 subprocess!)
+    Run->>Adp: adapter.run(case, case_dir, run_dir, resources=None)
+    Adp->>Adp: if self._dry_run == True:
+    Adp->>Adp: 渲染 steps[0].command → "blockMesh -case .../case"
+    Adp->>Adp: 渲染 steps[1].command → "icoFoam -case .../case"
+    Adp->>Adp: skipped_commands = ["blockMesh ...", "icoFoam ..."]
+    Adp-->>Run: RunResult(exit_code=0, skipped_commands=[...])
+
+    Note over Run,Adp: Phase 3: collect
+    Run->>Adp: adapter.collect_outputs(case, run_dir)
+    Adp->>Adp: scan run_dir/case/ → 7 files
+    Adp-->>Run: ArtifactManifest(files={system/controlDict, ...})
+
+    Note over Run,ME: Phase 4: metrics (跳过 QoI)
+    Run->>ME: engine.compute(case, artifacts, run_result)
+    ME->>ME: run_result.skipped_commands is not None → True
+    ME-->>Run: MetricsResult(qoi_pass=True, overall_status="dry_run",<br/>notes=["dry-run mode: QoI check skipped"])
+
+    Note over Run,Repo: Phase 5: manifest + save
+    Run->>Run: _determine_status(run_result, dry_run=True) → "dry_run"
+    Run->>Run: 构建 RunManifest(status="dry_run",<br/>dry_run_skipped_commands=["blockMesh ...","icoFoam ..."])
+    Run->>Repo: save_run(manifest, metrics)
+    Repo-->>Run: (保存完成)
+
+    Run-->>CLI: RunManifest(status="dry_run")
+    CLI->>CLI: 打印摘要 + skipped commands
+    CLI-->>U: 退出码=0 (dry_run 视为成功)

@@ -27,6 +27,9 @@ class RunResult:
     stderr: str
     wall_time_sec: float
     timed_out: bool = False
+    skipped_commands: list[str] | None = None
+    """In dry_run mode: list of rendered command strings that were skipped.
+    None in normal mode. Runner reads this to populate manifest."""
 
 
 @dataclass

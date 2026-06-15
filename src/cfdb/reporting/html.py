@@ -40,6 +40,7 @@ def generate_html_report(
         "success": "#28a745",
         "failed": "#dc3545",
         "timeout": "#ffc107",
+        "dry_run": "#17a2b8",
         "pass": "#28a745",
         "fail": "#dc3545",
         "incomplete": "#ffc107",

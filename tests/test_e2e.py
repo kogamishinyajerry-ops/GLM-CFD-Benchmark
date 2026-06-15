@@ -176,7 +176,7 @@ class TestE2ESmoke:
     def test_registry_integration(self) -> None:
         registry = CaseRegistry(PROJECT_CASES)
         cases = registry.list_all()
-        assert len(cases) == 4
+        assert len(cases) == 6
 
         for name in ["mock_success", "mock_failure", "mock_missing_reference", "mock_missing_qoi"]:
             case = registry.load(name)

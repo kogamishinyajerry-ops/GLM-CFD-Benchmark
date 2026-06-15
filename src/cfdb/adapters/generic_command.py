@@ -24,8 +24,13 @@ class GenericCommandAdapter:
 
     name: str = "generic"
 
-    def __init__(self) -> None:
-        """Initialize with default local backend."""
+    def __init__(self, dry_run: bool = False) -> None:
+        """Initialize with default local backend.
+
+        Args:
+            dry_run: If True, run() returns synthetic result without executing subprocess.
+        """
+        self._dry_run = dry_run
         from cfdb.execution.local import LocalExecutionBackend
 
         self._backend = LocalExecutionBackend()
@@ -121,6 +126,29 @@ set -euo pipefail
         Returns:
             RunResult with exit_code, stdout, stderr, wall_time, timed_out.
         """
+        if self._dry_run:
+            command_template = self._find_solver_config(case)
+            mesh_level = "single"
+            if case.mesh is not None and len(case.mesh.levels) > 0:
+                mesh_level = case.mesh.levels[0]
+            context = {
+                "case_id": case.id,
+                "solver": "generic",
+                "mesh_level": mesh_level,
+                "case_dir": case_dir.resolve().as_posix(),
+                "run_dir": run_dir.resolve().as_posix(),
+            }
+            rendered = Template(command_template).render(**context)
+            logger.info("[dry-run] skipping command: %s", rendered)
+            return RunResult(
+                exit_code=0,
+                stdout="[dry-run] command not executed",
+                stderr="",
+                wall_time_sec=0.0,
+                timed_out=False,
+                skipped_commands=[rendered],
+            )
+
         timeout = self._get_timeout(case, resources)
         result = self._backend.execute(
             command=["bash", "run.sh"],

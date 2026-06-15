@@ -1,0 +1,99 @@
+%% P1-a 增量类图（标注 P0/P1-a 边界）
+classDiagram
+    class CommandStep {
+        <<P1-a 新增>>
+        +str name
+        +str command
+        +int timeout_sec
+        +bool critical
+    }
+
+    class SolverConfig {
+        +str name
+        +str command
+        +int timeout_sec
+        +list~CommandStep~ steps [P1-a]
+        +dict~str,Any~ parameters [P1-a]
+    }
+
+    class RunManifest {
+        +str run_id
+        +str case_id
+        +str solver
+        +str backend
+        +Literal status [+dry_run P1-a]
+        +TimingSpec timing
+        +dict artifacts
+        +str git_commit
+        +str error
+        +list~str~ dry_run_skipped_commands [P1-a]
+    }
+
+    class RunResult {
+        +int exit_code
+        +str stdout
+        +str stderr
+        +float wall_time_sec
+        +bool timed_out
+        +list~str~ skipped_commands [P1-a]
+    }
+
+    class SolverAdapter {
+        <<Protocol 不变>>
+        +str name
+        +prepare(case, case_dir, run_dir)
+        +run(case, case_dir, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+    }
+
+    class GenericCommandAdapter {
+        +bool _dry_run [P1-a]
+        +__init__(dry_run=False) [P1-a]
+        +prepare(case, case_dir, run_dir)
+        +run(case, case_dir, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+    }
+
+    class OpenFOAMAdapter {
+        <<P1-a 新增>>
+        +str name = "openfoam"
+        +bool _dry_run
+        +Path _template_dir
+        +__init__(dry_run=False)
+        +_build_context(case, case_dir, run_dir) dict
+        +_render_template(name, context) str
+        +prepare(case, case_dir, run_dir)
+        +run(case, case_dir, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+    }
+
+    class SU2Adapter {
+        <<P1-a 新增>>
+        +str name = "su2"
+        +bool _dry_run
+        +Path _template_dir
+        +__init__(dry_run=False)
+        +_build_context(case, case_dir, run_dir) dict
+        +_render_template(name, context) str
+        +prepare(case, case_dir, run_dir)
+        +run(case, case_dir, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+    }
+
+    class Runner {
+        +execute(case_id, solver, backend, dry_run) RunManifest [P1-a]
+        +_determine_status(run_result, dry_run) str [P1-a]
+    }
+
+    class MetricsEngine {
+        +compute(case, artifacts, run_result) MetricsResult [P1-a: dry_run 短路]
+    }
+
+    SolverConfig --> CommandStep : steps*
+    SolverAdapter <|.. GenericCommandAdapter
+    SolverAdapter <|.. OpenFOAMAdapter
+    SolverAdapter <|.. SU2Adapter
+    Runner --> SolverAdapter : get_adapter(dry_run)
+    Runner --> RunManifest : 构建
+    Runner --> RunResult : 读取 skipped_commands
+    MetricsEngine ..> RunResult : 检查 skipped_commands

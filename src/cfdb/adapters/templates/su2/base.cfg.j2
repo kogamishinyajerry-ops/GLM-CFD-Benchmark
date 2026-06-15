@@ -1,0 +1,69 @@
+% =========================================================================
+% SU2 configuration file (dry_run placeholder)
+% Case: {{ case_id }}
+% Mach: {{ mach }}, Reynolds: {{ reynolds }}, AoA: {{ aoa }} deg
+% =========================================================================
+
+% -------------------- DIRECT/ADJOINT PROBLEM DEFINITION ------------------%
+%
+SOLVER= NAVIER_STOKES
+KIND_TURB_MODEL= NONE
+MATH_PROBLEM= DIRECT
+RESTART_SOL= NO
+
+% -------------------- PHYSICAL GEOMETRY DEFINITIONS ----------------------%
+%
+MESH_FILENAME= mesh.su2
+MESH_FORMAT= SU2
+MESH_OUT_FILENAME= solution_flow.vtu
+TABULAR_FORMAT= CSV
+
+% -------------------- FREESTREAM CONDITIONS -------------------------------%
+%
+AOA= {{ aoa }}
+FREESTREAM_VELOCITY= ( 1.0, 0.0, 0.0 )
+FREESTREAM_PRESSURE= 101325.0
+FREESTREAM_TEMPERATURE= 288.15
+
+% -------------------- REFERENCE VALUES ------------------------------------%
+%
+REF_ORIGIN_MOMENT_X = 0.25
+REF_ORIGIN_MOMENT_Y = 0.00
+REF_ORIGIN_MOMENT_Z = 0.00
+REF_LENGTH= 1.0
+REF_AREA= 1.0
+
+% -------------------- BOUNDARY CONDITION DEFINITION ----------------------%
+%
+MARKER_EULER= ( farfield )
+MARKER_FAR= ( farfield )
+MARKER_SYM= ( symmetry )
+MARKER_WALL= ( wall )
+
+% -------------------- NUMERICAL METHOD DEFINITION ------------------------%
+%
+NUM_METHOD_GRAD= GREEN_GAUSS
+CFL_NUMBER= 5.0
+CFL_ADAPT= NO
+TIME_DISCRE_FLOW= EULER_IMPLICIT
+
+% -------------------- LINEAR SOLVER DEFINITION ---------------------------%
+%
+LINEAR_SOLVER= FGMRES
+LINEAR_SOLVER_PREC= ILU
+LINEAR_SOLVER_ERROR= 1E-6
+LINEAR_SOLVER_ITER= 10
+
+% -------------------- CONVERGENCE PARAMETERS -----------------------------%
+%
+CONV_RESIDUE_MINVAL= -8
+CONV_STARTITER= 10
+CONV_FIELD= RMS_DENSITY
+
+% ------------------------- INPUT/OUTPUT INFORMATION ----------------------%
+%
+OUTPUT_WRT_FREQ= 250
+VOLUME_FILENAME= volume_flow
+RESTART_FILENAME= restart_flow.dat
+
+% End of config file

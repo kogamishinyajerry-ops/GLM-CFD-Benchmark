@@ -1,0 +1,17 @@
+# Normalize line endings: repo stores LF, working copy uses native
+* text=auto eol=lf
+
+# Force LF for source files (prevents CRLF contamination on Windows)
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.j2 text eol=lf
+*.sh text eol=lf
+*.json text eol=lf
+*.mermaid text eol=lf
+
+# Force CRLF for Windows batch files (if any later)
+*.bat text eol=crlf
+*.cmd text eol=crlf

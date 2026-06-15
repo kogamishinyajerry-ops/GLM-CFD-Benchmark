@@ -1,0 +1,27 @@
+{
+  "run_id": "20260615T192808Z_mock_missing_reference_generic_027aa02b",
+  "case_id": "mock_missing_reference",
+  "solver": "generic",
+  "backend": "local",
+  "status": "success",
+  "timing": {
+    "wall_time_sec": 0.839978,
+    "start_time": "2026-06-15T19:28:08.258805Z",
+    "end_time": "2026-06-15T19:28:09.098783Z"
+  },
+  "host": "Jerry",
+  "artifacts": {
+    "qoi.json": "qoi.json",
+    "run.sh": "run.sh",
+    "stderr.log": "stderr.log",
+    "stdout.log": "stdout.log"
+  },
+  "git_commit": null,
+  "container_digest": null,
+  "error": null,
+  "cli_args": {
+    "case": "mock_missing_reference",
+    "solver": "generic",
+    "backend": "local"
+  }
+}

@@ -1,0 +1,148 @@
+classDiagram
+    class CaseSpec {
+        +str id
+        +str name
+        +str category
+        +PhysicsSpec physics
+        +ConditionsSpec conditions
+        +SolverConfig solvers
+        +OutputSpec outputs
+        +MetricSpec metrics
+        +BudgetSpec budget
+    }
+    class PhysicsSpec {
+        +str flow
+        +str turbulence
+        +str dimensionality
+        +bool steady
+    }
+    class ConditionsSpec {
+        +float reynolds
+        +float mach
+        +float alpha_deg
+    }
+    class GeometrySpec {
+        +str type
+        +Path source
+    }
+    class MeshSpec {
+        +str family
+        +list~str~ levels
+        +float target_y_plus
+    }
+    class SolverConfig {
+        +str name
+        +str command
+        +int timeout_sec
+    }
+    class OutputSpec {
+        +list~str~ fields
+        +list~str~ curves
+        +list~str~ qoi
+    }
+    class ReferenceSpec {
+        +str type
+        +dict files
+        +dict qoi_values
+    }
+    class MetricSpec {
+        +dict qoi_relative_tolerance
+        +dict curve_l2_tolerance
+    }
+    class BudgetSpec {
+        +int max_runtime_sec
+        +int max_cells
+    }
+    class RunManifest {
+        +str run_id
+        +str case_id
+        +str solver
+        +str backend
+        +str status
+        +TimingSpec timing
+        +dict artifacts
+        +str git_commit
+        +str error
+    }
+    class TimingSpec {
+        +float wall_time_sec
+        +datetime start_time
+        +datetime end_time
+    }
+    class MetricsResult {
+        +dict qoi_relative_errors
+        +bool qoi_pass
+        +str overall_status
+        +list~str~ notes
+    }
+    class CaseRegistry {
+        -Path _root
+        -dict _cache
+        +load(case_id) CaseSpec
+        +list_all() list
+        +validate(path) CaseSpec
+    }
+    class SolverAdapter {
+        <<Protocol>>
+        +str name
+        +prepare(case, run_dir)
+        +run(case, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+    }
+    class GenericCommandAdapter {
+        +str name
+        +prepare(case, run_dir)
+        +run(case, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+    }
+    class ExecutionBackend {
+        <<Protocol>>
+        +execute(command, cwd, timeout) RunResult
+    }
+    class LocalExecutionBackend {
+        +execute(command, cwd, timeout) RunResult
+    }
+    class ResultRepository {
+        <<Protocol>>
+        +save_run(manifest, metrics)
+        +load_run(run_id) tuple
+        +list_runs(case_id) list
+    }
+    class JsonManifestRepository {
+        -Path _root
+        +save_run(manifest, metrics)
+        +load_run(run_id) tuple
+        +list_runs(case_id) list
+    }
+    class MetricsEngine {
+        +compute(case, artifacts, result) MetricsResult
+    }
+    class Runner {
+        -CaseRegistry registry
+        -ResultRepository repo
+        +execute(case_id, solver, backend) RunManifest
+    }
+
+    CaseSpec *-- PhysicsSpec
+    CaseSpec *-- ConditionsSpec
+    CaseSpec *-- GeometrySpec
+    CaseSpec *-- MeshSpec
+    CaseSpec *-- SolverConfig
+    CaseSpec *-- OutputSpec
+    CaseSpec *-- ReferenceSpec
+    CaseSpec *-- MetricSpec
+    CaseSpec *-- BudgetSpec
+    RunManifest *-- TimingSpec
+    CaseRegistry o-- CaseSpec
+    SolverAdapter <|.. GenericCommandAdapter
+    ExecutionBackend <|.. LocalExecutionBackend
+    ResultRepository <|.. JsonManifestRepository
+    Runner --> CaseRegistry
+    Runner --> SolverAdapter
+    Runner --> ExecutionBackend
+    Runner --> ResultRepository
+    Runner --> MetricsEngine
+    GenericCommandAdapter --> ExecutionBackend
+    MetricsEngine ..> MetricsResult
+    JsonManifestRepository ..> RunManifest
+    JsonManifestRepository ..> MetricsResult

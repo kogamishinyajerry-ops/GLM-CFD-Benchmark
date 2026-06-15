@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CFD-Benchmark Run Report — {{ manifest.run_id }}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        h1 {
+            color: #1a1a2e;
+            border-bottom: 3px solid #0f3460;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #0f3460;
+            margin-top: 30px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            color: #fff;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background-color: #0f3460;
+            color: #fff;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .error-box {
+            background-color: #fff3f3;
+            border-left: 4px solid #dc3545;
+            padding: 15px;
+            margin: 10px 0;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        .notes-box {
+            background-color: #fffde7;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .footer {
+            text-align: center;
+            color: #6c757d;
+            font-size: 0.85em;
+            margin-top: 40px;
+            border-top: 1px solid #e0e0e0;
+            padding-top: 20px;
+        }
+        .kv-grid {
+            display: grid;
+            grid-template-columns: 180px 1fr;
+            gap: 8px 20px;
+        }
+        .kv-grid dt {
+            font-weight: bold;
+            color: #0f3460;
+        }
+        .kv-grid dd {
+            margin: 0;
+            word-break: break-all;
+        }
+        .status-pass { color: #28a745; }
+        .status-fail { color: #dc3545; }
+        .metric-row td:first-child { font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>CFD-Benchmark Run Report</h1>
+
+    <div class="card">
+        <p>
+            <strong>Run ID:</strong> <code>{{ manifest.run_id }}</code><br>
+            <strong>Status:</strong>
+            <span class="badge" style="background-color: {{ status_color.get(manifest.status, '#6c757d') }};">
+                {{ manifest.status | upper }}
+            </span>
+            &nbsp;
+            <strong>Metrics:</strong>
+            <span class="badge" style="background-color: {{ status_color.get(metrics.overall_status, '#6c757d') }};">
+                {{ metrics.overall_status | upper }}
+            </span>
+        </p>
+    </div>
+
+    <h2>Run Summary</h2>
+    <div class="card">
+        <dl class="kv-grid">
+            <dt>Case ID</dt><dd><code>{{ manifest.case_id }}</code></dd>
+            <dt>Solver</dt><dd>{{ manifest.solver }}</dd>
+            <dt>Backend</dt><dd>{{ manifest.backend }}</dd>
+            <dt>Host</dt><dd>{{ manifest.host or 'N/A' }}</dd>
+            <dt>Start Time</dt><dd>{{ manifest.timing.start_time }}</dd>
+            <dt>End Time</dt><dd>{{ manifest.timing.end_time }}</dd>
+            <dt>Wall Time</dt><dd>{{ "%.3f"|format(manifest.timing.wall_time_sec) }} s</dd>
+            <dt>Git Commit</dt><dd>{{ manifest.git_commit or 'N/A' }}</dd>
+            <dt>Container Digest</dt><dd>{{ manifest.container_digest or 'N/A' }}</dd>
+        </dl>
+    </div>
+
+    {% if manifest.error %}
+    <h2>Error Details</h2>
+    <div class="error-box">{{ manifest.error }}</div>
+    {% endif %}
+
+    <h2>Metrics Results</h2>
+    <div class="card">
+        <p><strong>QoI Pass:</strong>
+            <span class="{{ 'status-pass' if metrics.qoi_pass else 'status-fail' }}">
+                {{ 'YES' if metrics.qoi_pass else 'NO' }}
+            </span>
+        </p>
+
+        {% if metrics.qoi_relative_errors %}
+        <h3>QoI Relative Errors</h3>
+        <table>
+            <thead>
+                <tr><th>QoI Name</th><th>Relative Error</th><th>Pass</th></tr>
+            </thead>
+            <tbody>
+                {% for qoi, err in metrics.qoi_relative_errors.items() %}
+                <tr class="metric-row">
+                    <td>{{ qoi }}</td>
+                    <td>{{ "%.6f"|format(err) }} ({{ "%.2f"|format(err * 100) }}%)</td>
+                    <td>{{ 'OK' if metrics.qoi_pass else 'FAIL' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p><em>No QoI errors computed.</em></p>
+        {% endif %}
+
+        {% if metrics.notes %}
+        <div class="notes-box">
+            <strong>Notes:</strong>
+            <ul>
+                {% for note in metrics.notes %}
+                <li>{{ note }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    <h2>Artifacts</h2>
+    <div class="card">
+        {% if manifest.artifacts %}
+        <table>
+            <thead>
+                <tr><th>Type</th><th>Path</th></tr>
+            </thead>
+            <tbody>
+                {% for type, path in manifest.artifacts.items() %}
+                <tr><td>{{ type }}</td><td><code>{{ path }}</code></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p><em>No artifacts recorded.</em></p>
+        {% endif %}
+    </div>
+
+    {% if manifest.cli_args %}
+    <h2>CLI Arguments</h2>
+    <div class="card">
+        <dl class="kv-grid">
+            {% for k, v in manifest.cli_args.items() %}
+            <dt>{{ k }}</dt><dd>{{ v }}</dd>
+            {% endfor %}
+        </dl>
+    </div>
+    {% endif %}
+
+    <div class="footer">
+        Generated by CFD-Benchmark v{{ version }} &mdash; {{ manifest.timing.end_time }}
+    </div>
+</body>
+</html>

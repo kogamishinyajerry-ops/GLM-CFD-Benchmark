@@ -1,0 +1,27 @@
+id: mock_success
+name: Mock Success Case
+category: smoke
+description: "P0 loop validation — success path"
+physics:
+  flow: incompressible
+  dimensionality: 2d
+  steady: true
+conditions:
+  reynolds: 100.0
+solvers:
+  - name: generic
+    command: "bash {{ case_dir }}/run.sh"
+outputs:
+  fields: []
+  curves: []
+  qoi:
+    - centerline_umax
+reference:
+  type: analytical
+  files:
+    qoi: reference/qoi.json
+metrics:
+  qoi_relative_tolerance:
+    centerline_umax: 0.05
+budget:
+  max_runtime_sec: 30

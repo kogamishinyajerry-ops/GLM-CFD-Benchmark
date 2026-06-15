@@ -1,0 +1,65 @@
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant CLI as CLI (cli.py)
+    participant Reg as CaseRegistry
+    participant Run as Runner
+    participant Adp as GenericCommandAdapter
+    participant Bk as LocalExecutionBackend
+    participant ME as MetricsEngine
+    participant Repo as JsonManifestRepository
+    participant Rep as HTMLReporter
+
+    U->>CLI: cfdb run --case mock_success --solver generic --backend local
+    CLI->>CLI: 解析参数 (Typer)
+    CLI->>Reg: load("mock_success")
+    Reg->>Reg: 扫描 cases/smoke/mock_success/case.yaml
+    Reg-->>CLI: CaseSpec(id="mock_success", ...)
+
+    CLI->>Run: Runner(registry, repo).execute(case, solver="generic", backend="local")
+    Run->>Run: generate_run_id() -> run_id
+    Run->>Run: run_dir = runs/<run_id>/
+
+    Note over Run,Adp: Phase 1: prepare
+    Run->>Adp: adapter.prepare(case, run_dir)
+    Adp->>Adp: 渲染 Jinja2 command 模板
+    Adp->>Adp: 写入 run_dir/run.sh
+    Adp-->>Run: (prepare 完成)
+
+    Note over Run,Bk: Phase 2: run
+    Run->>Adp: adapter.run(case, run_dir, resources=None)
+    Adp->>Bk: backend.execute(["bash","run.sh"], cwd=run_dir, timeout=...)
+    Bk->>Bk: subprocess.run(...)
+    Bk->>Bk: 写 stdout.log / stderr.log
+    Bk-->>Adp: RunResult(exit_code=0, stdout=..., wall_time_sec=0.42)
+    Adp-->>Run: RunResult
+
+    Note over Run,Adp: Phase 3: collect
+    Run->>Adp: adapter.collect_outputs(case, run_dir)
+    Adp->>Adp: 读取 run_dir/qoi.json -> qoi_values
+    Adp->>Adp: 列出 run_dir 所有文件 -> files dict
+    Adp-->>Run: ArtifactManifest(files={...}, qoi_values={...})
+
+    Note over Run,ME: Phase 4: metrics
+    Run->>ME: engine.compute(case, artifacts, run_result)
+    ME->>ME: compute_qoi_errors(reference, computed_qoi)
+    ME->>ME: 检查每个 QoI 是否 <= tolerance
+    ME->>ME: check_budget(timing, budget)
+    ME-->>Run: MetricsResult(qoi_relative_errors={...}, qoi_pass=True, overall_status="pass")
+
+    Note over Run,Repo: Phase 5: save
+    Run->>Run: 构建 RunManifest(run_id, case_id, solver, status, timing, artifacts, ...)
+    Run->>Repo: repo.save_run(manifest, metrics)
+    Repo->>Repo: 写 runs/<run_id>/manifest.json
+    Repo->>Repo: 写 runs/<run_id>/metrics.json
+    Repo-->>Run: (保存完成)
+
+    Note over Run,Rep: Phase 6: report (可选, CLI --report flag)
+    Run->>Rep: generate_html_report(manifest, metrics, run_dir)
+    Rep->>Rep: Jinja2 渲染 report.html.j2
+    Rep->>Rep: 写入 run_dir/report.html
+    Rep-->>Run: Path("runs/<run_id>/report.html")
+
+    Run-->>CLI: RunManifest + MetricsResult
+    CLI->>CLI: 打印摘要到 stderr
+    CLI-->>U: 退出码 (0=success, 非0=failed)

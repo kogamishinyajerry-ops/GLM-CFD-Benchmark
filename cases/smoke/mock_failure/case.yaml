@@ -1,0 +1,27 @@
+id: mock_failure
+name: Mock Failure Case
+category: smoke
+description: "P0 loop validation — failure path (exit code 1)"
+physics:
+  flow: incompressible
+  dimensionality: 2d
+  steady: true
+conditions:
+  reynolds: 100.0
+solvers:
+  - name: generic
+    command: "bash {{ case_dir }}/run.sh"
+outputs:
+  fields: []
+  curves: []
+  qoi:
+    - centerline_umax
+reference:
+  type: analytical
+  qoi_values:
+    centerline_umax: 0.371
+metrics:
+  qoi_relative_tolerance:
+    centerline_umax: 0.05
+budget:
+  max_runtime_sec: 30

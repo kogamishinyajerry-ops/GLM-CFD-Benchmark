@@ -247,6 +247,86 @@ class TestRunManifest:
         assert m.solver_version is None
         assert m.final_residuals is None
 
+    def test_p2a_new_fields_default_none(self) -> None:
+        """P2-a fields (cell_count, step_details, residuals_history) default to None."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        m = RunManifest(
+            run_id="20260616T120000Z_test_generic_abcd1234",
+            case_id="test",
+            solver="generic",
+            status="success",
+            timing=timing,
+        )
+        assert m.cell_count is None
+        assert m.step_details is None
+        assert m.residuals_history is None
+
+    def test_p2a_new_fields_set(self) -> None:
+        """P2-a fields can be set with values."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        m = RunManifest(
+            run_id="20260616T120000Z_test_generic_abcd1234",
+            case_id="test",
+            solver="openfoam",
+            status="success",
+            timing=timing,
+            cell_count=400,
+            step_details=[
+                {"name": "block_mesh", "exit_code": 0, "wall_time_sec": 1.5, "status": "success"},
+            ],
+            residuals_history={"Ux": [1e-1, 1e-2, 1e-3]},
+        )
+        assert m.cell_count == 400
+        assert m.step_details is not None
+        assert len(m.step_details) == 1
+        assert m.residuals_history is not None
+        assert m.residuals_history["Ux"] == [1e-1, 1e-2, 1e-3]
+
+    def test_p2a_json_roundtrip(self) -> None:
+        """P2-a fields survive JSON serialize/deserialize."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        m = RunManifest(
+            run_id="20260616T120000Z_test_generic_abcd1234",
+            case_id="test",
+            solver="openfoam",
+            status="success",
+            timing=timing,
+            cell_count=400,
+            residuals_history={"Ux": [1e-1, 1e-2, 1e-3]},
+        )
+        json_str = m.model_dump_json()
+        m2 = RunManifest.model_validate_json(json_str)
+        assert m2.cell_count == 400
+        assert m2.residuals_history is not None
+        assert m2.residuals_history["Ux"] == [1e-1, 1e-2, 1e-3]
+
+    def test_p2a_backward_compat_old_json(self) -> None:
+        """Old JSON without P2-a fields loads fine."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        old_data = {
+            "run_id": "20260616T120000Z_test_generic_abcd1234",
+            "case_id": "test",
+            "solver": "generic",
+            "status": "success",
+            "timing": timing.model_dump(mode="json"),
+        }
+        m = RunManifest.model_validate(old_data)
+        assert m.cell_count is None
+        assert m.step_details is None
+        assert m.residuals_history is None
+
 
 class TestMetricsResult:
     def test_defaults(self) -> None:

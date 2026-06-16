@@ -1,0 +1,13 @@
+SU2 Code Suite, Version 8.0.0
+
+-*- Driver Mode -*-
+Configuration file: /tmp/run/case/flat_plate.cfg
+
+------------------- Physical fluid boundary flux ------------------------
+Mesh statistics:
+  33,024 volume elements.
+   6,400 surface elements.
+
+  16,640 points.
+
+------------------- Preprocessing the numerical grid. -------------------

@@ -146,6 +146,54 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
 
+    def test_run_with_sqlite_storage(
+        self, runner: CliRunner, project_cases: Path, tmp_path: Path
+    ) -> None:
+        """P2-a: --storage sqlite creates a .db file."""
+        runs_dir = tmp_path / "runs"
+        db_path = tmp_path / "test.db"
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--case", "mock_success",
+                "--solver", "generic",
+                "--cases-dir", str(project_cases),
+                "--runs-dir", str(runs_dir),
+                "--storage", "sqlite",
+                "--db-path", str(db_path),
+            ],
+        )
+        assert result.exit_code == 0
+        assert db_path.exists()
+        # Dual-write: JSON manifest also exists
+        run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+        assert len(run_dirs) >= 1
+        assert (run_dirs[0] / "manifest.json").exists()
+
+    def test_run_default_json_storage(
+        self, runner: CliRunner, project_cases: Path, tmp_path: Path
+    ) -> None:
+        """P2-a: default --storage json does not create .db file."""
+        runs_dir = tmp_path / "runs"
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--case", "mock_success",
+                "--solver", "generic",
+                "--cases-dir", str(project_cases),
+                "--runs-dir", str(runs_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        # No .db file created
+        assert not (runs_dir / "cfdb.db").exists()
+        # JSON manifest exists
+        run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+        assert len(run_dirs) >= 1
+        assert (run_dirs[0] / "manifest.json").exists()
+
 
 class TestReportCommand:
     def test_report_from_existing_run(

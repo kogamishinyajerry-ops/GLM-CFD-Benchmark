@@ -117,6 +117,10 @@ class Runner:
             # === P1-b new fields ===
             solver_version=run_result.solver_version,
             final_residuals=run_result.final_residuals,
+            # === P2-a new fields ===
+            cell_count=run_result.cell_count,
+            step_details=run_result.step_details,
+            residuals_history=run_result.residuals_history,
         )
 
         self._repo.save_run(manifest, metrics)
@@ -249,7 +253,21 @@ class Runner:
         try:
             from cfdb.reporting.html import generate_html_report
 
-            generate_html_report(manifest, metrics, run_dir)
+            # P2-a: Generate residual SVG if residuals_history is available
+            residuals_svg: str | None = None
+            if manifest.residuals_history:
+                from cfdb.reporting.svg_residuals import render_residual_svg
+
+                residuals_svg = render_residual_svg(
+                    residuals=manifest.residuals_history,
+                    title=f"Residual Convergence — {manifest.case_id} ({manifest.solver})",
+                    log_scale=True,
+                )
+
+            generate_html_report(
+                manifest, metrics, run_dir,
+                residuals_svg=residuals_svg,
+            )
             logger.info("HTML report generated at %s/report.html", run_dir)
         except Exception as e:
             logger.warning("failed to generate report: %s", e)

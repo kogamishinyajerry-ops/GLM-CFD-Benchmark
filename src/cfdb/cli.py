@@ -110,21 +110,48 @@ def run(
             help="Render templates and generate case dir, but do not execute solver.",
         ),
     ] = False,
+    storage: Annotated[
+        str,
+        typer.Option(
+            "--storage",
+            help="Storage backend: 'json' (default) or 'sqlite'.",
+        ),
+    ] = "json",
+    db_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--db-path",
+            help="SQLite database path (only used with --storage sqlite). "
+            "Default: <runs-dir>/cfdb.db",
+        ),
+    ] = None,
 ) -> None:
     """Run a specified case with a given solver and backend."""
     from cfdb.core.runner import Runner
 
     registry = CaseRegistry(cases_dir)
-    repo = JsonManifestRepository(runs_dir)
+
+    # P2-a: Select storage backend
+    if storage == "sqlite":
+        from cfdb.storage.sqlite_repo import SqliteRepository
+
+        actual_db_path = db_path if db_path is not None else (runs_dir / "cfdb.db")
+        repo = SqliteRepository(actual_db_path, runs_root=runs_dir)
+    else:
+        repo = JsonManifestRepository(runs_dir)
+
     runner = Runner(registry, repo, runs_dir)
 
     cli_args: dict[str, str] = {
         "case": case,
         "solver": solver,
         "backend": backend,
+        "storage": storage,
     }
     if dry_run:
         cli_args["dry_run"] = "true"
+    if db_path is not None:
+        cli_args["db_path"] = str(db_path)
 
     manifest = runner.execute(
         case_id=case,
@@ -185,7 +212,18 @@ def report_cmd(
         typer.echo(f"[FAIL] Run '{run_id}' not found in {run_dir.parent}", err=True)
         raise typer.Exit(code=1) from None
 
-    html_path = generate_html_report(manifest, metrics, run_dir)
+    # P2-a: Generate residual SVG if residuals_history available
+    residuals_svg: str | None = None
+    if manifest.residuals_history:
+        from cfdb.reporting.svg_residuals import render_residual_svg
+
+        residuals_svg = render_residual_svg(
+            residuals=manifest.residuals_history,
+            title=f"Residual Convergence — {manifest.case_id} ({manifest.solver})",
+            log_scale=True,
+        )
+
+    html_path = generate_html_report(manifest, metrics, run_dir, residuals_svg=residuals_svg)
     typer.echo(f"[OK] Report generated: {html_path}")
 
 

@@ -108,3 +108,44 @@ class TestGenerateHtmlReport:
         assert "cdn" not in content.lower()
         assert "http://" not in content
         assert "https://" not in content
+
+    def test_embeds_residuals_svg(self, tmp_path: Path) -> None:
+        """P2-a: residuals_svg is embedded into the HTML report."""
+        manifest = make_test_manifest()
+        metrics = make_test_metrics()
+        svg = '<svg viewBox="0 0 680 400"><polyline points="1,2 3,4"/></svg>'
+        generate_html_report(manifest, metrics, tmp_path, residuals_svg=svg)
+        content = (tmp_path / "report.html").read_text(encoding="utf-8")
+        assert "<svg" in content
+        assert "polyline" in content
+        assert "Residual Convergence" in content
+
+    def test_no_svg_section_without_data(self, tmp_path: Path) -> None:
+        """P2-a: No SVG section when residuals_svg is None."""
+        manifest = make_test_manifest()
+        metrics = make_test_metrics()
+        generate_html_report(manifest, metrics, tmp_path, residuals_svg=None)
+        content = (tmp_path / "report.html").read_text(encoding="utf-8")
+        assert "<svg" not in content
+
+    def test_solver_details_with_cell_count(self, tmp_path: Path) -> None:
+        """P2-a: cell_count appears in Solver Details section."""
+        manifest = make_test_manifest()
+        manifest.cell_count = 400
+        metrics = make_test_metrics()
+        generate_html_report(manifest, metrics, tmp_path)
+        content = (tmp_path / "report.html").read_text(encoding="utf-8")
+        assert "Cell Count" in content
+        assert "400" in content
+
+    def test_solver_details_with_step_details(self, tmp_path: Path) -> None:
+        """P2-a: step_details table renders."""
+        manifest = make_test_manifest()
+        manifest.step_details = [
+            {"name": "block_mesh", "exit_code": 0, "wall_time_sec": 1.5, "status": "success"},
+        ]
+        metrics = make_test_metrics()
+        generate_html_report(manifest, metrics, tmp_path)
+        content = (tmp_path / "report.html").read_text(encoding="utf-8")
+        assert "Step Details" in content
+        assert "block_mesh" in content

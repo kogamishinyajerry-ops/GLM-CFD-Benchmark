@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cfdb.adapters.base import RunResult
+from cfdb.adapters.base import RunResult, StepResult
 from cfdb.adapters.openfoam import OpenFOAMAdapter
 from cfdb.schema import CaseSpec, SolverConfig
 
@@ -284,3 +284,125 @@ class TestOpenFOAMFindSolverConfig:
         adapter = OpenFOAMAdapter()
         with pytest.raises(ValueError, match="no 'openfoam'"):
             adapter._find_solver_config(case)
+
+
+class TestStepResultToDict:
+    def test_to_dict_success(self) -> None:
+        """StepResult.to_dict() returns correct status for success."""
+        sr = StepResult(
+            name="block_mesh",
+            exit_code=0,
+            wall_time_sec=1.5,
+            stdout="",
+            stderr="",
+        )
+        d = sr.to_dict()
+        assert d["name"] == "block_mesh"
+        assert d["exit_code"] == 0
+        assert d["wall_time_sec"] == 1.5
+        assert d["status"] == "success"
+
+    def test_to_dict_failed(self) -> None:
+        """StepResult.to_dict() returns 'failed' for non-zero exit code."""
+        sr = StepResult(
+            name="solve",
+            exit_code=1,
+            wall_time_sec=2.0,
+            stdout="",
+            stderr="error",
+        )
+        d = sr.to_dict()
+        assert d["status"] == "failed"
+
+    def test_to_dict_has_all_keys(self) -> None:
+        """to_dict() has exactly name, exit_code, wall_time_sec, status."""
+        sr = StepResult(
+            name="step1",
+            exit_code=0,
+            wall_time_sec=0.1,
+            stdout="",
+            stderr="",
+        )
+        d = sr.to_dict()
+        assert set(d.keys()) == {"name", "exit_code", "wall_time_sec", "status"}
+
+
+class TestOpenFOAMP2aFields:
+    def test_merge_produces_step_details(self, openfoam_case: CaseSpec, tmp_path: Path) -> None:
+        """_merge_step_results populates step_details (P2-a)."""
+        adapter = OpenFOAMAdapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(openfoam_case, case_dir, run_dir)
+
+        mock_result = RunResult(
+            exit_code=0,
+            stdout="OpenFOAM v2406\nSolving for Ux, Initial residual = 1.2e-6\n",
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(openfoam_case, case_dir, run_dir, resources=None)
+
+        assert result.step_details is not None
+        assert len(result.step_details) == 2
+        assert result.step_details[0]["name"] == "block_mesh"
+        assert result.step_details[1]["name"] == "solve"
+
+    def test_merge_produces_cell_count(self, openfoam_case: CaseSpec, tmp_path: Path) -> None:
+        """_merge_step_results extracts cell_count from blockMesh log (P2-a)."""
+        adapter = OpenFOAMAdapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(openfoam_case, case_dir, run_dir)
+
+        mock_result = RunResult(
+            exit_code=0,
+            stdout="nCells: 400\nSolving for Ux, Initial residual = 1.2e-6\n",
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(openfoam_case, case_dir, run_dir, resources=None)
+
+        assert result.cell_count == 400
+
+    def test_merge_produces_residuals_history(self, openfoam_case: CaseSpec, tmp_path: Path) -> None:
+        """_merge_step_results populates residuals_history (P2-a)."""
+        adapter = OpenFOAMAdapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(openfoam_case, case_dir, run_dir)
+
+        mock_result = RunResult(
+            exit_code=0,
+            stdout=(
+                "OpenFOAM v2406\n"
+                "Solving for Ux, Initial residual = 1e-1\n"
+                "Solving for Ux, Initial residual = 1e-3\n"
+                "Solving for p, Initial residual = 5e-2\n"
+            ),
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(openfoam_case, case_dir, run_dir, resources=None)
+
+        assert result.residuals_history is not None
+        assert "Ux" in result.residuals_history
+        assert len(result.residuals_history["Ux"]) == 2

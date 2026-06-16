@@ -19,6 +19,7 @@ def generate_html_report(
     manifest: RunManifest,
     metrics: MetricsResult,
     run_dir: Path,
+    residuals_svg: str | None = None,
 ) -> Path:
     """Generate a single-file HTML report.
 
@@ -26,6 +27,8 @@ def generate_html_report(
         manifest: The run manifest.
         metrics: The metrics result.
         run_dir: Run directory where report.html will be written.
+        residuals_svg: Optional SVG string for residual convergence plot.
+                       If provided, embedded into the report as an inline SVG section.
 
     Returns:
         Path to the generated report.html.
@@ -52,6 +55,7 @@ def generate_html_report(
         metrics=metrics,
         version=__version__,
         status_color=status_color,
+        residuals_svg=residuals_svg,
     )
 
     report_path = run_dir / "report.html"

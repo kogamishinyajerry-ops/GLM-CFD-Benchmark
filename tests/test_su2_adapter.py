@@ -243,3 +243,86 @@ class TestSU2FindSolverConfig:
         adapter = SU2Adapter()
         with pytest.raises(ValueError, match="no 'su2'"):
             adapter._find_solver_config(case)
+
+
+class TestSU2P2aFields:
+    def test_merge_produces_step_details(self, su2_case: CaseSpec, tmp_path: Path) -> None:
+        """_merge_step_results populates step_details (P2-a)."""
+        adapter = SU2Adapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(su2_case, case_dir, run_dir)
+
+        mock_result = RunResult(
+            exit_code=0,
+            stdout="SU2 Code Suite, Version 8.0.0\nRMS_DENSITY: -2.5\n",
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(su2_case, case_dir, run_dir, resources=None)
+
+        assert result.step_details is not None
+        assert len(result.step_details) == 1
+        assert result.step_details[0]["name"] == "solve"
+
+    def test_merge_produces_cell_count(self, su2_case: CaseSpec, tmp_path: Path) -> None:
+        """_merge_step_results extracts cell_count from SU2 mesh stats (P2-a)."""
+        adapter = SU2Adapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(su2_case, case_dir, run_dir)
+
+        mock_result = RunResult(
+            exit_code=0,
+            stdout=(
+                "SU2 Code Suite, Version 8.0.0\n"
+                "33,024 volume elements.\n"
+                "RMS_DENSITY: -2.5\n"
+            ),
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(su2_case, case_dir, run_dir, resources=None)
+
+        assert result.cell_count == 33024
+
+    def test_merge_produces_residuals_history(self, su2_case: CaseSpec, tmp_path: Path) -> None:
+        """_merge_step_results populates residuals_history (P2-a)."""
+        adapter = SU2Adapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(su2_case, case_dir, run_dir)
+
+        mock_result = RunResult(
+            exit_code=0,
+            stdout=(
+                "SU2 Code Suite, Version 8.0.0\n"
+                "RMS_DENSITY: -2.5\n"
+                "RMS_DENSITY: -3.1\n"
+            ),
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(su2_case, case_dir, run_dir, resources=None)
+
+        assert result.residuals_history is not None
+        assert "RMS_DENSITY" in result.residuals_history
+        assert len(result.residuals_history["RMS_DENSITY"]) == 2

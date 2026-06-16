@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from cfdb.schema import CaseSpec
 
@@ -37,6 +37,16 @@ class RunResult:
     final_residuals: dict[str, float] | None = None
     """Final residual values extracted from solver log. None in dry_run."""
 
+    # === P2-a new fields ===
+    cell_count: int | None = None
+    """Mesh cell count extracted from blockMesh log or SU2 mesh stats. None in dry_run."""
+
+    step_details: list[dict[str, Any]] | None = None
+    """Per-step status: [{name, exit_code, wall_time_sec, status}]. None in dry_run."""
+
+    residuals_history: dict[str, list[float]] | None = None
+    """Full residual history (SVG data source). None in dry_run."""
+
 
 @dataclass
 class StepResult:
@@ -55,6 +65,20 @@ class StepResult:
     """Whether this step timed out."""
     critical: bool = True
     """Whether this step was critical (affects run termination)."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize step result to a dict for manifest storage.
+
+        Returns:
+            Dict with keys: name, exit_code, wall_time_sec, status.
+            status is 'success' if exit_code == 0, else 'failed'.
+        """
+        return {
+            "name": self.name,
+            "exit_code": self.exit_code,
+            "wall_time_sec": self.wall_time_sec,
+            "status": "success" if self.exit_code == 0 else "failed",
+        }
 
 
 @dataclass

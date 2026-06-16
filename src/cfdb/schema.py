@@ -334,6 +334,20 @@ class RunManifest(BaseModel):
     'RMS_DENSITY' for SU2). Values are the final residual magnitudes.
     None for dry_run / mock cases."""
 
+    # === P2-a new fields ===
+    cell_count: int | None = None
+    """Total mesh cell count (from blockMesh log or SU2 mesh stats).
+    None for dry_run/mock cases."""
+
+    step_details: list[dict[str, Any]] | None = None
+    """Per-step status records. Each dict: {name, exit_code, wall_time_sec, status}.
+    None for dry_run/mock/generic_command adapter (no steps)."""
+
+    residuals_history: dict[str, list[float]] | None = None
+    """Full residual history (not just final values). Used for SVG rendering.
+    Keys are field names (e.g. 'Ux', 'Uy', 'p'), values are the full residual
+    value list over iterations. None for dry_run/mock/generic_command."""
+
 
 class MetricsResult(BaseModel):
     """Metric computation results."""

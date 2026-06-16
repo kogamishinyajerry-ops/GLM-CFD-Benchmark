@@ -174,6 +174,59 @@
         {% endif %}
     </div>
 
+    {# P2-a: Residual convergence SVG #}
+    {% if residuals_svg %}
+    <h2>Residual Convergence</h2>
+    <div class="card">
+        {{ residuals_svg | safe }}
+    </div>
+    {% endif %}
+
+    {% if manifest.solver_version or manifest.final_residuals or manifest.cell_count or manifest.step_details %}
+    <h2>Solver Details</h2>
+    <div class="card">
+        <dl class="kv-grid">
+            {% if manifest.solver_version %}
+            <dt>Solver Version</dt><dd>{{ manifest.solver_version }}</dd>
+            {% endif %}
+            {% if manifest.cell_count %}
+            <dt>Cell Count</dt><dd>{{ manifest.cell_count | int }}</dd>
+            {% endif %}
+            {% if manifest.final_residuals %}
+            <dt>Final Residuals</dt><dd>
+                {% for field, val in manifest.final_residuals.items() %}
+                <code>{{ field }}: {{ "%.4e"|format(val) }}</code>
+                {% if not loop.last %} &nbsp; {% endif %}
+                {% endfor %}
+            </dd>
+            {% endif %}
+        </dl>
+
+        {% if manifest.step_details %}
+        <h3>Step Details</h3>
+        <table>
+            <thead>
+                <tr><th>Step</th><th>Exit Code</th><th>Wall Time (s)</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                {% for step in manifest.step_details %}
+                <tr>
+                    <td>{{ step.name }}</td>
+                    <td>{{ step.exit_code }}</td>
+                    <td>{{ "%.3f"|format(step.wall_time_sec) }}</td>
+                    <td>
+                        <span class="{{ 'status-pass' if step.status == 'success' else 'status-fail' }}">
+                            {{ step.status | upper }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <h2>Artifacts</h2>
     <div class="card">
         {% if manifest.artifacts %}

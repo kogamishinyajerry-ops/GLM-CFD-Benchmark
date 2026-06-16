@@ -274,6 +274,7 @@ class SU2Adapter:
                 any_timed_out = True
 
         final_residuals: dict[str, float] | None = None
+        residuals_history: dict[str, list[float]] | None = None
         if overall_exit == 0 and step_results:
             last_stdout = step_results[-1].stdout
             from cfdb.post.residuals import extract_final, parse_su2_residuals
@@ -281,6 +282,17 @@ class SU2Adapter:
             residuals = parse_su2_residuals(last_stdout)
             if residuals:
                 final_residuals = extract_final(residuals)
+                residuals_history = residuals  # P2-a: full history
+
+        # P2-a: step_details from StepResult.to_dict()
+        step_details = [sr.to_dict() for sr in step_results] if step_results else None
+
+        # P2-a: cell_count from SU2 mesh stats (first step stdout)
+        cell_count: int | None = None
+        if step_results:
+            from cfdb.post.mesh_stats import extract_su2_cell_count
+
+            cell_count = extract_su2_cell_count(step_results[0].stdout)
 
         return RunResult(
             exit_code=overall_exit,
@@ -291,6 +303,10 @@ class SU2Adapter:
             skipped_commands=None,
             solver_version=solver_version,
             final_residuals=final_residuals,
+            # === P2-a new fields ===
+            cell_count=cell_count,
+            step_details=step_details,
+            residuals_history=residuals_history,
         )
 
     def collect_outputs(self, case: CaseSpec, run_dir: Path) -> ArtifactManifest:

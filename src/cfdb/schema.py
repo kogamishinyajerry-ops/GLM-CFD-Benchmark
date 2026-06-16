@@ -324,6 +324,16 @@ class RunManifest(BaseModel):
     Each element is the fully-rendered command string.
     None when not in dry_run mode."""
 
+    solver_version: str | None = None
+    """Detected solver version string (e.g. 'OpenFOAM v2406', 'SU2 8.0.0').
+    None for dry_run / mock cases."""
+
+    final_residuals: dict[str, float] | None = None
+    """Final residual values extracted from solver log.
+    Keys are field names (e.g. 'Ux', 'Uy', 'p' for OpenFOAM;
+    'RMS_DENSITY' for SU2). Values are the final residual magnitudes.
+    None for dry_run / mock cases."""
+
 
 class MetricsResult(BaseModel):
     """Metric computation results."""

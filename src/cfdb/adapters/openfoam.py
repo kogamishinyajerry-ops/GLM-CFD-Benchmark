@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Template
 
-from cfdb.adapters.base import ArtifactManifest, ResourceSpec, RunResult, SolverAdapter
+from cfdb.adapters.base import (
+    ArtifactManifest,
+    ResourceSpec,
+    RunResult,
+    SolverAdapter,
+    StepResult,
+)
 from cfdb.schema import CaseSpec, SolverConfig
 
 logger = logging.getLogger(__name__)
@@ -196,30 +203,173 @@ class OpenFOAMAdapter:
                 skipped_commands=skipped,
             )
 
-        # P1-b: real execution
-        raise NotImplementedError(
-            "OpenFOAMAdapter real execution is not implemented yet (P1-b scope). "
-            "Use --dry-run for P1-a."
+        # === P1-b: real execution ===
+        from cfdb.execution.local import LocalExecutionBackend
+
+        if solver_config.steps is None:
+            raise ValueError(
+                "OpenFOAM adapter requires SolverConfig.steps for real execution. "
+                f"Case '{case.id}' solver '{solver_config.name}' has steps=None."
+            )
+
+        backend = LocalExecutionBackend()
+        step_results: list[StepResult] = []
+        case_dir_out = run_dir / "case"
+
+        # solver_version detection (from first step's stdout, zero extra cost)
+        solver_version: str | None = None
+
+        for i, step in enumerate(solver_config.steps):
+            rendered_cmd = Template(step.command).render(**context)
+            cmd_list = shlex.split(rendered_cmd)
+
+            # Execute via LocalExecutionBackend (iron rule #3)
+            result = backend.execute(
+                cmd_list,
+                cwd=case_dir_out,
+                timeout=step.timeout_sec,
+            )
+
+            # Write a log file named after the step
+            log_name = f"log.{step.name}"
+            (case_dir_out / log_name).write_text(
+                result.stdout + "\n" + result.stderr, encoding="utf-8"
+            )
+
+            step_results.append(
+                StepResult(
+                    name=step.name,
+                    exit_code=result.exit_code,
+                    wall_time_sec=result.wall_time_sec,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    timed_out=result.timed_out,
+                    critical=step.critical,
+                )
+            )
+
+            # Detect solver_version from the first step (usually blockMesh) stdout
+            if i == 0:
+                from cfdb.post.residuals import extract_openfoam_version
+
+                solver_version = extract_openfoam_version(result.stdout)
+
+            # CommandStep.critical takes effect
+            if result.exit_code != 0:
+                if step.critical:
+                    # Critical step failed, abort the entire run
+                    logger.error(
+                        "critical step '%s' failed (exit_code=%d), aborting run",
+                        step.name,
+                        result.exit_code,
+                    )
+                    break
+                else:
+                    # Non-critical step failed, log warning and continue
+                    logger.warning(
+                        "non-critical step '%s' failed (exit_code=%d), continuing",
+                        step.name,
+                        result.exit_code,
+                    )
+
+        return self._merge_step_results(step_results, solver_version)
+
+    def _merge_step_results(
+        self,
+        step_results: list[StepResult],
+        solver_version: str | None,
+    ) -> RunResult:
+        """Merge multiple StepResult into a single RunResult.
+
+        - exit_code: 0 if all steps succeeded, else first non-zero exit code
+        - stdout: concatenated stdout from all executed steps
+        - stderr: concatenated stderr from all executed steps
+        - wall_time_sec: sum of all step wall times
+        - timed_out: True if any step timed out
+        - solver_version: detected version (or None)
+        - final_residuals: parsed from the last step's stdout (the solve step)
+
+        Args:
+            step_results: List of per-step results.
+            solver_version: Detected solver version string (or None).
+
+        Returns:
+            Merged RunResult.
+        """
+        # Determine overall exit code
+        overall_exit = 0
+        for sr in step_results:
+            if sr.exit_code != 0:
+                overall_exit = sr.exit_code
+                break
+
+        # Concatenate stdout/stderr with step headers
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        total_wall = 0.0
+        any_timed_out = False
+        for sr in step_results:
+            stdout_parts.append(f"--- step: {sr.name} ---\n{sr.stdout}")
+            stderr_parts.append(f"--- step: {sr.name} ---\n{sr.stderr}")
+            total_wall += sr.wall_time_sec
+            if sr.timed_out:
+                any_timed_out = True
+
+        # Parse final_residuals from the last step's stdout (the solver step)
+        final_residuals: dict[str, float] | None = None
+        if overall_exit == 0 and step_results:
+            last_stdout = step_results[-1].stdout
+            from cfdb.post.residuals import extract_final, parse_openfoam_residuals
+
+            residuals = parse_openfoam_residuals(last_stdout)
+            if residuals:
+                final_residuals = extract_final(residuals)
+
+        return RunResult(
+            exit_code=overall_exit,
+            stdout="\n".join(stdout_parts),
+            stderr="\n".join(stderr_parts),
+            wall_time_sec=total_wall,
+            timed_out=any_timed_out,
+            skipped_commands=None,
+            solver_version=solver_version,
+            final_residuals=final_residuals,
         )
 
     def collect_outputs(self, case: CaseSpec, run_dir: Path) -> ArtifactManifest:
-        """Scan run_dir/case/ for all generated files.
+        """Scan run_dir/case/ for all generated files and extract QoI.
 
         Args:
             case: CaseSpec configuration.
             run_dir: Run directory.
 
         Returns:
-            ArtifactManifest with file listing.
+            ArtifactManifest with file listing and QoI values (if probes output exists).
         """
         case_dir_out = run_dir / "case"
         files: dict[str, Path] = {}
+        qoi_values: dict[str, float] = {}
+
         if case_dir_out.exists():
             for path in sorted(case_dir_out.rglob("*")):
                 if path.is_file():
                     rel = path.relative_to(run_dir)
                     files[rel.as_posix()] = rel
-        return ArtifactManifest(files=files, qoi_values=None, curves=None)
+
+        # P1-b: Extract centerline_umax from probes (if probes output exists)
+        probes_dir = case_dir_out / "postProcessing" / "probes"
+        if probes_dir.exists() and not self._dry_run:
+            from cfdb.post.qoi_extractor import extract_openfoam_centerline_umax
+
+            umax = extract_openfoam_centerline_umax(probes_dir, "U")
+            if umax is not None:
+                qoi_values["centerline_umax"] = umax
+
+        return ArtifactManifest(
+            files=files,
+            qoi_values=qoi_values if qoi_values else None,
+            curves=None,
+        )
 
 
 # Ensure the class satisfies the SolverAdapter protocol

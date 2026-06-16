@@ -166,6 +166,87 @@ class TestRunManifest:
                 status="running", timing=timing,
             )
 
+    def test_p1b_solver_version_and_residuals_default_none(self) -> None:
+        """P1-b fields default to None (backward compat with P0/P1-a)."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        m = RunManifest(
+            run_id="20260616T120000Z_test_generic_abcd1234",
+            case_id="test",
+            solver="generic",
+            status="success",
+            timing=timing,
+        )
+        assert m.solver_version is None
+        assert m.final_residuals is None
+
+    def test_p1b_solver_version_and_residuals_set(self) -> None:
+        """P1-b fields can be set with values."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        m = RunManifest(
+            run_id="20260616T120000Z_test_generic_abcd1234",
+            case_id="test",
+            solver="openfoam",
+            status="success",
+            timing=timing,
+            solver_version="OpenFOAM v2406",
+            final_residuals={"Ux": 1.2e-6, "Uy": 2.1e-6, "p": 3.4e-5},
+        )
+        assert m.solver_version == "OpenFOAM v2406"
+        assert m.final_residuals is not None
+        assert m.final_residuals["Ux"] == 1.2e-6
+
+    def test_p1b_json_roundtrip(self) -> None:
+        """JSON serialize/deserialize preserves P1-b fields."""
+        import json
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        m = RunManifest(
+            run_id="20260616T120000Z_test_generic_abcd1234",
+            case_id="test",
+            solver="openfoam",
+            status="success",
+            timing=timing,
+            solver_version="OpenFOAM v2406",
+            final_residuals={"Ux": 1.2e-6},
+        )
+        json_str = m.model_dump_json()
+        data = json.loads(json_str)
+        assert data["solver_version"] == "OpenFOAM v2406"
+        assert data["final_residuals"]["Ux"] == 1.2e-6
+
+        # Round-trip: reconstruct from JSON
+        m2 = RunManifest.model_validate_json(json_str)
+        assert m2.solver_version == "OpenFOAM v2406"
+        assert m2.final_residuals == {"Ux": 1.2e-6}
+
+    def test_p1b_backward_compat_no_fields(self) -> None:
+        """Old JSON without P1-b fields loads fine (fields default to None)."""
+        import json
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        timing = TimingSpec(wall_time_sec=1.0, start_time=now, end_time=now)
+        old_data = {
+            "run_id": "20260616T120000Z_test_generic_abcd1234",
+            "case_id": "test",
+            "solver": "generic",
+            "status": "success",
+            "timing": timing.model_dump(mode="json"),
+        }
+        m = RunManifest.model_validate(old_data)
+        assert m.solver_version is None
+        assert m.final_residuals is None
+
 
 class TestMetricsResult:
     def test_defaults(self) -> None:

@@ -31,6 +31,31 @@ class RunResult:
     """In dry_run mode: list of rendered command strings that were skipped.
     None in normal mode. Runner reads this to populate manifest."""
 
+    solver_version: str | None = None
+    """Detected solver version (e.g. 'OpenFOAM v2406'). None in dry_run."""
+
+    final_residuals: dict[str, float] | None = None
+    """Final residual values extracted from solver log. None in dry_run."""
+
+
+@dataclass
+class StepResult:
+    """Result of a single step in a multi-step solver execution."""
+    name: str
+    """Step name (e.g. 'block_mesh', 'solve')."""
+    exit_code: int
+    """Exit code of the step command."""
+    wall_time_sec: float
+    """Wall time for this step."""
+    stdout: str
+    """Captured stdout."""
+    stderr: str
+    """Captured stderr."""
+    timed_out: bool = False
+    """Whether this step timed out."""
+    critical: bool = True
+    """Whether this step was critical (affects run termination)."""
+
 
 @dataclass
 class ArtifactManifest:

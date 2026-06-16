@@ -53,6 +53,10 @@ ignore = ["UP017"]  # Keep timezone.utc per architecture doc §12.2
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_solver: tests requiring real OpenFOAM/SU2 installation (skipped in CI)",
+]
+addopts = "--cov=cfdb --cov-report=term-missing --cov-fail-under=80 -m 'not real_solver'"
 
 [tool.coverage.run]
 source = ["src/cfdb"]

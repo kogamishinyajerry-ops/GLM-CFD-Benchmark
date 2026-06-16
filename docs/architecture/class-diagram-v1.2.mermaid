@@ -1,0 +1,153 @@
+%% P1-b Class Diagram (Incremental — showing new and changed elements)
+%% File: docs/class-diagram-v1.2.mermaid
+
+classDiagram
+    direction TB
+
+    %% === P1-b Changed: RunManifest ===
+    class RunManifest {
+        +str run_id
+        +str case_id
+        +str solver
+        +str backend
+        +str status
+        +TimingSpec timing
+        +str~?~ host
+        +dict~str, Path~ artifacts
+        +str~?~ git_commit
+        +str~?~ container_digest
+        +str~?~ error
+        +dict~str, str~?~ cli_args
+        +list~str~?~ dry_run_skipped_commands
+        +str~?~ solver_version           %% P1-b NEW
+        +dict~str, float~?~ final_residuals  %% P1-b NEW
+    }
+
+    %% === P1-b Changed: RunResult ===
+    class RunResult {
+        +int exit_code
+        +str stdout
+        +str stderr
+        +float wall_time_sec
+        +bool timed_out
+        +list~str~?~ skipped_commands
+        +str~?~ solver_version           %% P1-b NEW
+        +dict~str, float~?~ final_residuals  %% P1-b NEW
+    }
+
+    %% === P1-b NEW: StepResult ===
+    class StepResult {
+        +str name
+        +int exit_code
+        +float wall_time_sec
+        +str stdout
+        +str stderr
+        +bool timed_out
+        +bool critical
+    }
+
+    %% === Existing: ArtifactManifest (unchanged, used differently) ===
+    class ArtifactManifest {
+        +dict~str, Path~ files
+        +dict~str, float~?~ qoi_values   %% P1-b: now filled by qoi_extractor
+        +dict~str, list?~ curves
+    }
+
+    %% === P1-b Changed: OpenFOAMAdapter ===
+    class OpenFOAMAdapter {
+        +str name = "openfoam"
+        -bool _dry_run
+        -Path _template_dir
+        +prepare(case, case_dir, run_dir) void
+        +run(case, case_dir, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+        -_find_solver_config(case) SolverConfig
+        -_build_context(case, case_dir, run_dir) dict
+        -_render_template(name, context) str
+        -_merge_step_results(step_results, solver_version) RunResult  %% P1-b NEW
+    }
+
+    %% === P1-b Changed: SU2Adapter ===
+    class SU2Adapter {
+        +str name = "su2"
+        -bool _dry_run
+        -Path _template_dir
+        +prepare(case, case_dir, run_dir) void
+        +run(case, case_dir, run_dir, resources) RunResult
+        +collect_outputs(case, run_dir) ArtifactManifest
+        -_find_solver_config(case) SolverConfig
+        -_build_context(case, case_dir, run_dir) dict
+        -_render_template(name, context) str
+        -_merge_step_results(step_results, solver_version) RunResult  %% P1-b NEW
+    }
+
+    %% === P1-b NEW: residuals module ===
+    class ResidualsModule {
+        <<module: post/residuals.py>>
+        +parse_openfoam_residuals(log_text) dict~str, list~float~~
+        +parse_su2_residuals(log_text) dict~str, list~float~~
+        +extract_final(residuals) dict~str, float~
+        +extract_openfoam_version(log_text) str~?~
+        +extract_su2_version(log_text) str~?~
+    }
+
+    %% === P1-b NEW: qoi_extractor module ===
+    class QoiExtractorModule {
+        <<module: post/qoi_extractor.py>>
+        +extract_openfoam_centerline_umax(probes_dir, field) float~?~
+        +extract_su2_skin_friction_coeff(csv_path, method) float~?~
+    }
+
+    %% === Existing: Runner (unchanged interface, new field passing) ===
+    class Runner {
+        -CaseRegistry _registry
+        -ResultRepository _repo
+        -Path _runs_root
+        -MetricsEngine _metrics_engine
+        +execute(case_id, solver, backend, dry_run) RunManifest
+        -_execute_phases(adapter, case, run_dir) RunResult
+        -_collect_artifacts(adapter, case, run_dir) ArtifactManifest
+        -_determine_status(run_result, dry_run) str
+        -_build_error_message(run_result, status) str~?~
+    }
+
+    %% === Existing: LocalExecutionBackend (unchanged) ===
+    class LocalExecutionBackend {
+        +str name = "local"
+        +execute(command, cwd, timeout, env) RunResult
+        -_resolve_command(command) list~str~
+        -_write_logs(cwd, stdout, stderr) void
+    }
+
+    %% === Existing: CommandStep (unchanged from P1-a) ===
+    class CommandStep {
+        +str name
+        +str command
+        +int? timeout_sec
+        +bool critical = True
+    }
+
+    %% Relationships
+    OpenFOAMAdapter --> RunResult : returns
+    OpenFOAMAdapter --> StepResult : creates (private list)
+    OpenFOAMAdapter --> ArtifactManifest : returns from collect_outputs
+    OpenFOAMAdapter ..> ResidualsModule : calls for parsing
+    OpenFOAMAdapter ..> QoiExtractorModule : calls for QoI
+
+    SU2Adapter --> RunResult : returns
+    SU2Adapter --> StepResult : creates (private list)
+    SU2Adapter --> ArtifactManifest : returns from collect_outputs
+    SU2Adapter ..> ResidualsModule : calls for parsing
+    SU2Adapter ..> QoiExtractorModule : calls for QoI
+
+    Runner --> OpenFOAMAdapter : uses via get_adapter()
+    Runner --> SU2Adapter : uses via get_adapter()
+    Runner --> RunManifest : builds
+    Runner --> RunResult : reads solver_version + final_residuals
+
+    OpenFOAMAdapter --> LocalExecutionBackend : delegates subprocess
+    SU2Adapter --> LocalExecutionBackend : delegates subprocess
+    LocalExecutionBackend --> RunResult : returns per-step
+
+    OpenFOAMAdapter --> CommandStep : reads steps from SolverConfig
+    SU2Adapter --> CommandStep : reads steps from SolverConfig

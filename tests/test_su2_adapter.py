@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from cfdb.adapters.base import RunResult
 from cfdb.adapters.su2 import SU2Adapter
 from cfdb.schema import CaseSpec, SolverConfig
 
@@ -143,17 +145,64 @@ class TestSU2Run:
         assert result.skipped_commands is not None
         assert len(result.skipped_commands) == 1
 
-    def test_run_real_raises_not_implemented(
+    def test_run_real_execution_success(
         self, su2_case: CaseSpec, tmp_path: Path
     ) -> None:
+        """Test real execution path with mocked LocalExecutionBackend."""
         adapter = SU2Adapter(dry_run=False)
         case_dir = tmp_path / "case"
         case_dir.mkdir()
         run_dir = tmp_path / "run"
         adapter.prepare(su2_case, case_dir, run_dir)
 
-        with pytest.raises(NotImplementedError, match="P1-b"):
-            adapter.run(su2_case, case_dir, run_dir, resources=None)
+        mock_result = RunResult(
+            exit_code=0,
+            stdout=(
+                "SU2 Code Suite, Version 8.0.0\n"
+                "RMS_DENSITY: -2.5\n"
+                "RMS_DENSITY: -3.1\n"
+            ),
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(su2_case, case_dir, run_dir, resources=None)
+
+        assert result.exit_code == 0
+        assert result.skipped_commands is None
+        assert result.solver_version is not None
+        assert "8.0.0" in (result.solver_version or "")
+        assert result.final_residuals is not None
+        assert "RMS_DENSITY" in result.final_residuals
+
+    def test_critical_step_failure_aborts(
+        self, su2_case: CaseSpec, tmp_path: Path
+    ) -> None:
+        """Test that critical step failure aborts the run."""
+        adapter = SU2Adapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(su2_case, case_dir, run_dir)
+
+        mock_fail = RunResult(
+            exit_code=1,
+            stdout="",
+            stderr="SU2 FATAL ERROR",
+            wall_time_sec=0.1,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_fail,
+        ):
+            result = adapter.run(su2_case, case_dir, run_dir, resources=None)
+
+        assert result.exit_code != 0
 
 
 class TestSU2CollectOutputs:

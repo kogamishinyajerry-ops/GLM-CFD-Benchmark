@@ -17,9 +17,24 @@
 - `ExecutionBackend`: execute(command, cwd, timeout) → RunResult
 - `ResultRepository`: save_run/load_run/list_runs（P0 JSON, P2 SQLite）
 
+## Schema 扩展点（P1-a）
+- `SolverConfig.steps: list[CommandStep] | None`（多步命令序列，OpenFOAM/SU2 用）
+- `SolverConfig.parameters: dict[str, Any] | None`（模板参数注入）
+- `RunManifest.status: Literal["success","failed","timeout","dry_run"]`
+- `RunManifest.dry_run_skipped_commands: list[str] | None`
+- `RunResult.skipped_commands: list[str] | None`（默认 None，挂 dataclass 上）
+- `CommandStep`: name/command/timeout_sec/critical
+
+## dry_run 机制（P1-a）
+- `dry_run` 通过 adapter `__init__` 注入（铁律 #3：不改 SolverAdapter Protocol）
+- MetricsEngine 双重判断：检测 `run_result.skipped_commands is not None` → overall=dry_run
+- 非 dry_run 时 OpenFOAM/SU2 raise NotImplementedError（P1-b 才接真实 subprocess）
+- OpenFOAM/SU2 用 `run_dir/case/` 子目录隔离 system/constant/0 结构
+- 模板打包用 hatchling `force-include` + `templates/__init__.py` 空文件
+
 ## 阶段路线图
-- **P0（已交付 2026-06-16）**: mock case 闭环
-- **P1-a**: openfoam/su2 adapter dry_run（生成 case 目录但不执行）
+- **P0（已交付 2026-06-16, commit 5c9948e）**: mock case 闭环
+- **P1-a（已交付 2026-06-16, commit 4d67403）**: OpenFOAM/SU2 adapter dry_run 模式
 - **P1-b**: 真实 OpenFOAM/SU2 + Docker backend + lid-driven cavity/flat plate/NACA0012
 - **P1**: DVC 管理大网格数据
 - **P2**: SQLite + surrogate adapter + fluent + slurm + Web Dashboard + 高级 V&V case

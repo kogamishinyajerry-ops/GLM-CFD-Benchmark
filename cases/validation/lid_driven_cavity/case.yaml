@@ -1,7 +1,7 @@
 id: lid_driven_cavity
 name: Lid-Driven Cavity (Re=100)
 category: validation
-description: "Classic lid-driven cavity benchmark, OpenFOAM icoFoam, laminar Re=100."
+description: "Classic lid-driven cavity benchmark, OpenFOAM icoFoam, laminar Re=100. Reference: Ghia, Ghia & Shin (1982)."
 physics:
   flow: incompressible
   turbulence: none
@@ -40,8 +40,10 @@ outputs:
     - centerline_umax
 reference:
   type: dns
+  files:
+    centerline: reference/ghia1982_centerline.csv
   qoi_values:
-    centerline_umax: 0.375
+    centerline_umax: 0.371
 metrics:
   qoi_relative_tolerance:
     centerline_umax: 0.05

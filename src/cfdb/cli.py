@@ -138,10 +138,22 @@ def run(
     typer.echo("=" * 60)
     typer.echo(f"Run ID:    {manifest.run_id}")
     typer.echo(f"Case:      {manifest.case_id}")
-    typer.echo(f"Solver:    {manifest.solver}")
+    typer.echo(f"Solver:    {manifest.solver}", nl=False)
+    if manifest.solver_version:
+        typer.echo(f" ({manifest.solver_version})")
+    else:
+        typer.echo("")
     typer.echo(f"Backend:   {manifest.backend}")
     typer.echo(f"Status:    {manifest.status}")
     typer.echo(f"Wall Time: {manifest.timing.wall_time_sec:.3f}s")
+
+    # P1-b: Print final residuals
+    if manifest.final_residuals:
+        res_parts = ", ".join(
+            f"{k}={v:.2e}" for k, v in manifest.final_residuals.items()
+        )
+        typer.echo(f"Residuals: {res_parts}")
+
     if manifest.dry_run_skipped_commands:
         typer.echo(
             f"[DRY-RUN] Skipped {len(manifest.dry_run_skipped_commands)} command(s):"

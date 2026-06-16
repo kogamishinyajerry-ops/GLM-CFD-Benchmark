@@ -1,7 +1,7 @@
 id: flat_plate_su2
 name: Flat Plate (SU2 Verification)
 category: verification
-description: "Flat plate verification case for SU2 solver, laminar boundary layer."
+description: "Flat plate laminar boundary layer verification case for SU2 solver. Reference: Blasius analytical solution."
 physics:
   flow: incompressible
   turbulence: none
@@ -38,8 +38,10 @@ outputs:
     - skin_friction_coeff
 reference:
   type: analytical
+  files:
+    blasius: reference/blasius_cf.csv
   qoi_values:
-    skin_friction_coeff: 0.00133
+    skin_friction_coeff: 0.0026
 metrics:
   qoi_relative_tolerance:
     skin_friction_coeff: 0.1

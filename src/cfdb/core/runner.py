@@ -114,6 +114,9 @@ class Runner:
             error=error_msg,
             cli_args=cli_args,
             dry_run_skipped_commands=run_result.skipped_commands,
+            # === P1-b new fields ===
+            solver_version=run_result.solver_version,
+            final_residuals=run_result.final_residuals,
         )
 
         self._repo.save_run(manifest, metrics)

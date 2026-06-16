@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from cfdb.adapters.base import RunResult
 from cfdb.adapters.openfoam import OpenFOAMAdapter
 from cfdb.schema import CaseSpec, SolverConfig
 
@@ -174,17 +176,68 @@ class TestOpenFOAMRun:
         assert result.skipped_commands is not None
         assert len(result.skipped_commands) == 1
 
-    def test_run_real_raises_not_implemented(
+    def test_run_real_execution_all_steps_success(
         self, openfoam_case: CaseSpec, tmp_path: Path
     ) -> None:
+        """Test real execution path with mocked LocalExecutionBackend."""
         adapter = OpenFOAMAdapter(dry_run=False)
         case_dir = tmp_path / "case"
         case_dir.mkdir()
         run_dir = tmp_path / "run"
         adapter.prepare(openfoam_case, case_dir, run_dir)
 
-        with pytest.raises(NotImplementedError, match="P1-b"):
-            adapter.run(openfoam_case, case_dir, run_dir, resources=None)
+        mock_result = RunResult(
+            exit_code=0,
+            stdout=(
+                "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n"
+                "|  \\\\    /   O peration     | Version:  v2406                                 |\n"
+                "Build  : 7cf83b7-OpenFOAM-v2406\n"
+                "Solving for Ux, Initial residual = 1.2e-6\n"
+                "Solving for Uy, Initial residual = 2.1e-6\n"
+                "Solving for p, Initial residual = 3.4e-5\n"
+            ),
+            stderr="",
+            wall_time_sec=1.0,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_result,
+        ):
+            result = adapter.run(openfoam_case, case_dir, run_dir, resources=None)
+
+        assert result.exit_code == 0
+        assert result.skipped_commands is None  # not dry_run
+        assert result.solver_version is not None
+        assert "v2406" in (result.solver_version or "")
+        assert result.final_residuals is not None
+        assert "Ux" in result.final_residuals
+
+    def test_critical_step_failure_aborts(
+        self, openfoam_case: CaseSpec, tmp_path: Path
+    ) -> None:
+        """Test that critical step failure aborts the run."""
+        adapter = OpenFOAMAdapter(dry_run=False)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(openfoam_case, case_dir, run_dir)
+
+        mock_fail = RunResult(
+            exit_code=1,
+            stdout="",
+            stderr="FOAM FATAL ERROR",
+            wall_time_sec=0.1,
+        )
+
+        with patch(
+            "cfdb.execution.local.LocalExecutionBackend.execute",
+            return_value=mock_fail,
+        ):
+            result = adapter.run(openfoam_case, case_dir, run_dir, resources=None)
+
+        # Critical step failed -> overall exit code should be non-zero
+        assert result.exit_code != 0
 
 
 class TestOpenFOAMCollectOutputs:

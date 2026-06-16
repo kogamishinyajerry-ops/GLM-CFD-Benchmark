@@ -1,0 +1,89 @@
+%% P1-b Real Execution Sequence Diagram (OpenFOAM)
+%% File: docs/sequence-diagram-v1.2.mermaid
+
+sequenceDiagram
+    participant CLI as CLI (cli.py)
+    participant R as Runner (runner.py)
+    participant A as OpenFOAMAdapter
+    participant B as LocalExecutionBackend
+    participant P as PostProcessing<br/>(residuals + qoi)
+    participant M as MetricsEngine
+    participant Repo as Repository
+
+    CLI->>R: execute(case, solver, dry_run=False)
+    R->>R: adapter = get_adapter("openfoam", dry_run=False)
+    R->>R: start_time = now()
+
+    Note over R,A: Phase 1: prepare
+    R->>A: prepare(case, case_dir, run_dir)
+    A->>A: render controlDict.j2 (with probes)
+    A->>A: render fvSchemes, fvSolution, transportProperties
+    A->>A: write 0/U, 0/p (initial fields)
+    A-->>R: prepare complete
+
+    Note over R,A: Phase 2: run (REAL execution)
+    R->>A: run(case, case_dir, run_dir, resources)
+
+    A->>A: solver_config.steps = [block_mesh, solve]
+
+    Note over A,B: Step 1: block_mesh (critical=True)
+    A->>A: Template("blockMesh -case {{ run_dir }}/case").render()
+    A->>A: shlex.split → ["blockMesh", "-case", "..."]
+    A->>B: execute(cmd_list, cwd=case_dir, timeout=60)
+    B->>B: subprocess.run(...)
+    B->>B: write stdout.log, stderr.log
+    B-->>A: RunResult(exit_code=0, stdout=..., stderr=...)
+    A->>A: write log.block_mesh
+    A->>A: StepResult(name="block_mesh", exit_code=0, ...)
+    A->>P: extract_openfoam_version(stdout)
+    P-->>A: "OpenFOAM v2406"
+
+    Note over A,B: Step 2: solve (critical=True)
+    A->>A: Template("icoFoam -case {{ run_dir }}/case").render()
+    A->>B: execute(cmd_list, cwd=case_dir, timeout=300)
+    B->>B: subprocess.run(...)
+    B-->>A: RunResult(exit_code=0, stdout="...Solving for Ux...")
+    A->>A: write log.solve
+    A->>A: StepResult(name="solve", exit_code=0, ...)
+
+    Note over A,P: Merge + residual parsing
+    A->>A: _merge_step_results(step_results, "OpenFOAM v2406")
+    A->>P: parse_openfoam_residuals(last_step.stdout)
+    P-->>A: {Ux: [0.99, 0.08, 1.2e-6], ...}
+    A->>P: extract_final(residuals)
+    P-->>A: {Ux: 1.2e-6, Uy: 2.1e-6, p: 3.4e-5}
+
+    A-->>R: RunResult(exit_code=0, solver_version="OpenFOAM v2406", final_residuals={...})
+
+    Note over R,A: Phase 3: collect_outputs
+    R->>A: collect_outputs(case, run_dir)
+    A->>A: scan run_dir/case/ → files dict
+    A->>P: extract_openfoam_centerline_umax(probes_dir)
+    P-->>A: 0.374
+    A-->>R: ArtifactManifest(qoi_values={"centerline_umax": 0.374})
+
+    Note over R,M: Phase 4: metrics
+    R->>M: compute(case, artifacts, run_result)
+    M->>M: ref=0.371, computed=0.374, err=|0.374-0.371|/0.371=0.81%
+    M-->>R: MetricsResult(qoi_relative_errors={"centerline_umax": 0.0081}, qoi_pass=True)
+
+    Note over R: Phase 5: build manifest
+    R->>R: status="success"
+    R->>R: solver_version ← run_result.solver_version
+    R->>R: final_residuals ← run_result.final_residuals
+    R->>Repo: save_run(manifest, metrics)
+    Repo->>Repo: write runs/<run_id>/manifest.json
+
+    R-->>CLI: manifest
+    CLI->>CLI: echo summary (solver_version, residuals, QoI)
+
+    %% === Critical Step Failure Path ===
+    Note over A,B: ALTERNATE: blockMesh fails (exit_code=1)
+    A->>B: execute(blockMesh cmd)
+    B-->>A: RunResult(exit_code=1, stderr="FOAM FATAL ERROR")
+    A->>A: step.critical == True → BREAK step loop
+    Note over A: solve step SKIPPED
+    A-->>R: RunResult(exit_code=1, solver_version="OpenFOAM v2406")
+    R->>R: status="failed"
+    R->>R: error_msg = "exit_code=1\nstderr: FOAM FATAL ERROR"
+    R-->>CLI: manifest (status=failed, exit_code=1)

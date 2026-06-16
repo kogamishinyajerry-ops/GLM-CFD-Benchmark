@@ -62,26 +62,71 @@
   - `query_metrics` 是 SQLite 独有方法（不在 Protocol，未来供 Web Dashboard 用）
 - CLI: `--storage {json,sqlite}` 默认 json + `--db-path PATH` 默认 `runs/cfdb.db`
 
-## cfdb.reporting SVG（P2-a 新增）
-- `reporting/svg_residuals.py`: render_residual_svg（纯 Python 零依赖，仅 import math）
-- Okabe-Ito 色盲安全 8 色 + log10 + 线性映射 + viewBox 680x400
-- 空数据返回占位 SVG，非正值 log 跳过，Y 轴范围自动扩展
-- HTML report 内嵌 SVG + Solver Details section（cell_count + final_residuals + step_details 表格）
+## cfdb.reporting 全套 SVG（P2-a + P2-c）
+- `reporting/svg_residuals.py`（P2-a）: render_residual_svg（单 run 残差曲线，viewBox 680×400）
+- `reporting/svg_polar.py`（P2-c）: render_polar_svg（Cl-α + Cd-α 双子图，viewBox 680×800，Okabe-Ito 8 色）
+- `reporting/svg_compare.py`（P2-c）: render_cp_comparison_svg（多 solver Cp-x/c，Y 轴反转）+ render_residual_comparison_svg（多 run 残差对比，共享 log 轴）
+- `reporting/compare.py`（P2-c）: QoIComparison + compare_runs + render_compare_text/html
+  - 跨 case 比较（manifest1.case_id != manifest2.case_id）自动跳过 tolerance 列
+  - 缺失 QoI 优雅降级（value 为 None，abs_diff/rel_diff 为 None）
+  - HTML 报告内嵌 residual_svg + cp_svg（Optional）
+- `reporting/html.py`: generate_run_report（P1-b，单 run）+ generate_multi_solver_report（P2-c，多 run sweep）
+- 全部纯 Python 零依赖（仅 import math / dataclass / re），HTML 内嵌 SVG
 
-## pytest marker 分层（P1-b）
+## cfdb.execution.docker（P2-b 新增）
+- `execution/docker.py`: DockerBackend(ExecutionBackend) via structural subtyping
+- `__init__(image, pull_policy='missing')`：image 必填，pull_policy 三选一
+- 执行流：_check_daemon → _pull_image → _resolve_digest（缓存）→ _build_command → subprocess.run
+- digest 解析：RepoDigests 优先（带 registry 前缀 `image@sha256:...`），失败回退 .Id
+- bind-mount cwd 同绝对路径；Linux/macOS 加 `--user $(id -u):$(id -g)`，Windows 跳过（vxfsd 处理权限）
+- 错误分层：`BackendError`（基础设施）抛异常；`RunResult(exit_code != 0)`（命令失败）正常返回
+- 27 测试全 mock subprocess；`real_docker` pytest marker 标记真实 Docker 测试，CI 默认 deselect
+
+## cfdb.data 子包（P2-b 新增）
+- `data/__init__.py` + `data/dvc.py`: DVC CLI wrapper（dvc_available/dvc_pull/dvc_status）
+- **用 CLI 而非 Python SDK**：DVC Python API 不稳定，CLI 更稳；全 mock subprocess
+- `DVC_AVAILABLE` 常量在 import 时求值一次；测试用 `patch("cfdb.data.dvc.dvc_available")` 覆盖
+- CLI: `cfdb data status` / `cfdb data pull [targets...]`；DVC 未装时 status 优雅 WARN，pull FAIL exit 1
+
+## cfdb.post.cl_cd（P2-c 新增）
+- `post/qoi_extractor.py` 扩展：extract_cl_cd_openfoam（forces.dat 解析末时刻 Fx/Fy → Cl/Cd）
+- extract_cl_cd_su2（surface_flow.csv 沿上下表面梯形积分 Cp）
+- load_ladson_polar（cases/validation/naca0012/reference/ladson_polar.csv → 4 点 α/Cl/Cd）
+- Cl/Cd 公式：Cl = Fy / (0.5·ρ·U∞²·A_ref)，Cd = Fx / (0.5·ρ·U∞²·A_ref)
+
+## NACA0012 α-sweep 4 case（P2-b α=0° + P2-c α=5/10/15°）
+- `naca0012_a0`（P2-b）+ `naca0012_a5` / `naca0012_a10` / `naca0012_a15`（P2-c）
+- 每个 case 独立 case.yaml，仅差 `alpha_deg` + reference 路径 + solver 参数
+- α=15° 近失速 → tolerance 放宽到 0.15（其余 0.05-0.10）
+- 共享 geometry STL（cosine spacing 100 点，closed TE coeff -0.1015）
+- 参考数据：Ladson 1988（NASA TM-4074）4 点 polar + 每攻角 17 点 Cp 分布
+- **dry_run 不产生 cl/cd QoI**（数据限制，非 bug），polar SVG 需要 real solver run 才有数据
+
+## adapter backend 注入（P2-b 核心改造）
+- **痛点**：P1-b adapter 在 `run()` 内硬编码 `LocalExecutionBackend()`，但 `SolverAdapter` Protocol（铁律 #3）只约束方法签名
+- **方案**：具体 adapter `__init__` 加 `backend: ExecutionBackend | None = None`（Protocol 不约束构造函数）
+  - 默认 None → lazy import `LocalExecutionBackend`
+  - 显式传 DockerBackend → 容器执行
+- `get_adapter(name, dry_run, backend)`：generic 走 P0 路径（不传），openfoam/su2 接受注入
+- `Runner._build_backend(name, options)` 替换 `get_backend(name)` 简单工厂；docker lazy import 避免无谓加载
+- `RunManifest.backend_options: dict[str, Any] | None = None`（铁律 #2：默认 None）
+- `RunManifest.container_digest` 复用 P1-b 预留字段，P2-b 填充 Docker 模式实际值
+
+## pytest marker 分层（P1-b + P2-b）
 - `@pytest.mark.real_solver` — 真实 OpenFOAM/SU2 安装才能跑，CI 默认 deselect
-- `pyproject.toml` addopts 含 `-m 'not real_solver'`
-- 本地手测: `pytest -m real_solver`
-- 单元/集成测试用 mock backend（unittest.mock.patch LocalExecutionBackend.execute）
+- `@pytest.mark.real_docker` — 真实 Docker daemon 才能跑，CI 默认 deselect
+- `pyproject.toml` addopts 含 `-m 'not real_solver and not real_docker'`
+- 本地手测: `pytest -m real_solver` / `pytest -m real_docker`
+- 单元/集成测试用 mock backend（unittest.mock.patch LocalExecutionBackend.execute / subprocess.run）
 
 ## 阶段路线图
 - **P0（已交付 2026-06-16, commit 5c9948e）**: mock case 闭环，112 测试
 - **P1-a（已交付 2026-06-16, commit 4d67403）**: OpenFOAM/SU2 dry_run，158 测试 / 94% cov
 - **P1-b（已交付 2026-06-16, commit 4e0b857）**: 真实 OpenFOAM/SU2 subprocess + 残差/QoI 解析，178 测试 / 90.89% cov
 - **P2-a（已交付 2026-06-16, commit 81f32bb）**: SQLite 持久化 + 残差 SVG 报告 + P1-b 遗留小项，250 测试 / 91.08% cov
-- **P2-b 候选**（PRD-v2.0 §5 推荐）: Docker backend 完整支持 + DVC 大文件 + NACA0012 OF+SU2 对比单攻角
-- **P2-c 候选**: ML surrogate adapter（AirfRANS 推理 only）+ Web Dashboard（FastAPI + Jinja2 + Plotly.js）
-- **P3 按需**: Fluent adapter + Slurm backend
+- **P2-b（已交付 2026-06-16, commit 41fbeaa）**: Docker backend + DVC 大文件 + NACA0012 α=0° 单攻角
+- **P2-c（已交付 2026-06-16）**: NACA0012 α=0/5/10/15° 多攻角扫描 + Polar/Cp/残差对比 SVG + cfdb compare + cfdb report-sweep，392 测试 / 90.39% cov
+- **P3 候选**: ML surrogate adapter（AirfRANS 推理 only）+ Web Dashboard（FastAPI + Jinja2 + Plotly.js）+ Fluent adapter + Slurm backend
 
 ## 命名规范
 - CLI: `cfdb`

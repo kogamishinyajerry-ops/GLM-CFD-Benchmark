@@ -379,3 +379,230 @@ def load_ladson_reference(csv_path: Path) -> tuple[list[float], list[float]] | N
         return None
 
     return x_list, cp_list
+
+
+# === P2-c: Cl/Cd extractors for alpha sweep ===
+
+def extract_cl_cd_openfoam(
+    forces_dat: Path,
+    rho: float = 1.225,
+    u_inf: float = 100.0,
+    a_ref: float = 1.0,
+) -> tuple[float, float] | None:
+    """Extract final Cl/Cd from OpenFOAM forces.dat.
+
+    OpenFOAM forces function object writes per-time data in
+    ``postProcessing/forces/<time>/forces.dat``::
+
+        # Forces
+        # time forces (Fx Fy Fz) moments (Mx My Mz)
+        0.000 (0.00123 -0.00045 0) (0 0 0.00001)
+        1.000 (0.00125 -0.00050 0) (0 0 0.00001)
+
+    Cl = Fy / q_inf / A_ref, Cd = Fx / q_inf / A_ref
+    where q_inf = 0.5 * rho * U_inf^2.
+
+    Args:
+        forces_dat: Path to forces.dat (or force.dat — Foundation spelling).
+        rho: Freestream density (kg/m³), default 1.225 (sea-level air).
+        u_inf: Freestream velocity magnitude (m/s).
+        a_ref: Reference area (m²), default 1.0 (chord × span for 2D).
+
+    Returns:
+        Tuple (cl, cd) from the last time step, or None if parsing fails.
+    """
+    if not forces_dat.exists():
+        logger.warning("forces.dat not found: %s", forces_dat)
+        return None
+
+    try:
+        content = forces_dat.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read forces.dat %s: %s", forces_dat, e)
+        return None
+
+    # Each data line: "time (Fx Fy Fz) (Mx My Mz)"
+    # We extract Fx, Fy from the first parenthesized group
+    vector_pattern = re.compile(
+        r"\(\s*([0-9.eE+\-]+)\s+([0-9.eE+\-]+)\s+([0-9.eE+\-]+)\s*\)"
+    )
+
+    last_fx: float | None = None
+    last_fy: float | None = None
+    for line in content.splitlines():
+        # Skip comments / headers
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = vector_pattern.search(line)
+        if match:
+            last_fx = float(match.group(1))
+            last_fy = float(match.group(2))
+
+    if last_fx is None or last_fy is None:
+        logger.warning("no force vectors parsed from %s", forces_dat)
+        return None
+
+    q_inf = 0.5 * rho * u_inf * u_inf
+    if q_inf <= 0 or a_ref <= 0:
+        logger.warning("invalid q_inf=%s or a_ref=%s", q_inf, a_ref)
+        return None
+
+    cd = last_fx / q_inf / a_ref
+    cl = last_fy / q_inf / a_ref
+    return cl, cd
+
+
+def extract_cl_cd_su2(
+    surface_flow_csv: Path,
+    rho: float = 1.225,
+    u_inf: float = 100.0,
+    a_ref: float = 1.0,
+) -> tuple[float, float] | None:
+    """Extract Cl/Cd from SU2 surface_flow.csv by integrating pressure + shear.
+
+    SU2 surface_flow.csv (v8.0+) for wall markers contains per-surface-point:
+    x, y, Pressure, Pressure_Coefficient, Skin_Friction_Coefficient.
+
+    For Cl/Cd we integrate:
+        Cd_pressure = ∮ Cp * n_x dS / A_ref
+        Cl_pressure = ∮ Cp * n_y dS / A_ref
+    (simplified: assume unit chord and 2D, neglect shear contribution in v1)
+
+    For v1 we use a simpler approach: average Cp on upper vs lower surface and
+    multiply by chord. This is approximate but sufficient for polar curve
+    trend comparison. A proper integration would require surface normals.
+
+    Args:
+        surface_flow_csv: Path to surface_flow.csv.
+        rho, u_inf, a_ref: Same as extract_cl_cd_openfoam.
+
+    Returns:
+        Tuple (cl, cd), or None if parsing fails.
+    """
+    if not surface_flow_csv.exists():
+        logger.warning("SU2 CSV not found: %s", surface_flow_csv)
+        return None
+
+    try:
+        content = surface_flow_csv.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read CSV %s: %s", surface_flow_csv, e)
+        return None
+
+    reader = csv.reader(content.splitlines())
+    header = next(reader, None)
+    if header is None:
+        return None
+
+    header_clean = [h.strip().strip('"').lower() for h in header]
+    try:
+        x_idx = header_clean.index("x")
+        y_idx = header_clean.index("y")
+    except ValueError:
+        logger.warning("x/y columns not found in SU2 CSV: %s", header_clean)
+        return None
+
+    cp_idx: int | None = None
+    for cp_name in ("pressure_coefficient", "cp", "pressure_coeff"):
+        if cp_name in header_clean:
+            cp_idx = header_clean.index(cp_name)
+            break
+
+    if cp_idx is None:
+        logger.warning("Cp column not found in SU2 CSV header: %s", header_clean)
+        return None
+
+    # Collect upper (y > 0) and lower (y < 0) surface points
+    upper_x: list[float] = []
+    upper_cp: list[float] = []
+    lower_x: list[float] = []
+    lower_cp: list[float] = []
+    for row in reader:
+        if len(row) <= max(x_idx, y_idx, cp_idx):
+            continue
+        try:
+            x = float(row[x_idx])
+            y = float(row[y_idx])
+            cp = float(row[cp_idx])
+            if y > 1e-6:
+                upper_x.append(x)
+                upper_cp.append(cp)
+            elif y < -1e-6:
+                lower_x.append(x)
+                lower_cp.append(cp)
+        except (ValueError, IndexError):
+            continue
+
+    if not upper_x or not lower_x:
+        logger.warning("insufficient upper/lower points in %s", surface_flow_csv)
+        return None
+
+    # Approximate Cl via trapezoidal integration of (Cp_lower - Cp_upper) dx
+    # Cl ≈ ∫₀¹ (Cp_lower - Cp_upper) dx / chord
+    # (neglecting angle-of-attack projection; suitable for low α)
+    def _trap_integrate(xs: list[float], ys: list[float]) -> float:
+        pairs = sorted(zip(xs, ys))
+        total = 0.0
+        for i in range(1, len(pairs)):
+            x0, y0 = pairs[i - 1]
+            x1, y1 = pairs[i]
+            total += 0.5 * (y0 + y1) * (x1 - x0)
+        return total
+
+    cl_approx = _trap_integrate(lower_x, lower_cp) - _trap_integrate(upper_x, upper_cp)
+
+    # Cd approximation: form drag from Cp integration along x
+    # Very rough — for trend only
+    cd_approx = abs(_trap_integrate(upper_x, upper_cp) + _trap_integrate(lower_x, lower_cp)) * 0.01
+
+    return cl_approx, cd_approx
+
+
+def load_ladson_polar(csv_path: Path) -> list[tuple[float, float, float]] | None:
+    """Load Ladson 1988 polar reference data.
+
+    Format (ladson_polar.csv)::
+
+        alpha_deg, Cl, Cd
+        0.0, 0.000, 0.0086
+        5.0, 0.456, 0.0095
+        ...
+
+    Args:
+        csv_path: Path to ladson_polar.csv.
+
+    Returns:
+        List of (alpha_deg, cl, cd) tuples sorted by alpha, or None if fails.
+    """
+    if not csv_path.exists():
+        logger.warning("Ladson polar CSV not found: %s", csv_path)
+        return None
+
+    try:
+        content = csv_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read polar CSV %s: %s", csv_path, e)
+        return None
+
+    reader = csv.reader(content.splitlines())
+    header = next(reader, None)
+    if header is None:
+        return None
+
+    points: list[tuple[float, float, float]] = []
+    for row in reader:
+        if len(row) < 3:
+            continue
+        try:
+            alpha = float(row[0])
+            cl = float(row[1])
+            cd = float(row[2])
+            points.append((alpha, cl, cd))
+        except (ValueError, IndexError):
+            continue
+
+    if not points:
+        return None
+
+    return sorted(points, key=lambda p: p[0])

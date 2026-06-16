@@ -178,7 +178,8 @@ class TestE2ESmoke:
         cases = registry.list_all()
         # P0: 4 mock cases (smoke) + P1-a: 2 cases (lid_driven_cavity, flat_plate_su2) = 6
         # P2-b: +1 NACA0012 case = 7
-        assert len(cases) == 7
+        # P2-c: +3 NACA0012 alpha sweep cases (a5/a10/a15) = 10
+        assert len(cases) == 10
 
         for name in ["mock_success", "mock_failure", "mock_missing_reference", "mock_missing_qoi"]:
             case = registry.load(name)

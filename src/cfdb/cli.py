@@ -349,5 +349,214 @@ def data_pull_cmd(
         typer.echo(output.rstrip())
 
 
+# ============================================================================
+# P2-c: cfdb compare + cfdb report-sweep commands
+# ============================================================================
+
+@app.command("compare")
+def compare_cmd(
+    run_id1: Annotated[str, typer.Argument(help="First run ID to compare.")],
+    run_id2: Annotated[str, typer.Argument(help="Second run ID to compare.")],
+    runs_dir: Annotated[
+        Path,
+        typer.Option("--runs-dir", help="Directory containing run outputs."),
+    ] = Path("runs"),
+    storage: Annotated[
+        str,
+        typer.Option("--storage", help="Storage backend: 'json' or 'sqlite'."),
+    ] = "json",
+    db_path: Annotated[
+        Path | None,
+        typer.Option("--db-path", help="SQLite database path (if --storage sqlite)."),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option("--format", help="Output format: 'html' or 'text'."),
+    ] = "html",
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Output path. Default: <runs-dir>/compare_<id1>_<id2>.html"),
+    ] = None,
+    cases_dir: Annotated[
+        Path,
+        typer.Option("--cases-dir", help="Cases directory (for tolerance lookup)."),
+    ] = Path("cases"),
+) -> None:
+    """Compare two runs: QoI diff table + comparison SVG."""
+    from cfdb.registry import CaseRegistry
+    from cfdb.reporting.compare import (
+        compare_runs,
+        render_compare_html,
+        render_compare_text,
+    )
+
+    if fmt not in ("html", "text"):
+        typer.echo(f"[FAIL] --format must be 'html' or 'text' (got '{fmt}')", err=True)
+        raise typer.Exit(code=1)
+
+    # Load runs from repository
+    if storage == "sqlite":
+        from cfdb.storage.sqlite_repo import SqliteRepository
+        actual_db_path = db_path if db_path is not None else (runs_dir / "cfdb.db")
+        repo = SqliteRepository(actual_db_path, runs_root=runs_dir)
+    else:
+        repo = JsonManifestRepository(runs_dir)
+
+    try:
+        manifest1, metrics1 = repo.load_run(run_id1)
+    except KeyError:
+        typer.echo(f"[FAIL] Run '{run_id1}' not found in {runs_dir}", err=True)
+        raise typer.Exit(code=1) from None
+    try:
+        manifest2, metrics2 = repo.load_run(run_id2)
+    except KeyError:
+        typer.echo(f"[FAIL] Run '{run_id2}' not found in {runs_dir}", err=True)
+        raise typer.Exit(code=1) from None
+
+    # Try to load case for tolerance lookup (only if both runs are same case)
+    case = None
+    if manifest1.case_id == manifest2.case_id:
+        try:
+            registry = CaseRegistry(cases_dir)
+            case = registry.load(manifest1.case_id)
+        except Exception:
+            # If case can't be loaded, skip tolerance column gracefully
+            pass
+
+    comparisons = compare_runs(manifest1, metrics1, manifest2, metrics2, case=case)
+
+    if fmt == "text":
+        text_output = render_compare_text(manifest1, manifest2, comparisons)
+        typer.echo(text_output)
+        return
+
+    # HTML format: build SVGs from residuals_history if available
+    residual_svg = None
+    if manifest1.residuals_history and manifest2.residuals_history:
+        from cfdb.reporting.svg_compare import render_residual_comparison_svg
+        combined = {
+            manifest1.solver: manifest1.residuals_history,
+            manifest2.solver: manifest2.residuals_history,
+        }
+        residual_svg = render_residual_comparison_svg(combined)
+
+    html = render_compare_html(
+        manifest1, manifest2, comparisons, residual_svg=residual_svg
+    )
+
+    out_path = out or (runs_dir / f"compare_{run_id1}_{run_id2}.html")
+    out_path.write_text(html, encoding="utf-8")
+    typer.echo(f"[OK] Comparison report: {out_path}")
+
+
+@app.command("report-sweep")
+def report_sweep_cmd(
+    case_id: Annotated[
+        str,
+        typer.Option("--case-id", help="Case ID prefix to match (e.g. 'naca0012')."),
+    ],
+    runs_dir: Annotated[
+        Path,
+        typer.Option("--runs-dir", help="Directory containing run outputs."),
+    ] = Path("runs"),
+    storage: Annotated[
+        str,
+        typer.Option("--storage", help="Storage backend: 'json' or 'sqlite'."),
+    ] = "json",
+    db_path: Annotated[
+        Path | None,
+        typer.Option("--db-path", help="SQLite database path (if --storage sqlite)."),
+    ] = None,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Output HTML path. Default: <runs-dir>/sweep_<case_id>.html"),
+    ] = None,
+    polar: Annotated[
+        bool,
+        typer.Option("--polar", help="Also render polar curve SVG (requires cl/cd QoIs)."),
+    ] = False,
+) -> None:
+    """Generate a multi-solver HTML report aggregating all runs of a case family."""
+    if storage == "sqlite":
+        from cfdb.storage.sqlite_repo import SqliteRepository
+        actual_db_path = db_path if db_path is not None else (runs_dir / "cfdb.db")
+        repo = SqliteRepository(actual_db_path, runs_root=runs_dir)
+    else:
+        repo = JsonManifestRepository(runs_dir)
+
+    # Find all runs whose case_id starts with the given prefix
+    all_runs = repo.list_runs()
+    matched = [r for r in all_runs if r.case_id.startswith(case_id)]
+
+    if not matched:
+        typer.echo(
+            f"[FAIL] No runs matching case_id prefix '{case_id}' in {runs_dir}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Load full manifest + metrics for each
+    manifests = []
+    metrics_list = []
+    for run_manifest_summary in matched:
+        m, met = repo.load_run(run_manifest_summary.run_id)
+        manifests.append(m)
+        metrics_list.append(met)
+
+    # Build polar SVG if requested
+    polar_svg = None
+    if polar:
+        from cfdb.post.qoi_extractor import load_ladson_polar
+        from cfdb.reporting.svg_polar import PolarCurve, PolarPoint, render_polar_svg
+
+        solver_points: dict[str, list[PolarPoint]] = {}
+        for m, met in zip(manifests, metrics_list):
+            alpha_str = m.cli_args.get("alpha") if m.cli_args else None
+            if alpha_str is None:
+                continue
+            try:
+                alpha = float(alpha_str)
+            except ValueError:
+                continue
+            cl = met.qoi_relative_errors.get("cl")
+            cd = met.qoi_relative_errors.get("cd")
+            if cl is not None and cd is not None:
+                solver_points.setdefault(m.solver, []).append(
+                    PolarPoint(alpha_deg=alpha, cl=cl, cd=cd)
+                )
+
+        curves = [PolarCurve(solver=s, points=pts) for s, pts in solver_points.items()]
+
+        reference = None
+        ref_path = Path("cases") / "validation" / case_id / "reference" / "ladson_polar.csv"
+        if ref_path.exists():
+            ref_data = load_ladson_polar(ref_path)
+            if ref_data:
+                reference = PolarCurve(
+                    solver="Ladson 1988",
+                    points=[PolarPoint(a, cl, cd) for a, cl, cd in ref_data],
+                    is_reference=True,
+                )
+
+        if curves:
+            polar_svg = render_polar_svg(
+                curves=curves,
+                reference=reference,
+                title=f"Polar — {case_id}",
+            )
+
+    from cfdb.reporting.html import generate_multi_solver_report
+
+    out_path = out or (runs_dir / f"sweep_{case_id}.html")
+    generate_multi_solver_report(
+        manifests=manifests,
+        metrics_list=metrics_list,
+        output_path=out_path,
+        polar_svg=polar_svg,
+        title=f"Sweep Report — {case_id}",
+    )
+    typer.echo(f"[OK] Sweep report ({len(manifests)} runs): {out_path}")
+
+
 if __name__ == "__main__":
     app()

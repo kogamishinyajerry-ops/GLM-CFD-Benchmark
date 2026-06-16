@@ -1,0 +1,78 @@
+id: naca0012_a15
+name: NACA0012 Airfoil α=15° (Ladson 1988 Validation)
+category: validation
+description: >
+  NACA0012 at α=15°, Re=6e6, M=0.3, RANS-SA. Part of alpha sweep
+  (α=0/5/10/15°) for polar curve validation against Ladson 1988.
+  Note: α=15° is near stall onset; RANS-SA may underpredict separation.
+physics:
+  flow: rans
+  turbulence: rans_sa
+  dimensionality: 2d
+  steady: true
+conditions:
+  reynolds: 6.0e6
+  mach: 0.3
+  alpha_deg: 15.0
+geometry:
+  type: external
+  source: ../naca0012/geometry/naca0012.dat
+mesh:
+  family: unstructured_hex
+  levels: ["coarse"]
+  target_y_plus: 1.0
+solvers:
+  - name: openfoam
+    command: ""
+    timeout_sec: 600
+    steps:
+      - name: block_mesh
+        command: "blockMesh -case {{ case_dir }}"
+        timeout_sec: 60
+        critical: true
+      - name: snappy_mesh
+        command: "snappyHexMesh -overwrite -case {{ case_dir }}"
+        timeout_sec: 120
+        critical: true
+      - name: solve
+        command: "simpleFoam -case {{ case_dir }}"
+        timeout_sec: 300
+        critical: true
+    parameters:
+      nu: 1.6667e-7
+      u_inf: 100.0
+      l_ref: 1.0
+      alpha_deg: 15.0
+      n_iter: 1000
+  - name: su2
+    command: ""
+    timeout_sec: 600
+    steps:
+      - name: solve
+        command: "SU2_CFD {{ case_dir }}/{{ case_id }}.cfg"
+        timeout_sec: 600
+        critical: true
+    parameters:
+      mach: 0.3
+      aoa_deg: 15.0
+      reynolds: 6.0e6
+outputs:
+  fields: ["U", "p", "nuTilda"]
+  curves: ["cp_distribution"]
+  qoi:
+    - cl
+    - cd
+reference:
+  type: experimental
+  files:
+    cp_curve: reference/ladson1988_a15.csv
+  qoi_values:
+    cl: 1.096
+    cd: 0.0185
+metrics:
+  qoi_relative_tolerance:
+    cl: 0.15
+    cd: 0.15
+budget:
+  max_runtime_sec: 600
+  max_cells: 100000

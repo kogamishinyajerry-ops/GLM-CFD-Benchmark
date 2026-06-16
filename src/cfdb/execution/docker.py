@@ -1,8 +1,10 @@
 """DockerExecutionBackend — Docker container execution backend.
 
-Executes commands inside a Docker container. The working directory (cwd) is
-bind-mounted into the container at the same absolute path, so relative paths
-work identically inside and outside the container.
+Executes commands inside a Docker container. The host working directory
+(cwd) is bind-mounted into the container at a fixed path (``/work`` by
+default) rather than the host absolute path. This avoids Windows path
+compatibility issues (drive letters / backslashes are invalid inside a Linux
+container) while letting the solver adapter code stay container-agnostic.
 
 P2-b feature. Requires Docker daemon running on the host.
 """
@@ -34,9 +36,14 @@ class BackendError(Exception):
 class DockerBackend:
     """Docker container execution backend.
 
-    Executes commands inside a Docker container. The working directory (cwd)
-    is bind-mounted into the container at the same absolute path, so relative
-    paths work identically inside and outside the container.
+    Executes commands inside a Docker container. The host working directory
+    (cwd) is bind-mounted into the container at a *fixed* path
+    (``workdir_in_container``, default ``/work``) rather than the host
+    absolute path. This is required for Windows compatibility: host paths
+    like ``D:\\GLM-CFD-Benchmark\\runs\\...`` are not valid absolute paths
+    inside a Linux container. Command arguments that reference the host cwd
+    are rewritten to the container path via :meth:`_rewrite_cmd_paths`, so
+    solver adapters remain unaware of the container layout.
 
     Args:
         image: Docker image reference (e.g. 'openfoam/openfoam:v2406'). Required.
@@ -44,6 +51,8 @@ class DockerBackend:
             'always'  — pull before every execution
             'missing' — pull only if image not present locally (default)
             'never'   — never pull (assume image exists locally)
+        workdir_in_container: Absolute path inside the container where cwd is
+            bind-mounted (default ``/work``).
     """
 
     name: str = "docker"
@@ -52,12 +61,18 @@ class DockerBackend:
         self,
         image: str,
         pull_policy: Literal["always", "missing", "never"] = "missing",
+        workdir_in_container: str = "/work",
     ) -> None:
         """Initialize DockerBackend.
 
         Args:
             image: Docker image reference (name:tag). Must be non-empty.
             pull_policy: Pull policy (default 'missing').
+            workdir_in_container: Absolute path inside the container where the
+                host cwd is bind-mounted (default '/work'). Using a fixed
+                container path avoids Windows drive letters / backslashes
+                leaking into ``--workdir`` and command arguments, which are
+                invalid inside a Linux container.
 
         Raises:
             ValueError: If image is empty.
@@ -66,6 +81,7 @@ class DockerBackend:
             raise ValueError("image must be a non-empty string")
         self._image = image
         self._pull_policy = pull_policy
+        self._workdir_in_container = workdir_in_container
         self._digest: str | None = None  # cached after first execution
 
     @property
@@ -183,6 +199,56 @@ class DockerBackend:
                 f"failed to pull image '{self._image}': {(pull_proc.stderr or '').strip()}"
             )
 
+    def _rewrite_cmd_paths(self, command: list[str], cwd: Path) -> list[str]:
+        """Replace host cwd path in command args with the container path.
+
+        Solver adapters render command strings that embed the host case
+        directory (e.g. ``blockMesh -case D:/GLM-CFD-Benchmark/runs/...``).
+        Inside the container that host path does not exist — the same
+        directory is mounted at ``self._workdir_in_container``. This helper
+        rewrites any command argument containing the host cwd so the solver
+        resolves the case directory correctly inside the container.
+
+        Handles three textual forms of the same absolute path:
+
+        - POSIX form (``D:/GLM-CFD-Benchmark/runs/...``) — the most common,
+          produced by :meth:`Path.as_posix`.
+        - Lowercase drive letter variant (``d:/...``) — some templates
+          lowercase the drive letter.
+        - Native backslash form (``D:\\GLM-CFD-Benchmark\\runs\\...``) —
+          defensive handling for templates that use ``str(path)``.
+
+        Matching is case-sensitive on the path body but case-insensitive on
+        the drive letter (Windows is case-insensitive for drive letters).
+
+        Args:
+            command: Original command + args potentially containing host paths.
+            cwd: Host working directory whose absolute path should be rewritten.
+
+        Returns:
+            New list of strings with host cwd replaced by the container path.
+        """
+        cwd_abs = cwd.resolve()
+        host_posix = cwd_abs.as_posix()  # e.g. D:/GLM-CFD-Benchmark/runs/xxx/case
+        host_native = str(cwd_abs)  # e.g. D:\GLM-CFD-Benchmark\runs\xxx\case
+        host_posix_lower = host_posix[0].lower() + host_posix[1:]  # e.g. d:/...
+        container_path = self._workdir_in_container
+
+        rewritten: list[str] = []
+        for arg in command:
+            new_arg = arg
+            # POSIX-form host path (forward slashes, uppercase drive).
+            if host_posix in new_arg:
+                new_arg = new_arg.replace(host_posix, container_path)
+            # Lowercase drive letter variant.
+            if host_posix_lower in new_arg:
+                new_arg = new_arg.replace(host_posix_lower, container_path)
+            # Native backslash form (defensive).
+            if host_native in new_arg:
+                new_arg = new_arg.replace(host_native, container_path)
+            rewritten.append(new_arg)
+        return rewritten
+
     def _build_command(
         self,
         command: list[str],
@@ -191,20 +257,33 @@ class DockerBackend:
     ) -> list[str]:
         """Build the full `docker run ...` command list.
 
+        The host ``cwd`` is bind-mounted to a *fixed* container path
+        (``self._workdir_in_container``, default ``/work``) rather than the
+        host absolute path. This is required because Windows host paths
+        (e.g. ``D:\\GLM-CFD-Benchmark\\runs\\...``) are not valid absolute
+        paths inside a Linux container — Docker Desktop rejects them for
+        ``--workdir`` and the bind-mount target. ``as_posix()`` converts the
+        host side of the mount to forward slashes which Docker Desktop on
+        Windows understands for the *source*.
+
         Args:
             command: Inner command to execute inside the container.
-            cwd: Working directory (bind-mounted at same absolute path).
+            cwd: Working directory (bind-mounted into the container).
             env: Optional environment variable overrides.
 
         Returns:
             Full `docker run ...` command as list of strings.
         """
         cwd_abs = cwd.resolve()
+        # POSIX-form host path (Docker Desktop on Windows accepts this
+        # as the mount source).
+        host_path = cwd_abs.as_posix()
+        container_path = self._workdir_in_container
 
         docker_args: list[str] = [
             "docker", "run", "--rm",
-            "--workdir", str(cwd_abs),
-            "-v", f"{cwd_abs}:{cwd_abs}",
+            "--workdir", container_path,
+            "-v", f"{host_path}:{container_path}",
         ]
 
         # User mapping: avoid root-owned files on Linux/macOS host.
@@ -259,8 +338,10 @@ class DockerBackend:
         if self._digest is None:
             self._digest = self._resolve_digest()
 
-        # 4. Build full docker run command
-        full_cmd = self._build_command(command, cwd, env)
+        # 4. Rewrite host paths in the inner command to container paths,
+        #    then build the full docker run command.
+        rewritten_command = self._rewrite_cmd_paths(command, cwd)
+        full_cmd = self._build_command(rewritten_command, cwd, env)
 
         # 5. Execute via subprocess (same pattern as LocalExecutionBackend)
         start = datetime.now(timezone.utc)

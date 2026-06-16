@@ -351,3 +351,143 @@ class TestExecutionBaseProtocol:
         b: ExecutionBackend = DockerBackend(image="test/img")  # type: ignore[assignment]
         # Protocol is runtime_checkable, so isinstance() checks presence of attrs
         assert isinstance(b, ExecutionBackend)
+
+
+class TestWindowsPathCompatibility:
+    """Tests for Windows host path handling (bind-mount to fixed container path).
+
+    These tests verify that:
+    - ``--workdir`` uses the container path (``/work``), not the host path.
+    - The bind-mount uses POSIX-form host path as source and container path
+      as target.
+    - Inner command arguments containing the host cwd are rewritten to the
+      container path.
+    - Commands without host paths pass through unchanged.
+    All tests mock subprocess.run; no real Docker daemon is needed.
+    """
+
+    def test_docker_workdir_uses_container_path(self) -> None:
+        """--workdir should be /work, not the host path."""
+        b = DockerBackend(image="test/img")
+        # Use a path that mimics a Windows absolute path (POSIX-form).
+        cwd = Path("D:/GLM-CFD-Benchmark/runs/naca0012/case")
+        cmd = b._build_command(["blockMesh"], cwd=cwd, env=None)
+        workdir_idx = cmd.index("--workdir")
+        assert cmd[workdir_idx + 1] == "/work"
+        # The bind-mount should map host POSIX path -> /work
+        vol_idx = cmd.index("-v")
+        assert cmd[vol_idx + 1] == "D:/GLM-CFD-Benchmark/runs/naca0012/case:/work"
+
+    def test_docker_workdir_custom_container_path(self) -> None:
+        """A custom workdir_in_container is honored in --workdir and -v."""
+        b = DockerBackend(image="test/img", workdir_in_container="/workspace")
+        cwd = Path("/tmp/run")
+        cmd = b._build_command(["ls"], cwd=cwd, env=None)
+        workdir_idx = cmd.index("--workdir")
+        assert cmd[workdir_idx + 1] == "/workspace"
+        vol_idx = cmd.index("-v")
+        # Host path is POSIX-form; target is the custom container path.
+        assert cmd[vol_idx + 1].endswith(":/workspace")
+
+    def test_rewrite_cmd_paths_posix_form(self) -> None:
+        """blockMesh -case D:/host/case should become blockMesh -case /work."""
+        b = DockerBackend(image="test/img")
+        cwd = Path("D:/host/case")
+        original = ["blockMesh", "-case", "D:/host/case/0"]
+        rewritten = b._rewrite_cmd_paths(original, cwd)
+        assert rewritten == ["blockMesh", "-case", "/work/0"]
+
+    def test_rewrite_cmd_paths_native_backslash_form(self) -> None:
+        """Native backslash host path (str(path)) is also rewritten.
+
+        We pass the exact native string that ``str(cwd)`` would produce,
+        so this test works identically on Windows and POSIX CI.
+        """
+        b = DockerBackend(image="test/img")
+        cwd = Path("/host/case")
+        # Compute the native form the same way _rewrite_cmd_paths does.
+        native = str(cwd.resolve())
+        original = ["ls", native]
+        rewritten = b._rewrite_cmd_paths(original, cwd)
+        assert rewritten == ["ls", "/work"]
+
+    def test_rewrite_cmd_paths_no_path_no_rewrite(self) -> None:
+        """Commands without host path should pass through unchanged."""
+        b = DockerBackend(image="test/img")
+        cwd = Path("/tmp/abc")
+        original = ["ls", "-la"]
+        rewritten = b._rewrite_cmd_paths(original, cwd)
+        assert rewritten == ["ls", "-la"]
+
+    def test_execute_rewrites_command_paths(self) -> None:
+        """execute() rewrites host paths in the inner command before running."""
+        b = DockerBackend(image="test/img", pull_policy="never")
+        host_case = Path("/tmp/rewrite_case")
+        # Build the command argument from the resolved POSIX path so it
+        # matches what the adapter would embed and what _rewrite_cmd_paths
+        # computes internally (resolve() may add a drive letter on Windows).
+        case_arg = host_case.resolve().as_posix()
+        with patch("cfdb.execution.docker.subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                subprocess.CompletedProcess(
+                    args=["docker", "version"], returncode=0, stdout="ok\n", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker", "inspect"],
+                    returncode=0,
+                    stdout="test/img@sha256:abc\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker", "run"], returncode=0, stdout="done\n", stderr=""
+                ),
+            ]
+            b.execute(
+                ["blockMesh", "-case", case_arg],
+                cwd=host_case,
+            )
+
+        # The docker run call is the 3rd subprocess.run invocation.
+        # Slice the inner command (everything after the image name) to avoid
+        # matching the host path that legitimately appears in the -v mount.
+        run_cmd = mock_run.call_args_list[2][0][0]
+        image_idx = run_cmd.index("test/img")
+        inner_cmd = run_cmd[image_idx + 1:]
+        inner_str = " ".join(inner_cmd)
+        # The inner command should reference /work, not the host path.
+        assert case_arg not in inner_str
+        assert "/work" in inner_str
+
+    def test_execute_path_rewrite_windows_style(self) -> None:
+        """A Windows-style host path in the command is rewritten to /work."""
+        b = DockerBackend(image="test/img", pull_policy="never")
+        cwd = Path("D:/proj/runs/case")
+        with patch("cfdb.execution.docker.subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                subprocess.CompletedProcess(
+                    args=["docker", "version"], returncode=0, stdout="ok\n", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker", "inspect"],
+                    returncode=0,
+                    stdout="test/img@sha256:abc\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker", "run"], returncode=0, stdout="done\n", stderr=""
+                ),
+            ]
+            b.execute(
+                ["blockMesh", "-case", "D:/proj/runs/case"],
+                cwd=cwd,
+            )
+
+        run_cmd = mock_run.call_args_list[2][0][0]
+        # Slice the inner command (after the image) to avoid matching the
+        # host path in the -v mount target.
+        image_idx = run_cmd.index("test/img")
+        inner_cmd = run_cmd[image_idx + 1:]
+        inner_str = " ".join(inner_cmd)
+        # Ensure the Windows path was rewritten in the inner command.
+        assert "D:/proj/runs/case" not in inner_str
+        assert "/work" in inner_cmd

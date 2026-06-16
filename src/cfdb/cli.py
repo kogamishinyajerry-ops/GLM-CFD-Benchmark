@@ -518,8 +518,18 @@ def report_sweep_cmd(
                 alpha = float(alpha_str)
             except ValueError:
                 continue
-            cl = met.qoi_relative_errors.get("cl")
-            cd = met.qoi_relative_errors.get("cd")
+            # P3-hotfix: read computed values (real Cl/Cd), not relative errors.
+            # Fallback: if qoi_computed_values is None (old data), skip the point.
+            cl = (
+                met.qoi_computed_values.get("cl")
+                if met.qoi_computed_values
+                else None
+            )
+            cd = (
+                met.qoi_computed_values.get("cd")
+                if met.qoi_computed_values
+                else None
+            )
             if cl is not None and cd is not None:
                 solver_points.setdefault(m.solver, []).append(
                     PolarPoint(alpha_deg=alpha, cl=cl, cd=cd)

@@ -1,0 +1,59 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+   \\  /    A nd           | Web:  www.OpenFOAM.com
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    Discretization schemes for simpleFoam RANS-SA (SpalartAllmaras)
+    on the NACA0012 airfoil case.
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       dictionary;
+     object      fvSchemes;
+ }
+
+ddtSchemes
+{
+    default         steadyState;
+}
+
+gradSchemes
+{
+    default         Gauss linear;
+    grad(U)         Gauss linear;
+    grad(nuTilda)   Gauss linear;
+}
+
+divSchemes
+{
+    default         none;
+    div(phi,U)      Gauss linearUpwind grad(U);
+    div(phi,nuTilda) Gauss linearUpwind grad(nuTilda);
+    div((nuEff*dev2(T(grad(U))))) Gauss linear;
+}
+
+laplacianSchemes
+{
+    default         Gauss linear corrected;
+}
+
+interpolationSchemes
+{
+    default         linear;
+}
+
+snGradSchemes
+{
+    default         corrected;
+}
+
+// Reynolds: {{ reynolds }}, nu: {{ nu }}
+
+// ************************************************************************* //

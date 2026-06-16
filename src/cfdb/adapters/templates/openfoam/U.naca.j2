@@ -1,0 +1,51 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+   \\  /    A nd           | Web:  www.OpenFOAM.com
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    NACA0012 initial velocity field — freestream with angle of attack.
+
+    The freestream velocity vector is decomposed by alpha_deg:
+        U = (u_inf * cos(alpha), u_inf * sin(alpha), 0)
+
+    Jinja2 context variables:
+      u_cos, v_sin, alpha_deg, u_inf
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       volVectorField;
+     object      U;
+ }
+
+dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform ({{ u_cos }} {{ v_sin }} 0);
+
+boundaryField
+{
+    airfoil
+    {
+        type            noSlip;
+    }
+    farfield
+    {
+        type            freestream;
+        U               uniform ({{ u_cos }} {{ v_sin }} 0);
+    }
+    frontAndBack
+    {
+        type            empty;
+    }
+}
+
+// alpha_deg = {{ alpha_deg }}, u_inf = {{ u_inf }}
+// u_cos = {{ u_cos }}, v_sin = {{ v_sin }}
+
+// ************************************************************************* //

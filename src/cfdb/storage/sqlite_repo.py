@@ -397,11 +397,19 @@ class SqliteRepository:
     def _load_metrics(self, run_id: str) -> MetricsResult:
         """Load metrics for a run from run_metrics table.
 
+        P3-hotfix: The run_metrics table is intentionally NOT altered (iron
+        rule #2 safety). The qoi_computed_values field (which holds real
+        Cl/Cd for polar rendering) is persisted via the dual-write JSON
+        (metrics.json). When runs_root is set, we read qoi_computed_values
+        back from that JSON file and merge it into the MetricsResult
+        reconstructed from the SQLite columns.
+
         Args:
             run_id: The run identifier.
 
         Returns:
-            MetricsResult with qoi_relative_errors reconstructed from table.
+            MetricsResult with qoi_relative_errors reconstructed from table,
+            and qoi_computed_values loaded from JSON if available.
         """
         cursor = self._conn.execute(
             "SELECT metric_name, metric_value, pass FROM run_metrics WHERE run_id = ?",
@@ -411,11 +419,29 @@ class SqliteRepository:
         qoi_errors = {r["metric_name"]: r["metric_value"] for r in rows}
         all_pass = all(r["pass"] for r in rows) if rows else False
 
+        # P3-hotfix: read qoi_computed_values from dual-write JSON
+        qoi_computed: dict[str, float] | None = None
+        if self._runs_root is not None:
+            metrics_json_path = self._runs_root / run_id / "metrics.json"
+            if metrics_json_path.exists():
+                try:
+                    raw = metrics_json_path.read_text(encoding="utf-8")
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and parsed.get("qoi_computed_values"):
+                        qoi_computed = dict(parsed["qoi_computed_values"])
+                except (json.JSONDecodeError, OSError, TypeError) as e:
+                    logger.debug(
+                        "could not read qoi_computed_values from %s: %s",
+                        metrics_json_path,
+                        e,
+                    )
+
         return MetricsResult(
             qoi_relative_errors=qoi_errors,
             qoi_pass=all_pass,
             overall_status="pass" if all_pass else ("fail" if rows else "unknown"),
             notes=[],
+            qoi_computed_values=qoi_computed,
         )
 
 

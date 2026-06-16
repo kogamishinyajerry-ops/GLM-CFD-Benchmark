@@ -118,11 +118,20 @@ class MetricsEngine:
         else:
             status = "fail"
 
+        # === P3-hotfix: populate qoi_computed_values for polar rendering ===
+        # Copy computed QoI values (the actual numbers, not relative errors)
+        # so report-sweep can plot real Cl/Cd curves.
+        qoi_computed: dict[str, float] = {}
+        for qoi_name in case.outputs.qoi:
+            if qoi_name in computed_qoi:
+                qoi_computed[qoi_name] = computed_qoi[qoi_name]
+
         return MetricsResult(
             qoi_relative_errors=errors,
             qoi_pass=qoi_pass,
             overall_status=status,
             notes=notes,
+            qoi_computed_values=qoi_computed if qoi_computed else None,
         )
 
     def _get_reference_qoi(

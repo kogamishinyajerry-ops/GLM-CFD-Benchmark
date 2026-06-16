@@ -47,7 +47,10 @@ def _make_sweep_manifest(
         ),
         cli_args={"alpha": str(alpha)},
     )
-    met = MetricsResult(qoi_relative_errors={"cl": cl, "cd": cd})
+    met = MetricsResult(
+        qoi_relative_errors={"cl": 0.0, "cd": 0.0},
+        qoi_computed_values={"cl": cl, "cd": cd},
+    )
     return m, met
 
 

@@ -1,0 +1,30 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+   \\  /    A nd           | Web:  www.OpenFOAM.com
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    Transport properties for NACA0012 (incompressible, Newtonian).
+
+    nu is rendered from the Jinja2 context (computed from Re or taken
+    directly from solver parameters).
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       dictionary;
+     object      transportProperties;
+ }
+
+transportModel  Newtonian;
+
+nu              [0 2 -1 0 0 0 0] {{ nu }};
+
+// Re = {{ reynolds }}, nu = U*L/Re = {{ u_inf }}*1.0/{{ reynolds }}
+
+// ************************************************************************* //

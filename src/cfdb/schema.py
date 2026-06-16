@@ -374,3 +374,13 @@ class MetricsResult(BaseModel):
 
     notes: list[str] = Field(default_factory=list)
     """Additional notes (budget warnings, missing QoI, etc.)."""
+
+    # === P3-hotfix: computed QoI values for polar rendering ===
+    qoi_computed_values: dict[str, float] | None = None
+    """Computed QoI values (real Cl, Cd, etc.) from the run.
+
+    Unlike qoi_relative_errors (which stores |computed - ref| / |ref|),
+    this stores the actual computed values for polar curve plotting.
+
+    Populated by MetricsEngine.compute() from artifacts.qoi_values.
+    None for dry_run / failed runs / old data (backward compatible)."""

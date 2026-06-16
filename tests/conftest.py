@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from cfdb.schema import CaseSpec
+
+# P2-b: Allow tests to import case-specific modules (e.g. NACA0012 geometry
+# generator lives in cases/validation/naca0012/gen_geometry.py, which is a
+# case-owned helper script, not a cfdb package module).
+_PROJECT_ROOT = Path(__file__).parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 
 @pytest.fixture

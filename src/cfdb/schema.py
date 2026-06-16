@@ -348,6 +348,12 @@ class RunManifest(BaseModel):
     Keys are field names (e.g. 'Ux', 'Uy', 'p'), values are the full residual
     value list over iterations. None for dry_run/mock/generic_command."""
 
+    # === P2-b new fields ===
+    backend_options: dict[str, Any] | None = None
+    """Backend-specific options snapshot for reproducibility.
+    For Docker: {'image': '...', 'digest': 'sha256:...', 'pull_policy': '...'}.
+    For local backend: None (default)."""
+
 
 class MetricsResult(BaseModel):
     """Metric computation results."""

@@ -183,3 +183,199 @@ def extract_su2_skin_friction_coeff(
     else:
         # Default: average Cf
         return sum(cf_values) / len(cf_values)
+
+
+# === P2-b: NACA0012 Cp distribution extractors ===
+
+def extract_naca0012_cp_su2(
+    surface_flow_csv: Path,
+) -> tuple[list[float], list[float]] | None:
+    """Extract Cp distribution from SU2 surface_flow.csv along NACA0012 airfoil.
+
+    SU2 surface_flow.csv format for wall markers::
+
+        "Point_ID","x","y","Pressure","Pressure_Coefficient"
+        0,0.0001,0.0001,101325.0,0.85
+        ...
+
+    The airfoil is parameterized by x/c (chord-wise coordinate). We extract
+    (x, Cp) pairs and return them for comparison with Ladson 1988 reference.
+
+    Args:
+        surface_flow_csv: Path to SU2 surface_flow.csv.
+
+    Returns:
+        Tuple (x_over_c_list, cp_list), or None if parsing fails.
+    """
+    if not surface_flow_csv.exists():
+        logger.warning("SU2 CSV not found: %s", surface_flow_csv)
+        return None
+
+    try:
+        content = surface_flow_csv.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read CSV %s: %s", surface_flow_csv, e)
+        return None
+
+    reader = csv.reader(content.splitlines())
+    header = next(reader, None)
+    if header is None:
+        logger.warning("empty CSV: %s", surface_flow_csv)
+        return None
+
+    # Find column indices (SU2 column names are case-insensitive, often quoted)
+    header_clean = [h.strip().strip('"').lower() for h in header]
+    try:
+        x_idx = header_clean.index("x")
+    except ValueError:
+        logger.warning("x column not found in SU2 CSV: %s", header_clean)
+        return None
+
+    # Pressure_Coefficient may be named Cp, Pressure_Coefficient, or Pressure_Coeff
+    cp_idx: int | None = None
+    for cp_name in ("pressure_coefficient", "cp", "pressure_coeff"):
+        if cp_name in header_clean:
+            cp_idx = header_clean.index(cp_name)
+            break
+    if cp_idx is None:
+        logger.warning("Cp column not found in SU2 CSV header: %s", header_clean)
+        return None
+
+    x_list: list[float] = []
+    cp_list: list[float] = []
+    for row in reader:
+        if len(row) <= max(x_idx, cp_idx):
+            continue
+        try:
+            x_val = float(row[x_idx])
+            cp_val = float(row[cp_idx])
+            # Filter out clearly invalid points (x/c outside [−0.1, 1.1] for airfoil)
+            if -0.1 <= x_val <= 1.1:
+                x_list.append(x_val)
+                cp_list.append(cp_val)
+        except (ValueError, IndexError):
+            continue
+
+    if not x_list:
+        logger.warning("no Cp values parsed from %s", surface_flow_csv)
+        return None
+
+    return x_list, cp_list
+
+
+def extract_naca0012_cp_openfoam(
+    forces_csv: Path,
+) -> tuple[list[float], list[float]] | None:
+    """Extract Cp distribution from OpenFOAM forces object CSV output.
+
+    OpenFOAM forces object writes per-surface data under
+    ``postProcessing/forces/<time>/surfaceFields.dat``. For airfoil Cp
+    extraction we expect a CSV-like format with columns x, y, Cp.
+
+    If the actual OpenFOAM output uses a non-CSV format, this function
+    tries to parse a simplified 2-column or 3-column text format.
+
+    Args:
+        forces_csv: Path to forces CSV file.
+
+    Returns:
+        Tuple (x_over_c_list, cp_list), or None if parsing fails.
+    """
+    if not forces_csv.exists():
+        logger.warning("forces CSV not found: %s", forces_csv)
+        return None
+
+    try:
+        content = forces_csv.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read forces CSV %s: %s", forces_csv, e)
+        return None
+
+    # Try CSV parsing first
+    reader = csv.reader(content.splitlines())
+    header = next(reader, None)
+    if header is None:
+        return None
+
+    header_clean = [h.strip().strip('"').lower() for h in header]
+    x_idx: int | None = None
+    cp_idx: int | None = None
+    for i, h in enumerate(header_clean):
+        if h == "x" and x_idx is None:
+            x_idx = i
+        if h in ("cp", "pressure_coefficient") and cp_idx is None:
+            cp_idx = i
+
+    if x_idx is None or cp_idx is None:
+        logger.warning(
+            "OpenFOAM forces CSV missing x or Cp column: %s", header_clean
+        )
+        return None
+
+    x_list: list[float] = []
+    cp_list: list[float] = []
+    for row in reader:
+        if len(row) <= max(x_idx, cp_idx):
+            continue
+        try:
+            x_val = float(row[x_idx])
+            cp_val = float(row[cp_idx])
+            if -0.1 <= x_val <= 1.1:
+                x_list.append(x_val)
+                cp_list.append(cp_val)
+        except (ValueError, IndexError):
+            continue
+
+    if not x_list:
+        logger.warning("no Cp values parsed from %s", forces_csv)
+        return None
+
+    return x_list, cp_list
+
+
+def load_ladson_reference(csv_path: Path) -> tuple[list[float], list[float]] | None:
+    """Load Ladson 1988 reference Cp data.
+
+    Format (ladson1988.csv)::
+
+        x/c,Cp
+        0.0,1.0000
+        0.025,-1.2140
+        ...
+
+    Args:
+        csv_path: Path to ladson1988.csv.
+
+    Returns:
+        Tuple (x_over_c_list, cp_list), or None if file missing / parsing fails.
+    """
+    if not csv_path.exists():
+        logger.warning("Ladson reference CSV not found: %s", csv_path)
+        return None
+
+    try:
+        content = csv_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read Ladson CSV %s: %s", csv_path, e)
+        return None
+
+    reader = csv.reader(content.splitlines())
+    header = next(reader, None)
+    if header is None:
+        return None
+
+    x_list: list[float] = []
+    cp_list: list[float] = []
+    for row in reader:
+        if len(row) < 2:
+            continue
+        try:
+            x_list.append(float(row[0]))
+            cp_list.append(float(row[1]))
+        except (ValueError, IndexError):
+            continue
+
+    if not x_list:
+        return None
+
+    return x_list, cp_list

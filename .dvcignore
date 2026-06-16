@@ -1,0 +1,18 @@
+# DVC ignore rules — files NOT tracked by DVC.
+# Mirrors .gitignore patterns for runtime/test artifacts.
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Runtime outputs (managed by manifest, not DVC)
+/runs/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

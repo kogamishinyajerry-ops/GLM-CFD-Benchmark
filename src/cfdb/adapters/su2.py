@@ -16,6 +16,7 @@ from cfdb.adapters.base import (
     SolverAdapter,
     StepResult,
 )
+from cfdb.execution.base import ExecutionBackend
 from cfdb.schema import CaseSpec, SolverConfig
 
 logger = logging.getLogger(__name__)
@@ -25,18 +26,29 @@ class SU2Adapter:
     """SU2 adapter with dry_run support.
 
     In dry_run mode: generates SU2 .cfg config file and mesh placeholder,
-    but does NOT execute SU2_CFD. Real execution (P1-b) will call SU2_CFD subprocess.
+    but does NOT execute SU2_CFD. Real execution (P1-b) calls SU2_CFD subprocess
+    via the injected ExecutionBackend (P2-b: local or docker).
     """
 
     name: str = "su2"
 
-    def __init__(self, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        dry_run: bool = False,
+        backend: ExecutionBackend | None = None,
+    ) -> None:
         """Initialize SU2 adapter.
 
         Args:
             dry_run: If True, run() returns synthetic result without executing subprocess.
+            backend: Execution backend to use (P2-b). If None, defaults to
+                LocalExecutionBackend. For Docker execution, pass DockerBackend instance.
         """
         self._dry_run = dry_run
+        if backend is None:
+            from cfdb.execution.local import LocalExecutionBackend
+            backend = LocalExecutionBackend()
+        self._backend = backend
         self._template_dir = Path(__file__).parent / "templates" / "su2"
 
     def _find_solver_config(self, case: CaseSpec) -> SolverConfig:
@@ -177,15 +189,14 @@ class SU2Adapter:
             )
 
         # === P1-b: real execution ===
-        from cfdb.execution.local import LocalExecutionBackend
-
         if solver_config.steps is None:
             raise ValueError(
                 "SU2 adapter requires SolverConfig.steps for real execution. "
                 f"Case '{case.id}' solver '{solver_config.name}' has steps=None."
             )
 
-        backend = LocalExecutionBackend()
+        # P2-b: use injected backend (default LocalExecutionBackend, may be DockerBackend)
+        backend = self._backend
         step_results: list[StepResult] = []
         case_dir_out = run_dir / "case"
         solver_version: str | None = None

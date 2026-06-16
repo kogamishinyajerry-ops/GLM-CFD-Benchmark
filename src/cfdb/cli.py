@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -20,6 +20,14 @@ app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+
+# P2-b: DVC management sub-app
+data_app = typer.Typer(
+    name="data",
+    help="DVC large file management (meshes, reference datasets).",
+    no_args_is_help=True,
+)
+app.add_typer(data_app, name="data")
 
 
 @app.callback(invoke_without_command=True)
@@ -89,8 +97,22 @@ def run(
     ] = "generic",
     backend: Annotated[
         str,
-        typer.Option("--backend", "-b", help="Execution backend name."),
+        typer.Option("--backend", "-b", help="Execution backend: 'local' or 'docker'."),
     ] = "local",
+    image: Annotated[
+        str | None,
+        typer.Option(
+            "--image",
+            help="Docker image (name:tag). Required when --backend docker is used.",
+        ),
+    ] = None,
+    pull: Annotated[
+        str,
+        typer.Option(
+            "--pull",
+            help="Docker image pull policy: 'always' | 'missing' | 'never'.",
+        ),
+    ] = "missing",
     cases_dir: Annotated[
         Path,
         typer.Option("--cases-dir", help="Directory containing case categories."),
@@ -129,6 +151,20 @@ def run(
     """Run a specified case with a given solver and backend."""
     from cfdb.core.runner import Runner
 
+    # P2-b: validate docker backend options
+    if backend == "docker" and not image:
+        typer.echo(
+            "[FAIL] --backend docker requires --image (e.g. --image openfoam/openfoam:v2406)",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if pull not in ("always", "missing", "never"):
+        typer.echo(
+            f"[FAIL] --pull must be one of: always, missing, never (got '{pull}')",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     registry = CaseRegistry(cases_dir)
 
     # P2-a: Select storage backend
@@ -152,11 +188,20 @@ def run(
         cli_args["dry_run"] = "true"
     if db_path is not None:
         cli_args["db_path"] = str(db_path)
+    if image is not None:
+        cli_args["image"] = image
+    cli_args["pull"] = pull
+
+    # P2-b: build backend_options for Docker
+    backend_options: dict[str, Any] | None = None
+    if backend == "docker":
+        backend_options = {"image": image, "pull_policy": pull}
 
     manifest = runner.execute(
         case_id=case,
         solver=solver,
         backend=backend,
+        backend_options=backend_options,
         generate_report=report,
         cli_args=cli_args,
         dry_run=dry_run,
@@ -171,6 +216,10 @@ def run(
     else:
         typer.echo("")
     typer.echo(f"Backend:   {manifest.backend}")
+    # P2-b: print image + digest when Docker backend
+    if manifest.backend == "docker" and manifest.backend_options:
+        opts = manifest.backend_options
+        typer.echo(f"Image:     {opts.get('image', '?')} (pull: {opts.get('pull_policy', '?')})")
     typer.echo(f"Status:    {manifest.status}")
     typer.echo(f"Wall Time: {manifest.timing.wall_time_sec:.3f}s")
 
@@ -180,6 +229,10 @@ def run(
             f"{k}={v:.2e}" for k, v in manifest.final_residuals.items()
         )
         typer.echo(f"Residuals: {res_parts}")
+
+    # P2-b: Print container_digest if available
+    if manifest.container_digest:
+        typer.echo(f"Digest:    {manifest.container_digest}")
 
     if manifest.dry_run_skipped_commands:
         typer.echo(
@@ -225,6 +278,75 @@ def report_cmd(
 
     html_path = generate_html_report(manifest, metrics, run_dir, residuals_svg=residuals_svg)
     typer.echo(f"[OK] Report generated: {html_path}")
+
+
+# ============================================================================
+# P2-b: cfdb data subcommands (DVC wrapper)
+# ============================================================================
+
+@data_app.command("status")
+def data_status_cmd(
+    cwd: Annotated[
+        Path,
+        typer.Option("--cwd", help="Working directory (defaults to current dir)."),
+    ] = Path("."),
+) -> None:
+    """Show DVC status (which tracked files are missing or changed)."""
+    from cfdb.data import dvc_available, dvc_status, DVCError
+
+    if not dvc_available():
+        typer.echo(
+            "[WARN] DVC not installed. Install with: pip install dvc\n"
+            "       See https://dvc.org/doc/install for details."
+        )
+        return
+
+    try:
+        status = dvc_status(cwd=cwd)
+    except DVCError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    if not status:
+        typer.echo("[OK] DVC workspace up to date — all tracked files present.")
+    else:
+        typer.echo(f"DVC status ({len(status)} item(s)):")
+        for path, info in status.items():
+            typer.echo(f"  {path}: {info}")
+
+
+@data_app.command("pull")
+def data_pull_cmd(
+    targets: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Specific .dvc targets (relative paths). If empty, pulls all."
+        ),
+    ] = None,
+    cwd: Annotated[
+        Path,
+        typer.Option("--cwd", help="Working directory (defaults to current dir)."),
+    ] = Path("."),
+) -> None:
+    """Pull DVC-tracked data from remote (meshes, reference datasets)."""
+    from cfdb.data import dvc_available, dvc_pull, DVCError
+
+    if not dvc_available():
+        typer.echo(
+            "[FAIL] DVC not installed. Install with: pip install dvc",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        output = dvc_pull(targets=targets, cwd=cwd)
+    except DVCError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("[OK] DVC pull complete.")
+    if output.strip():
+        typer.echo(output.rstrip())
 
 
 if __name__ == "__main__":

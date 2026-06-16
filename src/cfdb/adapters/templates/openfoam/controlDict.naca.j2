@@ -1,0 +1,90 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+   \\  /    A nd           | Web:  www.OpenFOAM.com
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    NACA0012 controlDict for simpleFoam (steady RANS-SA).
+
+    Renders Jinja2 variables from SolverConfig.parameters:
+      nu, u_inf, l_ref, alpha_deg, n_iter
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       dictionary;
+     object      controlDict;
+ }
+
+application     simpleFoam;
+
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         {{ n_iter }};
+deltaT          1;
+
+writeControl    timeStep;
+writeInterval   100;
+purgeWrite      3;
+writeFormat     ascii;
+writePrecision  6;
+writeCompression off;
+
+timeFormat      general;
+timePrecision   6;
+
+runTimeModifiable true;
+
+functions
+{
+    forces
+    {
+        type            forces;
+        libs            ("libforces.so");
+        writeControl    timeStep;
+        writeInterval   50;
+
+        patches         (airfoil);
+        rho             rhoInf;
+        log             yes;
+
+        rhoInf          1.225;
+        CofR            (0.25 0 0);
+        liftDir         (0 1 0);
+        dragDir         (1 0 0);
+        pitchAxis       (0 0 1);
+        magUInf         {{ u_inf }};
+        lRef            {{ l_ref }};
+        Aref            1.0;
+    }
+
+    fieldAverage
+    {
+        type            fieldAverage;
+        libs            ("libfieldFunctionObjects.so");
+        writeControl    writeTime;
+        fields
+        (
+            U
+            {
+                mean        on;
+                prime2Mean  off;
+                base        time;
+            }
+            p
+            {
+                mean        on;
+                prime2Mean  off;
+                base        time;
+            }
+        );
+    }
+}
+
+// ************************************************************************* //

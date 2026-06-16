@@ -16,6 +16,7 @@ from cfdb.adapters.base import (
     SolverAdapter,
     StepResult,
 )
+from cfdb.execution.base import ExecutionBackend
 from cfdb.schema import CaseSpec, SolverConfig
 
 logger = logging.getLogger(__name__)
@@ -26,18 +27,29 @@ class OpenFOAMAdapter:
 
     In dry_run mode: generates complete case directory structure (system/, constant/,
     0/) with Jinja2-rendered config files, but does NOT execute blockMesh/simpleFoam.
-    Real execution (P1-b) will call subprocess for each SolverConfig.steps entry.
+    Real execution (P1-b) calls subprocess for each SolverConfig.steps entry via
+    the injected ExecutionBackend (P2-b: local or docker).
     """
 
     name: str = "openfoam"
 
-    def __init__(self, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        dry_run: bool = False,
+        backend: ExecutionBackend | None = None,
+    ) -> None:
         """Initialize OpenFOAM adapter.
 
         Args:
             dry_run: If True, run() returns synthetic result without executing subprocess.
+            backend: Execution backend to use (P2-b). If None, defaults to
+                LocalExecutionBackend. For Docker execution, pass DockerBackend instance.
         """
         self._dry_run = dry_run
+        if backend is None:
+            from cfdb.execution.local import LocalExecutionBackend
+            backend = LocalExecutionBackend()
+        self._backend = backend
         self._template_dir = Path(__file__).parent / "templates" / "openfoam"
 
     def _find_solver_config(self, case: CaseSpec) -> SolverConfig:
@@ -204,15 +216,14 @@ class OpenFOAMAdapter:
             )
 
         # === P1-b: real execution ===
-        from cfdb.execution.local import LocalExecutionBackend
-
         if solver_config.steps is None:
             raise ValueError(
                 "OpenFOAM adapter requires SolverConfig.steps for real execution. "
                 f"Case '{case.id}' solver '{solver_config.name}' has steps=None."
             )
 
-        backend = LocalExecutionBackend()
+        # P2-b: use injected backend (default LocalExecutionBackend, may be DockerBackend)
+        backend = self._backend
         step_results: list[StepResult] = []
         case_dir_out = run_dir / "case"
 

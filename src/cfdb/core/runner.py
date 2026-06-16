@@ -9,10 +9,12 @@ import logging
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from cfdb.adapters import get_adapter
 from cfdb.adapters.base import SolverAdapter
 from cfdb.execution import get_backend
+from cfdb.execution.base import ExecutionBackend
 from cfdb.metrics.engine import MetricsEngine
 from cfdb.registry import CaseRegistry
 from cfdb.schema import CaseSpec, MetricsResult, RunManifest, TimingSpec
@@ -52,6 +54,7 @@ class Runner:
         case_id: str,
         solver: str = "generic",
         backend: str = "local",
+        backend_options: dict[str, Any] | None = None,
         generate_report: bool = False,
         cli_args: dict[str, str] | None = None,
         dry_run: bool = False,
@@ -61,7 +64,9 @@ class Runner:
         Args:
             case_id: The case identifier to run.
             solver: Solver/adapter name.
-            backend: Execution backend name.
+            backend: Execution backend name ('local' or 'docker').
+            backend_options: Backend-specific options (P2-b). For Docker:
+                {'image': '...', 'pull_policy': 'always|missing|never'}.
             generate_report: If True, generate HTML report after run.
             cli_args: Original CLI arguments for reproducibility.
             dry_run: If True, skip solver execution and return synthetic result.
@@ -75,8 +80,10 @@ class Runner:
         run_id = generate_run_id(case_id, solver)
         run_dir = self._runs_root / run_id
 
-        adapter = get_adapter(solver, dry_run=dry_run)
-        _ = get_backend(backend)  # Validate backend exists
+        # P2-b: construct backend instance (replaces simple get_backend() factory)
+        backend_inst = self._build_backend(backend, backend_options)
+
+        adapter = get_adapter(solver, dry_run=dry_run, backend=backend_inst)
 
         logger.info("starting run %s for case '%s' with solver '%s'", run_id, case_id, solver)
 
@@ -100,6 +107,20 @@ class Runner:
         status = self._determine_status(run_result, dry_run=dry_run)
         error_msg = self._build_error_message(run_result, status)
 
+        # P2-b: extract container_digest from DockerBackend if applicable
+        container_digest = None
+        if backend == "docker" and hasattr(backend_inst, "digest"):
+            container_digest = getattr(backend_inst, "digest", None)
+
+        # P2-b: build backend_options snapshot for manifest reproducibility
+        manifest_backend_options: dict[str, Any] | None = None
+        if backend == "docker":
+            manifest_backend_options = {
+                "image": getattr(backend_inst, "image", None),
+                "digest": container_digest,
+                "pull_policy": getattr(backend_inst, "_pull_policy", "missing"),
+            }
+
         manifest = RunManifest(
             run_id=run_id,
             case_id=case_id,
@@ -110,7 +131,7 @@ class Runner:
             host=platform.node(),
             artifacts={k: v for k, v in artifacts.files.items()},
             git_commit=get_git_commit(),
-            container_digest=None,
+            container_digest=container_digest,
             error=error_msg,
             cli_args=cli_args,
             dry_run_skipped_commands=run_result.skipped_commands,
@@ -121,6 +142,8 @@ class Runner:
             cell_count=run_result.cell_count,
             step_details=run_result.step_details,
             residuals_history=run_result.residuals_history,
+            # === P2-b new fields ===
+            backend_options=manifest_backend_options,
         )
 
         self._repo.save_run(manifest, metrics)
@@ -130,6 +153,42 @@ class Runner:
             self._generate_report(manifest, metrics, run_dir)
 
         return manifest
+
+    def _build_backend(
+        self,
+        name: str,
+        options: dict[str, Any] | None,
+    ) -> ExecutionBackend:
+        """Construct a backend instance from name + options.
+
+        Args:
+            name: Backend name ('local' or 'docker').
+            options: Backend-specific options. For Docker: {'image': ..., 'pull_policy': ...}.
+
+        Returns:
+            ExecutionBackend instance.
+
+        Raises:
+            ValueError: If backend name is unknown or required options missing.
+        """
+        opts = options or {}
+        if name == "local":
+            return get_backend("local")
+        elif name == "docker":
+            from cfdb.execution.docker import DockerBackend
+            image = opts.get("image")
+            if not image:
+                raise ValueError(
+                    "docker backend requires 'image' option (e.g. --image openfoam/openfoam:v2406)"
+                )
+            return DockerBackend(
+                image=image,
+                pull_policy=opts.get("pull_policy", "missing"),
+            )
+        else:
+            raise ValueError(
+                f"Unknown backend: '{name}'. Available: ['local', 'docker']"
+            )
 
     def _execute_phases(
         self,

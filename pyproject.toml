@@ -56,8 +56,9 @@ ignore = ["UP017"]  # Keep timezone.utc per architecture doc §12.2
 testpaths = ["tests"]
 markers = [
     "real_solver: tests requiring real OpenFOAM/SU2 installation (skipped in CI)",
+    "real_docker: tests requiring real Docker daemon (skipped in CI)",
 ]
-addopts = "--cov=cfdb --cov-report=term-missing --cov-fail-under=80 -m 'not real_solver'"
+addopts = "--cov=cfdb --cov-report=term-missing --cov-fail-under=80 -m 'not real_solver and not real_docker'"
 
 [tool.coverage.run]
 source = ["src/cfdb"]

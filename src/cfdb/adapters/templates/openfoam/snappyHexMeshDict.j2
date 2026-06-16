@@ -1,0 +1,154 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+   \\  /    A nd           | Web:  www.OpenFOAM.com
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    snappyHexMeshDict for NACA0012 airfoil mesh refinement.
+
+    Refines the background blockMesh around the airfoil STL and adds
+    boundary layer cells (prism layers) on the airfoil surface.
+
+    Rendered with Jinja2 by the OpenFOAM adapter.
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       dictionary;
+     object      snappyHexMeshDict;
+ }
+
+#include "initialConditions"
+
+castellatedMesh on;
+snap            on;
+addLayers       on;
+
+geometry
+{
+    naca0012.stl
+    {
+        type triSurfaceMesh;
+        name airfoil;
+    }
+
+    refinementBox
+    {
+        type searchableBox;
+        min (-0.2 -0.2 -0.1);
+        max ( 1.2  0.2  0.1);
+    }
+};
+
+castellatedMeshControls
+{
+    maxLocalCells 50000;
+    maxGlobalCells 100000;
+    minRefinementCells 0;
+
+    nCellsBetweenLevels 1;
+
+    features
+    (
+    );
+
+    refinementSurfaces
+    {
+        airfoil
+        {
+            level (3 3);
+            patchInfo { type wall; }
+        }
+    }
+
+    resolveFeatureSlice 30;
+
+    refinementRegions
+    {
+        refinementBox
+        {
+            mode inside;
+            levels ((1E15 2));
+        }
+    }
+
+    locationInMesh (0.5 0.0 0.0);
+
+    allowFreeStandingZoneFaces true;
+}
+
+snapControls
+{
+    nSmoothPatch 3;
+    tolerance 2.0;
+    nSolveIter 30;
+    nRelaxIter 5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes true;
+    layers
+    {
+        "airfoil.*"
+        {
+            nSurfaceLayers 5;
+        }
+    }
+
+    expansionRatio 1.2;
+    finalLayerThickness 0.5;
+    minThickness 0.01;
+
+    nGrow 0;
+    featureAngle 60;
+    nRelaxIter 3;
+    nSmoothSurfaceNormals 1;
+    nSmoothThickness 10;
+    nSmoothNormals 3;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedianAxisAspectCnt 1;
+    slipFeatureAngle 30;
+}
+
+meshQualityControls
+{
+    maxNonOrtho 65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave 80;
+    minFlatness 0.5;
+    minVol 1e-13;
+    minTetQuality 1e-30;
+    minArea -1;
+    minTwist 0.02;
+    minDeterminant 0.001;
+    minFaceWeight 0.05;
+    minVolRatio 0.01;
+    minTriangleTwist -1;
+    relaxed
+    {
+        maxNonOrtho 75;
+    }
+}
+
+writeFlags
+(
+    scalarLevels
+    layerSets
+    layerFields
+);
+
+mergeTolerance 1e-6;
+
+// ************************************************************************* //

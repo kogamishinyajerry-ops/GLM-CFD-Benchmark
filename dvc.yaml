@@ -1,0 +1,17 @@
+# DVC pipeline: NACA0012 geometry + mesh generation
+#
+# Usage:
+#   dvc repro              # regenerate all stages
+#   dvc repro <stage>      # regenerate a single stage
+#   dvc push               # push outputs to remote (configured in .dvc/config)
+#   dvc pull               # pull from remote
+
+stages:
+  generate_naca0012_geometry:
+    cmd: python cases/validation/naca0012/gen_geometry.py
+    wdir: ..
+    deps:
+      - cases/validation/naca0012/gen_geometry.py
+    outs:
+      - cases/validation/naca0012/geometry/naca0012.dat
+      - cases/validation/naca0012/geometry/naca0012.stl

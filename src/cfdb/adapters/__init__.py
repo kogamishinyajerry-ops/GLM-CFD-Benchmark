@@ -5,12 +5,14 @@ from __future__ import annotations
 from cfdb.adapters.base import SolverAdapter
 from cfdb.adapters.generic_command import GenericCommandAdapter
 from cfdb.adapters.openfoam import OpenFOAMAdapter
+from cfdb.adapters.starccm import StarCCMAdapter
 from cfdb.adapters.su2 import SU2Adapter
 from cfdb.execution.base import ExecutionBackend
 
 _ADAPTERS: dict[str, type[SolverAdapter]] = {
     "generic": GenericCommandAdapter,
     "openfoam": OpenFOAMAdapter,
+    "starccm": StarCCMAdapter,
     "su2": SU2Adapter,
 }
 
@@ -59,6 +61,7 @@ __all__ = [
     "SolverAdapter",
     "GenericCommandAdapter",
     "OpenFOAMAdapter",
+    "StarCCMAdapter",
     "SU2Adapter",
     "get_adapter",
     "register_adapter",

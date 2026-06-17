@@ -684,3 +684,90 @@ def load_ladson_polar(csv_path: Path) -> list[tuple[float, float, float]] | None
         return None
 
     return sorted(points, key=lambda p: p[0])
+
+
+# === P4.5: StarCCM Cl/Cd extractor ===
+
+
+def extract_cl_cd_starccm(
+    forces_csv: Path,
+    rho: float = 1.225,
+    u_inf: float = 100.0,
+    a_ref: float = 1.0,
+) -> tuple[float, float] | None:
+    """Extract Cl/Cd from Star-CCM+ forces.csv export.
+
+    The StarCCM macro writes a forces.csv with columns like::
+
+        Iteration, Cd, Cl, Cm
+        0, 0.0, 0.0, 0.0
+        1, 0.0012, 0.0456, -0.0023
+        ...
+        500, 0.0086, 0.3240, -0.0150
+
+    This function reads the last data row for the final converged
+    Cl and Cd values.
+
+    Args:
+        forces_csv: Path to forces.csv file.
+        rho: Freestream density (kg/m³), default 1.225 (sea-level air).
+        u_inf: Freestream velocity magnitude (m/s).
+        a_ref: Reference area (m²), default 1.0 (chord x span for 2D).
+
+    Returns:
+        Tuple (cl, cd) from the last row, or None if parsing fails.
+    """
+    if not forces_csv.exists():
+        logger.warning("StarCCM forces CSV not found: %s", forces_csv)
+        return None
+
+    try:
+        content = forces_csv.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read forces CSV %s: %s", forces_csv, e)
+        return None
+
+    reader = csv.reader(content.splitlines())
+    header = next(reader, None)
+    if header is None:
+        logger.warning("empty forces CSV: %s", forces_csv)
+        return None
+
+    # Normalize header names (strip whitespace, quotes, lowercase)
+    header_clean = [h.strip().strip('"').lower() for h in header]
+
+    cd_idx: int | None = None
+    cl_idx: int | None = None
+    for i, h in enumerate(header_clean):
+        if h in ("cd", "drag_coefficient", "drag_coeff"):
+            cd_idx = i
+        if h in ("cl", "lift_coefficient", "lift_coeff"):
+            cl_idx = i
+
+    if cd_idx is None or cl_idx is None:
+        logger.warning(
+            "Cd or Cl column not found in forces CSV header: %s",
+            header_clean,
+        )
+        return None
+
+    # Read data rows; use the last valid row
+    last_cd: float | None = None
+    last_cl: float | None = None
+    for row in reader:
+        if len(row) <= max(cd_idx, cl_idx):
+            continue
+        try:
+            last_cd = float(row[cd_idx])
+            last_cl = float(row[cl_idx])
+        except (ValueError, IndexError):
+            continue
+
+    if last_cd is None or last_cl is None:
+        logger.warning("no valid Cl/Cd values in %s", forces_csv)
+        return None
+
+    # Cl and Cd from StarCCM are already non-dimensionalized by
+    # the ReferenceValues set in the macro (rho, u_inf, A_ref).
+    # Return them directly — no need to re-compute via q_inf.
+    return last_cl, last_cd

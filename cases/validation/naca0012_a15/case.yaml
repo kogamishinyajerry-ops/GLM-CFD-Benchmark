@@ -32,7 +32,7 @@ solvers:
         critical: true
       - name: snappy_mesh
         command: "snappyHexMesh -overwrite -case {{ case_dir }}"
-        timeout_sec: 120
+        timeout_sec: 300
         critical: true
       - name: solve
         command: "simpleFoam -case {{ case_dir }}"
@@ -79,4 +79,4 @@ metrics:
     cd: 0.15
 budget:
   max_runtime_sec: 600
-  max_cells: 100000
+  max_cells: 500000

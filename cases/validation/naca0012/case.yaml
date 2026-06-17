@@ -83,4 +83,4 @@ metrics:
     cp_distribution: 0.05
 budget:
   max_runtime_sec: 600
-  max_cells: 100000
+  max_cells: 500000

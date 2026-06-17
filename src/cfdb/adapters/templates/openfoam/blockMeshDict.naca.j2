@@ -39,8 +39,10 @@ vertices
 
 blocks
 (
-    // Single block, 100 x 80 x 1. uniform background grid for snappyHexMesh.
-    hex (0 1 2 3 4 5 6 7) (100 80 1) simpleGrading (1 1 1)
+    // P3.1-SA Phase 2: denser background (160x120). snappyHexMesh handles
+    // near-airfoil refinement; background just needs enough cells for level
+    // (5 6) surface refinement to start from.
+    hex (0 1 2 3 4 5 6 7) (160 120 1) simpleGrading (1 1 1)
 );
 
 edges

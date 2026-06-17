@@ -45,8 +45,8 @@ geometry
 
 castellatedMeshControls
 {
-    maxLocalCells 200000;
-    maxGlobalCells 500000;
+    maxLocalCells 500000;
+    maxGlobalCells 2000000;
     minRefinementCells 0;
 
     nCellsBetweenLevels 2;
@@ -59,7 +59,7 @@ castellatedMeshControls
     {
         airfoil
         {
-            level (4 4);
+            level (5 6);
             patchInfo { type wall; }
         }
     }
@@ -96,21 +96,23 @@ addLayersControls
 {
     relativeSizes true;
 
-    // Use finalAndExpansion model: specify final layer thickness (relative
-    // to near-wall surface cell size) and expansion ratio. Target y+ ~ 30-50
-    // for wall-function SA.
+    // P3.1-SA Phase 2 (2026-06-17): denser prism layers for SA stability.
+    // 12 layers, expansionRatio=1.2, finalLayerThickness=0.3 near-wall cell.
+    // Combined with level (5 6) surface refinement, this targets y+ < 30 for
+    // reliable wall-function SA. Previous 8-layer/level-4 config hit y+ > 50
+    // and triggered step-200 nuTilda divergence at alpha>0.
     thicknessModel finalAndExpansion;
 
     layers
     {
         "airfoil.*"
         {
-            nSurfaceLayers 8;
+            nSurfaceLayers 12;
         }
     }
 
-    expansionRatio 1.2;
-    finalLayerThickness 0.5;
+    expansionRatio 1.15;
+    finalLayerThickness 0.3;
     minThickness 0.1;
 
     nGrow 0;

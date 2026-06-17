@@ -8,10 +8,9 @@
 Description
     SIMPLE algorithm + under-relaxation for NACA0012 (simpleFoam RANS-SA).
 
-    Under-relaxation: p 0.2, U 0.5, nuTilda 0.3 — tuned for SA stability on
-    high-y+ snappyHexMesh grids. Tight p relaxation is needed because the
-    coarse background blockMesh + snappy refinement produces high
-    non-orthogonality near the airfoil surface.
+    Under-relaxation: p 0.2, U 0.3, nuTilda 0.1 — tuned for SA stability on
+    high-y+ snappyHexMesh grids. nuTilda relax=0.1 is the primary SA divergence
+    fix (P3.1-SA Phase 1); U relax=0.3 prevents momentum overshoot at high-α.
 
 \*---------------------------------------------------------------------------*/
 
@@ -49,7 +48,7 @@ solvers
     {
         solver          smoothSolver;
         smoother        symGaussSeidel;
-        tolerance       1e-10;
+        tolerance       1e-7;
         relTol          0.001;
     }
 }
@@ -57,7 +56,7 @@ solvers
 SIMPLE
 {
     momentumPredictor yes;
-    nNonOrthogonalCorrectors 2;
+    nNonOrthogonalCorrectors 3;
     pRefCell        0;
     pRefValue       0;
 
@@ -76,9 +75,9 @@ relaxationFactors
 {
     equations
     {
-        U               0.5;
+        U               0.3;
         p               0.2;
-        nuTilda         0.3;
+        nuTilda         0.1;
     }
 }
 

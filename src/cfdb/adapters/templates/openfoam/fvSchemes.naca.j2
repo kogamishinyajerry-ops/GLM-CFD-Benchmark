@@ -28,7 +28,7 @@ gradSchemes
 {
     default         Gauss linear;
     grad(U)         Gauss linear;
-    grad(nuTilda)   Gauss linear;
+    grad(nuTilda)   cellLimited Gauss linear 1;
 }
 
 divSchemes
@@ -47,7 +47,7 @@ divSchemes
     // scheme order. The QoI rollback in extract_cl_cd_openfoam remains the
     // safety net that captures physically meaningful pre-divergence values.
     div(phi,U)      Gauss linearUpwind grad(U);
-    div(phi,nuTilda) Gauss linearUpwind grad(nuTilda);
+    div(phi,nuTilda) bounded Gauss linearUpwind grad(nuTilda);
     div((nuEff*dev2(T(grad(U))))) Gauss linear;
 }
 

@@ -45,7 +45,7 @@ solvers:
       u_inf: 100.0
       l_ref: 1.0
       alpha_deg: 5.0
-      n_iter: 2000
+      n_iter: 3000
   - name: su2
     command: ""
     timeout_sec: 600

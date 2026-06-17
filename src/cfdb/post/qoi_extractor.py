@@ -88,6 +88,12 @@ def extract_openfoam_centerline_umax(
     )
 
     for line in content.splitlines():
+        # Skip comments / headers (e.g. '# Probe 0 (0.5 0.05 0)') — the
+        # parenthesised probe position would otherwise be parsed as a data
+        # vector. Same guard as extract_cl_cd_openfoam.
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
         match = vector_pattern.search(line)
         if match:
             ux = float(match.group(1))
@@ -389,15 +395,34 @@ def extract_cl_cd_openfoam(
     u_inf: float = 100.0,
     a_ref: float = 1.0,
 ) -> tuple[float, float] | None:
-    """Extract final Cl/Cd from OpenFOAM forces.dat.
+    """Extract Cl/Cd from OpenFOAM forces.dat with divergence rollback.
 
-    OpenFOAM forces function object writes per-time data in
-    ``postProcessing/forces/<time>/forces.dat``::
+    Parses the force history and returns the (Fx, Fy) from the latest stable
+    time step. A step is considered the "stable tail" if no exponential
+    divergence is detected: the algorithm scans backward from the last step
+    and rolls back to the step immediately before the first 10x magnitude
+    jump (if any). With no such jump detected the last step is returned
+    (normal convergence, monotonic increase, slow drift, or bounded
+    oscillation all fall through to this branch).
 
-        # Forces
-        # time forces (Fx Fy Fz) moments (Mx My Mz)
-        0.000 (0.00123 -0.00045 0) (0 0 0.00001)
-        1.000 (0.00125 -0.00050 0) (0 0 0.00001)
+    This is more robust than taking the raw last line — when simpleFoam
+    diverges late (typical SA behaviour on coarse high-y+ grids), the
+    final line can be at e+15 while the physically meaningful value is
+    at the pre-divergence step. Linear slow divergence (sub-10x per step)
+    is NOT detected; callers needing that guarantee should pre-filter the
+    force history.
+
+    Two output formats are supported:
+      - Foundation-style parenthesised vectors::
+
+            # Forces
+            # time forces (Fx Fy Fz) moments (Mx My Mz)
+            0.000 (0.00123 -0.00045 0) (0 0 0.00001)
+
+      - OpenCFD v2312/v2406 9-column space-separated::
+
+            # Forces
+            # time total_x total_y total_z pressure_x ... viscous_x ...
 
     Cl = Fy / q_inf / A_ref, Cd = Fx / q_inf / A_ref
     where q_inf = 0.5 * rho * U_inf^2.
@@ -409,7 +434,7 @@ def extract_cl_cd_openfoam(
         a_ref: Reference area (m²), default 1.0 (chord × span for 2D).
 
     Returns:
-        Tuple (cl, cd) from the last time step, or None if parsing fails.
+        Tuple (cl, cd) from the latest stable step, or None if parsing fails.
     """
     if not forces_dat.exists():
         logger.warning("forces.dat not found: %s", forces_dat)
@@ -426,9 +451,19 @@ def extract_cl_cd_openfoam(
     vector_pattern = re.compile(
         r"\(\s*([0-9.eE+\-]+)\s+([0-9.eE+\-]+)\s+([0-9.eE+\-]+)\s*\)"
     )
+    # OpenCFD v2312/v2406 alternative: space/tab-separated 10 columns
+    # "time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z"
+    # We capture only total_x/total_y (groups 2/3) — viscous_x/viscous_y are
+    # not used because total already includes them.
+    opencfd_pattern = re.compile(
+        r"^\s*([0-9.eE+\-]+)\s+"  # time (group 1)
+        r"([0-9.eE+\-]+)\s+([0-9.eE+\-]+)\s+[0-9.eE+\-]+\s+"  # total x,y,z (groups 2,3)
+        r"(?:[0-9.eE+\-]+\s+){3}"  # pressure x,y,z (non-capturing)
+        r"(?:[0-9.eE+\-]+\s+){2}[0-9.eE+\-]+"  # viscous x,y,z (non-capturing)
+    )
 
-    last_fx: float | None = None
-    last_fy: float | None = None
+    # Collect all (time, fx, fy) data points
+    force_history: list[tuple[float, float, float]] = []
     for line in content.splitlines():
         # Skip comments / headers
         stripped = line.lstrip()
@@ -436,10 +471,21 @@ def extract_cl_cd_openfoam(
             continue
         match = vector_pattern.search(line)
         if match:
-            last_fx = float(match.group(1))
-            last_fy = float(match.group(2))
+            time_val = _safe_float_from_line(stripped)
+            fx = float(match.group(1))
+            fy = float(match.group(2))
+            force_history.append((time_val, fx, fy))
+            continue
+        # OpenCFD 2406 format fallback
+        m2 = opencfd_pattern.search(line)
+        if m2:
+            time_val = float(m2.group(1))
+            total_fx = float(m2.group(2))
+            total_fy = float(m2.group(3))
+            # total = pressure + viscous; total is what we want for Cl/Cd
+            force_history.append((time_val, total_fx, total_fy))
 
-    if last_fx is None or last_fy is None:
+    if not force_history:
         logger.warning("no force vectors parsed from %s", forces_dat)
         return None
 
@@ -448,9 +494,41 @@ def extract_cl_cd_openfoam(
         logger.warning("invalid q_inf=%s or a_ref=%s", q_inf, a_ref)
         return None
 
-    cd = last_fx / q_inf / a_ref
-    cl = last_fy / q_inf / a_ref
+    # Detect divergence: if forces grow by more than 10x from one step to
+    # the next, the simulation has diverged. Return the last step *before*
+    # the first divergence — once a run diverges, every subsequent step
+    # also diverges (cascading 10x+ jumps), so scanning backward would
+    # land on an already-diverged step. Forward scan catches the first
+    # jump and returns the pre-divergence step.
+    # Skip the first data point in divergence detection — it's often near-zero
+    # (initialization) and naturally shows a large jump to the second step.
+    if len(force_history) <= 2:
+        _, best_fx, best_fy = force_history[-1]
+    else:
+        mags = [(fx * fx + fy * fy) ** 0.5 for _, fx, fy in force_history]
+        best_idx = len(force_history) - 1  # default: last step (no divergence)
+        # Scan forward, starting from step 2 (index 1). First 10x jump wins.
+        for i in range(2, len(mags)):
+            if mags[i] > mags[i - 1] * 10:
+                # First divergence detected at step i; use step i-1.
+                best_idx = i - 1
+                break
+        _, best_fx, best_fy = force_history[best_idx]
+
+    cd = best_fx / q_inf / a_ref
+    cl = best_fy / q_inf / a_ref
     return cl, cd
+
+
+def _safe_float_from_line(line: str) -> float:
+    """Extract the first float token from a line (the time value)."""
+    tokens = line.split()
+    if tokens:
+        try:
+            return float(tokens[0])
+        except ValueError:
+            pass
+    return 0.0
 
 
 def extract_cl_cd_su2(

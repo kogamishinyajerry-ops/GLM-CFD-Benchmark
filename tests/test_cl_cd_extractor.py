@@ -30,9 +30,12 @@ class TestExtractClCdOpenFOAM:
         assert math.isclose(cl, -0.5 / 6125.0, rel_tol=1e-4)
         assert math.isclose(cd, 0.0125 / 6125.0, rel_tol=1e-4)
 
-    def test_uses_last_time_step(self, tmp_path: Path) -> None:
-        """Final Cl/Cd must come from the LAST time step."""
+    def test_stable_forces_uses_last_step(self, tmp_path: Path) -> None:
+        """When forces are stable (no exponential growth), Cl/Cd come from
+        the last time step. Monotonic increase is NOT treated as divergence
+        — only a >10x magnitude jump triggers rollback."""
         from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        # Forces that are monotonically increasing (normal convergence trend)
         content = (
             "0.000 (1.0 1.0 0) (0 0 0)\n"
             "1.000 (2.0 2.0 0) (0 0 0)\n"
@@ -46,6 +49,124 @@ class TestExtractClCdOpenFOAM:
         cl, cd = result
         assert math.isclose(cl, 6.0)
         assert math.isclose(cd, 6.0)
+
+    def test_diverging_forces_rollback_to_pre_jump_step(self, tmp_path: Path) -> None:
+        """A >10x force magnitude jump between consecutive steps indicates
+        divergence; Cl/Cd should come from the step immediately before the
+        jump, NOT the (diverged) last step."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        content = (
+            "0.000 (1.0 1.0 0) (0 0 0)\n"     # mag=1.414
+            "1.000 (1.1 1.1 0) (0 0 0)\n"     # mag=1.556
+            "2.000 (1.2 1.2 0) (0 0 0)\n"     # mag=1.697
+            "3.000 (50.0 50.0 0) (0 0 0)\n"   # mag=70.71 → >10x of prev → divergence
+        )
+        path = tmp_path / "forces.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        assert result is not None
+        # Expect index 2 (pre-jump) not index 3 (diverged)
+        # q_inf = 0.5; cl = 1.2 / 0.5 = 2.4
+        cl, cd = result
+        assert math.isclose(cl, 2.4, rel_tol=1e-4)
+        assert math.isclose(cd, 2.4, rel_tol=1e-4)
+
+    def test_cascading_divergence_uses_pre_first_jump_step(self, tmp_path: Path) -> None:
+        """Once a run diverges, every subsequent step also diverges (each
+        ~10x the previous). The algorithm must scan FORWARD to catch the
+        FIRST jump and return the pre-divergence step — a backward scan
+        would land on an already-diverged step near the end.
+
+        Reproduces the P3-hotfix bug where the OpenCFD forces.dat from a
+        diverged simpleFoam run (cascading 10x jumps from step 200 onward)
+        produced Cl/Cd on the order of 1e4 instead of the physical ~1e-3."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        # Magnitudes: ~26, ~27, ~47 (first jump here, 47/27 > 10x... actually
+        # 47/27 ≈ 1.74 — not yet. Let's construct a clean cascading case).
+        content = (
+            "50   (20.0 -10.0 0) (0 0 0)\n"     # mag 22.36 (stable)
+            "100  (21.0 -10.5 0) (0 0 0)\n"     # mag 23.43 (stable)
+            "150  (22.0 -11.0 0) (0 0 0)\n"     # mag 24.60 (stable, last good)
+            "200  (300.0 -150.0 0) (0 0 0)\n"   # mag 335.4 → first 10x jump
+            "250  (5000.0 -2500.0 0) (0 0 0)\n" # mag 5590  → cascading
+            "300  (80000.0 -40000.0 0) (0 0 0)\n"  # mag 89443 → cascading
+        )
+        path = tmp_path / "forces.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        assert result is not None
+        cl, cd = result
+        # Pre-first-jump step is index 2 (time 150, Fx=22, Fy=-11).
+        # q_inf = 0.5 → cl = -11/0.5 = -22, cd = 22/0.5 = 44
+        assert math.isclose(cl, -22.0, rel_tol=1e-4)
+        assert math.isclose(cd, 44.0, rel_tol=1e-4)
+
+    def test_converging_forces_uses_last_step(self, tmp_path: Path) -> None:
+        """Monotonically decreasing force magnitude (typical of a settling
+        initial transient) is NOT divergence — Cl/Cd come from the last step."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        content = (
+            "0.000 (5.0 5.0 0) (0 0 0)\n"
+            "1.000 (3.0 3.0 0) (0 0 0)\n"
+            "2.000 (1.0 1.0 0) (0 0 0)\n"
+        )
+        path = tmp_path / "forces.dat"
+        path.write_text(content, encoding="utf-8")
+        cl, cd = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        # last step 1.0 / 0.5 = 2.0
+        assert math.isclose(cl, 2.0, rel_tol=1e-4)
+        assert math.isclose(cd, 2.0, rel_tol=1e-4)
+
+    def test_bounded_oscillation_uses_last_step(self, tmp_path: Path) -> None:
+        """Bounded oscillation (each step within 10x of previous) is NOT
+        treated as divergence — Cl/Cd come from the last step."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        content = (
+            "0.000 (2.0 2.0 0) (0 0 0)\n"
+            "1.000 (1.0 1.0 0) (0 0 0)\n"
+            "2.000 (3.0 3.0 0) (0 0 0)\n"   # mag 4.24, prev 1.41 → 3x, <10x
+            "3.000 (2.0 2.0 0) (0 0 0)\n"
+        )
+        path = tmp_path / "forces.dat"
+        path.write_text(content, encoding="utf-8")
+        cl, cd = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        # last step 2.0 / 0.5 = 4.0
+        assert math.isclose(cl, 4.0, rel_tol=1e-4)
+        assert math.isclose(cd, 4.0, rel_tol=1e-4)
+
+    def test_opencfd_v2406_9column_format(self, tmp_path: Path) -> None:
+        """OpenCFD v2312/v2406 forces.dat: 10-column space-separated format
+        (time + total(3) + pressure(3) + viscous(3)), no parentheses."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        content = (
+            "# Forces\n"
+            "# time forces (total_x total_y total_z) "
+            "pressure (px py pz) viscous (vx vy vz)\n"
+            "0.000 0.50 12.00 0.00 0.45 11.80 0.00 0.05 0.20 0.00\n"
+            "1.000 0.52 12.10 0.00 0.47 11.90 0.00 0.05 0.20 0.00\n"
+            "2.000 0.54 12.20 0.00 0.49 12.00 0.00 0.05 0.20 0.00\n"
+        )
+        path = tmp_path / "forces.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        assert result is not None
+        cl, cd = result
+        # No >10x jump → last step wins; last total_x=0.54, total_y=12.20
+        # q_inf = 0.5 → cl = 12.20/0.5 = 24.4, cd = 0.54/0.5 = 1.08
+        assert math.isclose(cl, 24.4, rel_tol=1e-4)
+        assert math.isclose(cd, 1.08, rel_tol=1e-4)
+
+    def test_single_step_history(self, tmp_path: Path) -> None:
+        """Only one data point: divergence detection is skipped, that step
+        is returned directly."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        content = "5.000 (7.0 7.0 0) (0 0 0)\n"
+        path = tmp_path / "forces.dat"
+        path.write_text(content, encoding="utf-8")
+        cl, cd = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        # q_inf = 0.5 → cl = 7.0/0.5 = 14.0
+        assert math.isclose(cl, 14.0, rel_tol=1e-4)
+        assert math.isclose(cd, 14.0, rel_tol=1e-4)
 
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
@@ -66,6 +187,32 @@ class TestExtractClCdOpenFOAM:
         path.write_text("1.000 (1.0 1.0 0) (0 0 0)\n", encoding="utf-8")
         result = extract_cl_cd_openfoam(path, u_inf=0.0)
         assert result is None
+
+
+class TestSafeFloatFromLine:
+    """Tests for the _safe_float_from_line helper (time token parser)."""
+
+    def test_valid_time_token(self) -> None:
+        from cfdb.post.qoi_extractor import _safe_float_from_line
+
+        assert _safe_float_from_line("1.500 (1 2 3) (0 0 0)") == 1.5
+        assert _safe_float_from_line("  0.000 1.0 2.0 3.0") == 0.0
+        assert _safe_float_from_line("100") == 100.0
+
+    def test_empty_line_returns_zero(self) -> None:
+        from cfdb.post.qoi_extractor import _safe_float_from_line
+
+        assert _safe_float_from_line("") == 0.0
+        assert _safe_float_from_line("   ") == 0.0
+
+    def test_non_numeric_first_token_returns_zero(self) -> None:
+        """When the first token is not a float (e.g. a stray header line that
+        slipped past the # filter), return 0.0 — divergence detection uses
+        only (fx, fy), so a 0 time value is harmless."""
+        from cfdb.post.qoi_extractor import _safe_float_from_line
+
+        assert _safe_float_from_line("nan_token 1 2 3") == 0.0
+        assert _safe_float_from_line("alpha 0.5 0.5 0") == 0.0
 
 
 class TestExtractClCdSU2:

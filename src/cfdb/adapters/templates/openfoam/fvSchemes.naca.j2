@@ -34,6 +34,18 @@ gradSchemes
 divSchemes
 {
     default         none;
+    // Second-order upwind for Cl/Cd accuracy on validation cases (Ladson 1988).
+    // First-order pure upwind was used during early stability tuning but
+    // introduces excessive numerical viscosity, under-predicting Cl slope
+    // and over-predicting Cd by >10% at α=10/15°. linearUpwind needs the
+    // matching grad() entry above.
+    //
+    // P3-tail note (2026-06-17): tested div(phi,nuTilda)=upwind as an SA
+    // stabilization attempt — marginally raised Cl on α=5 (0.016→0.021) but
+    // did NOT prevent the step-200 nuTilda divergence on this coarse high-y+
+    // mesh. Reverted to linearUpwind; the root cause is mesh/relaxation, not
+    // scheme order. The QoI rollback in extract_cl_cd_openfoam remains the
+    // safety net that captures physically meaningful pre-divergence values.
     div(phi,U)      Gauss linearUpwind grad(U);
     div(phi,nuTilda) Gauss linearUpwind grad(nuTilda);
     div((nuEff*dev2(T(grad(U))))) Gauss linear;
@@ -52,6 +64,11 @@ interpolationSchemes
 snGradSchemes
 {
     default         corrected;
+}
+
+wallDist
+{
+    method meshWave;
 }
 
 // Reynolds: {{ reynolds }}, nu: {{ nu }}

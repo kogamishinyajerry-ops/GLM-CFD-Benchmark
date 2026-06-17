@@ -88,11 +88,18 @@ class OpenFOAMAdapter:
         mesh_level = "single"
         if case.mesh is not None and len(case.mesh.levels) > 0:
             mesh_level = case.mesh.levels[0]
+        # NOTE: 'case_dir' in the template context points to the OUTPUT
+        # case directory (run_dir/case) — not the original case definition
+        # directory. This is what solver commands like
+        # 'blockMesh -case {{ case_dir }}' need: the runtime workspace where
+        # system/ constant/ 0/ were rendered. The original case_dir is still
+        # passed separately as a method argument for STL/asset lookups.
+        case_dir_out = run_dir / "case"
         context: dict[str, Any] = {
             "case_id": case.id,
             "solver": "openfoam",
             "mesh_level": mesh_level,
-            "case_dir": case_dir.resolve().as_posix(),
+            "case_dir": case_dir_out.resolve().as_posix(),
             "run_dir": run_dir.resolve().as_posix(),
             "reynolds": case.conditions.reynolds or 100.0,
         }
@@ -298,8 +305,13 @@ class OpenFOAMAdapter:
         (zero_dir / "U").write_text(
             self._render_template("U.naca.j2", context), encoding="utf-8"
         )
-        # p: incompressible, uniform 0, with NACA boundary types
-        nu_val = context.get("nu", 1.6667e-7)
+        nu_val = context.get("nu", 1.6667e-5)
+        # p: incompressible, uniform 0, with NACA boundary types.
+        # farfield uses freestreamPressure (not fixedValue) — fixedValue 0 on
+        # the entire farfield causes massive continuity errors and pressure
+        # divergence in SIMPLE for external aero. freestreamPressure allows
+        # the pressure to adjust on outflow faces while maintaining the
+        # freestream reference on inflow faces.
         (zero_dir / "p").write_text(
             "FoamFile\n"
             "{\n"
@@ -319,7 +331,7 @@ class OpenFOAMAdapter:
             "    farfield\n"
             "    {\n"
             "        type            freestreamPressure;\n"
-            "        value           uniform 0;\n"
+            "        freestreamValue uniform 0;\n"
             "    }\n"
             "    frontAndBack\n"
             "    {\n"
@@ -328,7 +340,17 @@ class OpenFOAMAdapter:
             "}\n",
             encoding="utf-8",
         )
-        # nuTilda: SpalartAllmaras working variable, freestream value ~ nu
+        # nuTilda: SpalartAllmaras working variable.
+        # Freestream value ~ 3 × nu (per NASA SA recommendations for fully
+        # turbulent initial state). chi=3 gives nut ≈ 0.2*nu, standard for
+        # external aero SA initialization.
+        # Wall BC: zeroGradient for high-y+ wall function approach.
+        nuTilda_freestream = 3.0 * nu_val
+        # nut freestream from SA: nut = nuTilda * chi^3/(chi^3+Cv1^3)
+        # where chi = nuTilda/nu = 3, Cv1 = 7.1.
+        chi = nuTilda_freestream / nu_val
+        cv1 = 7.1
+        nut_freestream = nuTilda_freestream * (chi**3) / (chi**3 + cv1**3)
         (zero_dir / "nuTilda").write_text(
             "FoamFile\n"
             "{\n"
@@ -338,7 +360,7 @@ class OpenFOAMAdapter:
             "    object      nuTilda;\n"
             "}\n"
             f"dimensions      [0 2 -1 0 0 0 0];\n"
-            f"internalField   uniform {nu_val};\n"
+            f"internalField   uniform {nuTilda_freestream};\n"
             "boundaryField\n"
             "{\n"
             "    airfoil\n"
@@ -348,7 +370,48 @@ class OpenFOAMAdapter:
             "    farfield\n"
             "    {\n"
             "        type            freestream;\n"
-            f"        freestreamValue uniform {nu_val};\n"
+            f"        freestreamValue uniform {nuTilda_freestream};\n"
+            "    }\n"
+            "    frontAndBack\n"
+            "    {\n"
+            "        type            empty;\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        # nut: turbulent viscosity (SA model computes it from nuTilda).
+        # Wall uses nutUSpaldingWallFunction — the standard high-y+ SA wall
+        # function. The Spalding function bridges wall-to-log-law region and
+        # is self-consistent with nuTilda zeroGradient at the wall. Combined
+        # with snappyHexMesh addLayers providing y+ ~ 30-200 (wall-function
+        # range), this is the canonical high-y+ SA setup per Spalart &
+        # Allmaras (1992) and OpenFOAM simpleFoam/airFoil2D tutorial.
+        # NOTE: forcing nut = calculated 0 (low-Re formulation) on a high-y+
+        # mesh over-stimulates the SA production term and drives nuTilda
+        # toward divergence — earlier attempts with calculated 0 + n_iter=200
+        # failed to converge for this reason.
+        (zero_dir / "nut").write_text(
+            "FoamFile\n"
+            "{\n"
+            "    version     2.0;\n"
+            "    format      ascii;\n"
+            "    class       volScalarField;\n"
+            "    object      nut;\n"
+            "}\n"
+            "dimensions      [0 2 -1 0 0 0 0];\n"
+            f"internalField   uniform {nut_freestream};\n"
+            "boundaryField\n"
+            "{\n"
+            "    airfoil\n"
+            "    {\n"
+            "        type            nutUSpaldingWallFunction;\n"
+            "        value           uniform 0;\n"
+            "    }\n"
+            "    farfield\n"
+            "    {\n"
+            "        type            calculated;\n"
+            f"        value           uniform {nut_freestream};\n"
             "    }\n"
             "    frontAndBack\n"
             "    {\n"

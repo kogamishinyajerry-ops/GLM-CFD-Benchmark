@@ -23,8 +23,6 @@ Description
      object      snappyHexMeshDict;
  }
 
-#include "initialConditions"
-
 castellatedMesh on;
 snap            on;
 addLayers       on;
@@ -47,11 +45,11 @@ geometry
 
 castellatedMeshControls
 {
-    maxLocalCells 50000;
-    maxGlobalCells 100000;
+    maxLocalCells 200000;
+    maxGlobalCells 500000;
     minRefinementCells 0;
 
-    nCellsBetweenLevels 1;
+    nCellsBetweenLevels 2;
 
     features
     (
@@ -61,12 +59,12 @@ castellatedMeshControls
     {
         airfoil
         {
-            level (3 3);
+            level (4 4);
             patchInfo { type wall; }
         }
     }
 
-    resolveFeatureSlice 30;
+    resolveFeatureAngle 30;
 
     refinementRegions
     {
@@ -97,45 +95,50 @@ snapControls
 addLayersControls
 {
     relativeSizes true;
+
+    // Use finalAndExpansion model: specify final layer thickness (relative
+    // to near-wall surface cell size) and expansion ratio. Target y+ ~ 30-50
+    // for wall-function SA.
+    thicknessModel finalAndExpansion;
+
     layers
     {
         "airfoil.*"
         {
-            nSurfaceLayers 5;
+            nSurfaceLayers 8;
         }
     }
 
     expansionRatio 1.2;
     finalLayerThickness 0.5;
-    minThickness 0.01;
+    minThickness 0.1;
 
     nGrow 0;
     featureAngle 60;
-    nRelaxIter 3;
+    nRelaxIter 5;
     nSmoothSurfaceNormals 1;
     nSmoothThickness 10;
     nSmoothNormals 3;
     maxFaceThicknessRatio 0.5;
     maxThicknessToMedialRatio 0.3;
-    minMedianAxisAspectCnt 1;
+    minMedialAxisAngle 90;
     slipFeatureAngle 30;
+    nBufferCellsNoExtrude 0;
+    nLayerIter 50;
+    nRelaxedIter 20;
 }
 
 meshQualityControls
 {
-    maxNonOrtho 65;
-    maxBoundarySkewness 20;
-    maxInternalSkewness 4;
-    maxConcave 80;
-    minFlatness 0.5;
-    minVol 1e-13;
-    minTetQuality 1e-30;
-    minArea -1;
-    minTwist 0.02;
-    minDeterminant 0.001;
-    minFaceWeight 0.05;
-    minVolRatio 0.01;
-    minTriangleTwist -1;
+    #includeEtc "caseDicts/meshQualityDict"
+
+    //- Amount by which to scale back the motion if the mesh becomes invalid
+    errorReduction 0.75;
+
+    //- Number of smoothing iterations for the error-based motion
+    nSmoothScale 4;
+
+    //- Controls the relaxation of the mesh motion solver
     relaxed
     {
         maxNonOrtho 75;

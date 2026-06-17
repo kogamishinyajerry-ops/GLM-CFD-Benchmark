@@ -1,16 +1,15 @@
 /*--------------------------------*- C++ -*----------------------------------*\
   =========                 |
   \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
-   \\    /   O peration     |
-   \\  /    A nd           | Web:  www.OpenFOAM.com
-    \\/     M anipulation  |
+   \\    /   O peration     | Web:  www.OpenFOAM.com
+    \\  /    A nd           | Web:  www.OpenFOAM.com
+     \\/     M anipulation  |
 -------------------------------------------------------------------------------
 Description
-    NACA0012 background hex mesh (coarse O-grid topology).
+    NACA0012 background hex mesh — single rectangular block.
 
-    This is a template rendered by the OpenFOAM adapter. Jinja2 variables:
-      - case_id, solver, mesh_level, case_dir, run_dir
-      - reynolds, nu, u_inf, l_ref, alpha_deg, n_iter (from solver parameters)
+    snappyHexMesh does all the airfoil-related refinement and patch
+    assignment; blockMesh only generates the uniform background grid.
 
 \*---------------------------------------------------------------------------*/
 
@@ -22,52 +21,26 @@ Description
      object      blockMeshDict;
  }
 
-convertToMeters 1;
+scale 1;
 
-// NACA0012 chord = 1.0, domain extends ~10 chords in each direction
-// Background O-grid: outer box [-10, 12] x [-10, 10], 4 blocks around airfoil
-
+// NACA0012 chord = 1.0, domain extends ~10 chords upstream / 12 downstream.
 vertices
 (
-    // Airfoil-adjacent inner box
-    (-1.0  -1.0  -0.05)   // 0
-    ( 2.0  -1.0  -0.05)   // 1
-    ( 2.0   1.0  -0.05)   // 2
-    (-1.0   1.0  -0.05)   // 3
+    (-10.0 -10.0  -0.05)    // 0
+    ( 12.0 -10.0  -0.05)    // 1
+    ( 12.0  10.0  -0.05)    // 2
+    (-10.0  10.0  -0.05)    // 3
 
-    (-1.0  -1.0   0.05)   // 4
-    ( 2.0  -1.0   0.05)   // 5
-    ( 2.0   1.0   0.05)   // 6
-    (-1.0   1.0   0.05)   // 7
-
-    // Farfield outer box
-    (-10.0 -10.0  -0.05)  // 8
-    ( 12.0 -10.0  -0.05)  // 9
-    ( 12.0  10.0  -0.05)  // 10
-    (-10.0  10.0  -0.05)  // 11
-
-    (-10.0 -10.0   0.05)  // 12
-    ( 12.0 -10.0   0.05)  // 13
-    ( 12.0  10.0   0.05)  // 14
-    (-10.0  10.0   0.05)  // 15
+    (-10.0 -10.0   0.05)    // 4
+    ( 12.0 -10.0   0.05)    // 5
+    ( 12.0  10.0   0.05)    // 6
+    (-10.0  10.0   0.05)    // 7
 );
 
 blocks
 (
-    // Bottom-inner block (below airfoil)
-    hex (0 1 2 3 4 5 6 7) (60 40 1) simpleGrading (3 3 1)
-
-    // Bottom-outer block
-    hex (8 9 1 0 12 13 5 4) (40 30 1) simpleGrading (0.5 3 1)
-
-    // Right-outer block
-    hex (1 9 10 2 5 13 14 6) (40 40 1) simpleGrading (0.5 0.5 1)
-
-    // Top-outer block
-    hex (2 10 11 3 6 14 15 7) (40 30 1) simpleGrading (0.5 3 1)
-
-    // Left-outer block
-    hex (3 11 8 0 7 15 12 4) (40 40 1) simpleGrading (3 0.5 1)
+    // Single block, 100 x 80 x 1. uniform background grid for snappyHexMesh.
+    hex (0 1 2 3 4 5 6 7) (100 80 1) simpleGrading (1 1 1)
 );
 
 edges
@@ -79,44 +52,21 @@ boundary
     farfield
     {
         type patch;
+        physicalType inlet;
         faces
         (
-            (8 9 13 12)
-            (9 10 14 13)
-            (10 11 15 14)
-            (11 8 12 15)
-        );
-    }
-
-    airfoil
-    {
-        type wall;
-        faces
-        (
-            (0 1 5 4)   // airfoil lower + floor (placeholder, refined by snappy)
-            (1 2 6 5)
-            (2 3 7 6)
-            (3 0 4 7)
-        );
-    }
-
-    frontAndBack
-    {
-        type empty;
-        faces
-        (
-            (0 3 2 1)
-            (4 5 6 7)
-            (8 0 4 12)
-            (9 1 5 13)
-            (10 2 6 14)
-            (11 3 7 15)
+            (0 1 5 4)   // bottom
+            (1 2 6 5)   // right
+            (2 3 7 6)   // top
+            (3 0 4 7)   // left
         );
     }
 );
 
-mergePatchPairs
-(
-);
+defaultPatch
+{
+    type empty;
+    name frontAndBack;
+}
 
 // ************************************************************************* //

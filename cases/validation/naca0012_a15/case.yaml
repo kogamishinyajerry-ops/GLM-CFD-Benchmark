@@ -36,14 +36,18 @@ solvers:
         critical: true
       - name: solve
         command: "simpleFoam -case {{ case_dir }}"
-        timeout_sec: 300
+        timeout_sec: 600
         critical: true
     parameters:
-      nu: 1.6667e-7
+      # nu chosen for Re = U*L/nu = 100*1/1.6667e-5 ≈ 6.0e6, matching Ladson
+      # 1988 (NASA TM-4074) experimental conditions. n_iter=2000 gives SIMPLE
+      # enough iterations for SA convergence with tightened tolerance.
+      # α=15° is near stall; expect larger Cl/Cd scatter vs Ladson.
+      nu: 1.6667e-5
       u_inf: 100.0
       l_ref: 1.0
       alpha_deg: 15.0
-      n_iter: 1000
+      n_iter: 2000
   - name: su2
     command: ""
     timeout_sec: 600

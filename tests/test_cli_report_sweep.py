@@ -61,10 +61,22 @@ def _seed_sweep(
     """Seed 4 NACA0012 sweep runs (alpha 0/5/10/15); return run_ids."""
     repo = JsonManifestRepository(runs_dir)
     runs = [
-        ("20260101T000000Z_naca0012_a0_" + solver + "_aaaa0000", "naca0012_a0", 0.0, 0.001, 0.0120),
-        ("20260101T000001Z_naca0012_a5_" + solver + "_bbbb1111", "naca0012_a5", 5.0, 0.543, 0.0125),
-        ("20260101T000002Z_naca0012_a10_" + solver + "_cccc2222", "naca0012_a10", 10.0, 1.022, 0.0140),
-        ("20260101T000003Z_naca0012_a15_" + solver + "_dddd3333", "naca0012_a15", 15.0, 1.473, 0.0190),
+        (
+            "20260101T000000Z_naca0012_a0_" + solver + "_aaaa0000",
+            "naca0012_a0", 0.0, 0.001, 0.0120
+        ),
+        (
+            "20260101T000001Z_naca0012_a5_" + solver + "_bbbb1111",
+            "naca0012_a5", 5.0, 0.543, 0.0125
+        ),
+        (
+            "20260101T000002Z_naca0012_a10_" + solver + "_cccc2222",
+            "naca0012_a10", 10.0, 1.022, 0.0140
+        ),
+        (
+            "20260101T000003Z_naca0012_a15_" + solver + "_dddd3333",
+            "naca0012_a15", 15.0, 1.473, 0.0190
+        ),
     ]
     run_ids: list[str] = []
     for run_id, case_id, alpha, cl, cd in runs:

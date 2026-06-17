@@ -373,8 +373,14 @@ class DockerBackend:
             wall = (datetime.now(timezone.utc) - start).total_seconds()
             raw_stdout = e.stdout or b""
             raw_stderr = e.stderr or b""
-            stdout = raw_stdout if isinstance(raw_stdout, str) else raw_stdout.decode("utf-8", errors="replace")
-            stderr_decoded = raw_stderr if isinstance(raw_stderr, str) else raw_stderr.decode("utf-8", errors="replace")
+            stdout = (
+                raw_stdout if isinstance(raw_stdout, str)
+                else raw_stdout.decode("utf-8", errors="replace")
+            )
+            stderr_decoded = (
+                raw_stderr if isinstance(raw_stderr, str)
+                else raw_stderr.decode("utf-8", errors="replace")
+            )
             combined_stderr = f"Timeout after {timeout}s\n{stderr_decoded}"
             self._write_logs(cwd, stdout, combined_stderr)
             return RunResult(

@@ -117,7 +117,8 @@ class TestPullPolicy:
             # Second call (pull) returns zero → success
             mock_run.side_effect = [
                 subprocess.CompletedProcess(
-                    args=["docker", "image", "inspect"], returncode=1, stdout="", stderr="no such image"
+                    args=["docker", "image", "inspect"], returncode=1,
+                stdout="", stderr="no such image"
                 ),
                 subprocess.CompletedProcess(
                     args=["docker", "pull"], returncode=0, stdout="pulled", stderr=""
@@ -131,7 +132,8 @@ class TestPullPolicy:
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
                 subprocess.CompletedProcess(
-                    args=["docker", "image", "inspect"], returncode=1, stdout="", stderr="no such image"
+                    args=["docker", "image", "inspect"], returncode=1,
+                stdout="", stderr="no such image"
                 ),
                 subprocess.CompletedProcess(
                     args=["docker", "pull"], returncode=1, stdout="", stderr="manifest not found"
@@ -238,18 +240,18 @@ class TestExecute:
         # Patch all subprocess calls to simulate success
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
-                # 1. _check_daemon (docker version)
+                # 1. _check_daemon (docker version),
                 subprocess.CompletedProcess(
                     args=["docker", "version"], returncode=0, stdout="20.10\n", stderr=""
                 ),
-                # 2. _resolve_digest (docker inspect RepoDigests)
+                # 2. _resolve_digest (docker inspect RepoDigests),
                 subprocess.CompletedProcess(
                     args=["docker", "inspect"],
                     returncode=0,
                     stdout="test/img@sha256:abc\n",
                     stderr="",
                 ),
-                # 3. actual execution (docker run)
+                # 3. actual execution (docker run),
                 subprocess.CompletedProcess(
                     args=["docker", "run"],
                     returncode=0,
@@ -268,8 +270,14 @@ class TestExecute:
         b = DockerBackend(image="test/img", pull_policy="never")
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
-                subprocess.CompletedProcess(args=["docker", "version"], returncode=0, stdout="ok", stderr=""),
-                subprocess.CompletedProcess(args=["docker", "inspect"], returncode=0, stdout="x@sha256:y\n", stderr=""),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "version"], returncode=0, stdout="ok", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "inspect"], returncode=0, stdout="x@sha256:y\n", stderr=""
+                ),
                 subprocess.CompletedProcess(
                     args=["docker", "run"], returncode=1, stdout="", stderr="blockMesh failed\n"
                 ),
@@ -283,9 +291,18 @@ class TestExecute:
         b = DockerBackend(image="test/img", pull_policy="never")
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
-                subprocess.CompletedProcess(args=["docker", "version"], returncode=0, stdout="ok", stderr=""),
-                subprocess.CompletedProcess(args=["docker", "inspect"], returncode=0, stdout="x@sha256:y\n", stderr=""),
-                subprocess.TimeoutExpired(cmd=["docker", "run"], timeout=2),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "version"], returncode=0, stdout="ok", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "inspect"], returncode=0, stdout="x@sha256:y\n", stderr=""
+                ),
+                    subprocess.TimeoutExpired(
+                        cmd=["docker",
+                        "run"], timeout=2
+                    ),
             ]
             result = b.execute(["blockMesh"], cwd=tmp_path, timeout=2)
 
@@ -297,8 +314,14 @@ class TestExecute:
         b = DockerBackend(image="test/img", pull_policy="never")
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
-                subprocess.CompletedProcess(args=["docker", "version"], returncode=0, stdout="ok", stderr=""),
-                subprocess.CompletedProcess(args=["docker", "inspect"], returncode=0, stdout="x@sha256:y\n", stderr=""),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "version"], returncode=0, stdout="ok", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "inspect"], returncode=0, stdout="x@sha256:y\n", stderr=""
+                ),
                 subprocess.CompletedProcess(
                     args=["docker", "run"], returncode=0, stdout="out line\n", stderr="err line\n"
                 ),
@@ -315,17 +338,32 @@ class TestExecute:
         b = DockerBackend(image="test/img", pull_policy="never")
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
-                subprocess.CompletedProcess(args=["docker", "version"], returncode=0, stdout="ok", stderr=""),
-                subprocess.CompletedProcess(args=["docker", "inspect"], returncode=0, stdout="x@sha256:first\n", stderr=""),
-                subprocess.CompletedProcess(args=["docker", "run"], returncode=0, stdout="ok", stderr=""),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "version"], returncode=0, stdout="ok", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "inspect"], returncode=0, stdout="x@sha256:first\n", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "run"], returncode=0, stdout="ok", stderr=""
+                ),
             ]
             b.execute(["ls"], cwd=tmp_path)
 
         # Second execute — digest already cached, no new inspect call
         with patch("cfdb.execution.docker.subprocess.run") as mock_run2:
             mock_run2.side_effect = [
-                subprocess.CompletedProcess(args=["docker", "version"], returncode=0, stdout="ok", stderr=""),
-                subprocess.CompletedProcess(args=["docker", "run"], returncode=0, stdout="ok", stderr=""),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "version"], returncode=0, stdout="ok", stderr=""
+                ),
+                subprocess.CompletedProcess(
+                    args=["docker",
+                    "run"], returncode=0, stdout="ok", stderr=""
+                ),
             ]
             b.execute(["ls"], cwd=tmp_path)
             # Verify no inspect call on second execute
@@ -491,3 +529,4 @@ class TestWindowsPathCompatibility:
         # Ensure the Windows path was rewritten in the inner command.
         assert "D:/proj/runs/case" not in inner_str
         assert "/work" in inner_cmd
+

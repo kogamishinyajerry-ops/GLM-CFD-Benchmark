@@ -189,8 +189,10 @@ class TestOpenFOAMRun:
         mock_result = RunResult(
             exit_code=0,
             stdout=(
-                "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n"
-                "|  \\\\    /   O peration     | Version:  v2406                                 |\n"
+                "| \\\\      /  F ield         | OpenFOAM: The Open Source CFD"
+                " Toolbox           |\n"
+                "|  \\\\    /   O peration     | Version:  v2406"
+                "                                 |\n"
                 "Build  : 7cf83b7-OpenFOAM-v2406\n"
                 "Solving for Ux, Initial residual = 1.2e-6\n"
                 "Solving for Uy, Initial residual = 2.1e-6\n"
@@ -377,7 +379,9 @@ class TestOpenFOAMP2aFields:
 
         assert result.cell_count == 400
 
-    def test_merge_produces_residuals_history(self, openfoam_case: CaseSpec, tmp_path: Path) -> None:
+    def test_merge_produces_residuals_history(
+        self, openfoam_case: CaseSpec, tmp_path: Path
+    ) -> None:
         """_merge_step_results populates residuals_history (P2-a)."""
         adapter = OpenFOAMAdapter(dry_run=False)
         case_dir = tmp_path / "case"

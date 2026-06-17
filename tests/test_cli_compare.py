@@ -55,7 +55,10 @@ def _seed_two_runs(
 ) -> tuple[str, str]:
     """Seed runs_dir with two runs; return (run_id1, run_id2)."""
     repo = JsonManifestRepository(runs_dir)
-    m1 = _make_manifest("20260101T000000Z_naca0012_a0_openfoam_abcd1234", case_id=case_id1, solver="openfoam")
+    m1 = _make_manifest(
+        "20260101T000000Z_naca0012_a0_openfoam_abcd1234",
+        case_id=case_id1, solver="openfoam",
+    )
     m2 = _make_manifest("20260101T000001Z_naca0012_a0_su2_efgh5678", case_id=case_id2, solver="su2")
     met1 = MetricsResult(qoi_relative_errors={"cl": 0.456, "cd": 0.012})
     met2 = MetricsResult(qoi_relative_errors={"cl": 0.460, "cd": 0.013})

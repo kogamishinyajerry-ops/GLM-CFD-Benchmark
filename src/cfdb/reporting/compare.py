@@ -153,8 +153,14 @@ def render_compare_text(
     """
     lines: list[str] = []
     lines.append(f"Comparing: {manifest1.run_id} vs {manifest2.run_id}")
-    lines.append(f"  case1={manifest1.case_id} solver1={manifest1.solver} status1={manifest1.status}")
-    lines.append(f"  case2={manifest2.case_id} solver2={manifest2.solver} status2={manifest2.status}")
+    lines.append(
+        f"  case1={manifest1.case_id} solver1={manifest1.solver}"
+        f" status1={manifest1.status}"
+    )
+    lines.append(
+        f"  case2={manifest2.case_id} solver2={manifest2.solver}"
+        f" status2={manifest2.status}"
+    )
     lines.append("=" * 80)
 
     if not comparisons:
@@ -165,7 +171,10 @@ def render_compare_text(
 
     # Header
     if same_case:
-        header = f"{'QoI':<20} {'run1':>12} {'run2':>12} {'abs_diff':>12} {'rel_diff':>10} {'tolerance':>10}"
+        header = (
+            f"{'QoI':<20} {'run1':>12} {'run2':>12}"
+            f" {'abs_diff':>12} {'rel_diff':>10} {'tolerance':>10}"
+        )
     else:
         header = f"{'QoI':<20} {'run1':>12} {'run2':>12} {'abs_diff':>12} {'rel_diff':>10}"
     lines.append(header)
@@ -298,8 +307,10 @@ svg {{ max-width: 100%; height: auto; border: 1px solid #eee; }}
 <body>
 <h1>Run Comparison</h1>
 <div class="meta">
-  <strong>Run 1:</strong> {manifest1.run_id} (case={manifest1.case_id}, solver={manifest1.solver}, status={manifest1.status})<br>
-  <strong>Run 2:</strong> {manifest2.run_id} (case={manifest2.case_id}, solver={manifest2.solver}, status={manifest2.status})
+  <strong>Run 1:</strong> {manifest1.run_id}
+  (case={manifest1.case_id}, solver={manifest1.solver}, status={manifest1.status})<br>
+  <strong>Run 2:</strong> {manifest2.run_id}
+  (case={manifest2.case_id}, solver={manifest2.solver}, status={manifest2.status})
 </div>
 <section>
 <h2>QoI Differences</h2>

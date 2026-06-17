@@ -262,7 +262,10 @@ class TestLoadLadsonReference:
     def test_actual_reference_file(self) -> None:
         """Load the real ladson1988.csv in the repo and verify shape."""
         from cfdb.post.qoi_extractor import load_ladson_reference
-        ref_path = Path(__file__).parent.parent / "cases" / "validation" / "naca0012" / "reference" / "ladson1988.csv"
+        ref_path = (
+        Path(__file__).parent.parent
+        / "cases" / "validation" / "naca0012" / "reference" / "ladson1988.csv"
+    )
         if not ref_path.exists():
             pytest.skip(f"reference file not found: {ref_path}")
         result = load_ladson_reference(ref_path)

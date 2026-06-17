@@ -295,7 +295,8 @@ def render_residual_comparison_svg(
                 f'<svg viewBox="0 0 {_VIEW_W} {_VIEW_H}" xmlns="http://www.w3.org/2000/svg">'
                 f'<rect width="{_VIEW_W}" height="{_VIEW_H}" fill="white"/>'
                 f'<text x="{_VIEW_W / 2}" y="{_VIEW_H / 2}" text-anchor="middle" '
-                f'fill="#999" font-size="14">All residual values non-positive; cannot log-scale</text>'
+                f'fill="#999" font-size="14">'
+            f'All residual values non-positive; cannot log-scale</text>'
                 f"</svg>"
             )
         y_min = math.log10(min(positive_values))

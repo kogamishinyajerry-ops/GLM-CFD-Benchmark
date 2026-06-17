@@ -126,6 +126,8 @@
 - **P2-a（已交付 2026-06-16, commit 81f32bb）**: SQLite 持久化 + 残差 SVG 报告 + P1-b 遗留小项，250 测试 / 91.08% cov
 - **P2-b（已交付 2026-06-16, commit 41fbeaa）**: Docker backend + DVC 大文件 + NACA0012 α=0° 单攻角
 - **P2-c（已交付 2026-06-16）**: NACA0012 α=0/5/10/15° 多攻角扫描 + Polar/Cp/残差对比 SVG + cfdb compare + cfdb report-sweep，392 测试 / 90.39% cov
+- **P3-hotfix（已交付 2026-06-16）**: NACA adapter 6 项修复（nut wall BC / SA freestream init / fvSchemes 等）
+- **P3-tail（进行中 2026-06-17, 详见 2026-06-17.md）**: Docker 真跑闭环 + QoI Critical bug 修复（级联发散反向扫描错误）+ qoi_extractor 测试覆盖 77%→92% + SA 发散缓解（div(phi,nuTilda) upwind）。4 个 α-sweep case 在 opencfd/openfoam-run:2406 镜像下全部真跑成功，α=0 对 Ladson 误差 Cl 0.2% / Cd 13%
 - **P3 候选**: ML surrogate adapter（AirfRANS 推理 only）+ Web Dashboard（FastAPI + Jinja2 + Plotly.js）+ Fluent adapter + Slurm backend
 
 ## 命名规范
@@ -153,3 +155,6 @@
 - Git Bash 不带 `--login` 时 PATH 不含 `/usr/bin`，cat/sleep 等命令找不到，且内部 `bash` 会被 WSL System32 bash 截获
 - Windows 默认 locale GBK 读 UTF-8 文件会爆 → 所有 read_text 必须 `encoding="utf-8"`
 - 工程师自测不可信，必须 QA 独立端到端真跑 CLI 命令
+- **真实数据是最好的测试**：合成 forces.dat 单测全过，真实 OpenCFD forces.dat 立刻暴露级联发散回滚逻辑的反向扫描错误（P3-tail Critical bug）
+- **OpenCFD image env 已 baked-in**：`opencfd/openfoam-run:2406` PATH 含 OpenFOAM bin，无需 `source bashrc`，但残留文档假设要 source
+- **SA 在粗网格 high-y+ 易发散**：`div(phi,nuTilda)=linearUpwind` 不稳定，改为 `upwind`（airFoil2D tutorial 默认）；QoI rollback 是安全网而非根治

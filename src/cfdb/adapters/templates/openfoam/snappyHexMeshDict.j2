@@ -45,8 +45,8 @@ geometry
 
 castellatedMeshControls
 {
-    maxLocalCells 500000;
-    maxGlobalCells 2000000;
+    maxLocalCells 200000;
+    maxGlobalCells 1000000;
     minRefinementCells 0;
 
     nCellsBetweenLevels 2;
@@ -59,8 +59,8 @@ castellatedMeshControls
     {
         airfoil
         {
-            // P3.1-SA: level (5 5) — 32x refinement, balanced for single-core Docker
-            level (5 5);
+            // P3.1-SA: level (4 5) — 16-32x, balanced for single-core Docker
+            level (4 5);
             patchInfo { type wall; }
         }
     }
@@ -97,18 +97,16 @@ addLayersControls
 {
     relativeSizes true;
 
-    // P3.1-SA Phase 2 (2026-06-17): denser prism layers for SA stability.
-    // 12 layers, expansionRatio=1.2, finalLayerThickness=0.3 near-wall cell.
-    // Combined with level (5 6) surface refinement, this targets y+ < 30 for
-    // reliable wall-function SA. Previous 8-layer/level-4 config hit y+ > 50
-    // and triggered step-200 nuTilda divergence at alpha>0.
+    // P3.1-SA Phase 2: 10 prism layers, expansionRatio=1.15,
+    // finalLayerThickness=0.3. Combined with level (4 5) surface refinement
+    // and 120x90 background, targets y+ < 30 on single-core Docker.
     thicknessModel finalAndExpansion;
 
     layers
     {
         "airfoil.*"
         {
-            nSurfaceLayers 12;
+            nSurfaceLayers 10;
         }
     }
 

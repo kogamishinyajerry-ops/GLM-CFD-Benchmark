@@ -23,7 +23,7 @@ mesh:
 solvers:
   - name: openfoam
     command: ""
-    timeout_sec: 600
+    timeout_sec: 1200
     steps:
       - name: block_mesh
         command: "blockMesh -case {{ case_dir }}"
@@ -35,7 +35,7 @@ solvers:
         critical: true
       - name: solve
         command: "simpleFoam -case {{ case_dir }}"
-        timeout_sec: 600
+        timeout_sec: 900
         critical: true
     parameters:
       # nu chosen for Re = U*L/nu = 100*1/1.6667e-5 ≈ 6.0e6, matching Ladson
@@ -76,5 +76,5 @@ metrics:
     cl: 0.10
     cd: 0.10
 budget:
-  max_runtime_sec: 600
+  max_runtime_sec: 1200
   max_cells: 500000

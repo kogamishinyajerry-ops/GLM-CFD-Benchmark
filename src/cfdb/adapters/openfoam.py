@@ -132,6 +132,16 @@ class OpenFOAMAdapter:
         context["u_cos"] = u_inf * math.cos(alpha_rad)
         context["v_sin"] = u_inf * math.sin(alpha_rad)
 
+        # P3.1-SA: lift/drag direction vectors for force projection.
+        # liftDir is perpendicular to freestream (rotated 90 deg CCW):
+        #   lift_dir = (-sin(alpha), cos(alpha), 0)
+        # dragDir is parallel to freestream:
+        #   drag_dir = (cos(alpha), sin(alpha), 0)
+        context["lift_dir_x"] = -math.sin(alpha_rad)
+        context["lift_dir_y"] = math.cos(alpha_rad)
+        context["drag_dir_x"] = math.cos(alpha_rad)
+        context["drag_dir_y"] = math.sin(alpha_rad)
+
         return context
 
     def _render_template(self, template_name: str, context: dict[str, Any]) -> str:

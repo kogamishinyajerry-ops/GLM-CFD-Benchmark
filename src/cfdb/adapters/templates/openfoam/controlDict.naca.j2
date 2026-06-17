@@ -56,8 +56,8 @@ functions
 
         rhoInf          1.225;
         CofR            (0.25 0 0);
-        liftDir         (0 1 0);
-        dragDir         (1 0 0);
+        liftDir         ({{ lift_dir_x }} {{ lift_dir_y }} 0);
+        dragDir         ({{ drag_dir_x }} {{ drag_dir_y }} 0);
         pitchAxis       (0 0 1);
         magUInf         {{ u_inf }};
         lRef            {{ l_ref }};

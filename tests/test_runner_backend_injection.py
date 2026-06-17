@@ -70,7 +70,7 @@ class TestBackendInjectionCustom:
     def test_openfoam_uses_injected_backend_in_dry_run(self) -> None:
         """Even in dry_run mode, the backend attribute is set (but not called)."""
         fake = _FakeBackend()
-        adapter = OpenFOAMAdapter(dry_run=True, backend=fake)
+        OpenFOAMAdapter(dry_run=True, backend=fake)
         # In dry_run, no execution — backend attribute just sits there
         assert len(fake.calls) == 0
 

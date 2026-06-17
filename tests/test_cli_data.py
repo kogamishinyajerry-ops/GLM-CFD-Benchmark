@@ -32,19 +32,20 @@ class TestDataStatusCommand:
 
     def test_status_up_to_date(self, runner: CliRunner, tmp_path: Path) -> None:
         """When DVC returns empty status dict, workspace is up to date."""
-        with patch("cfdb.data.dvc_available", return_value=True):
-            with patch("cfdb.data.dvc_status", return_value={}):
-                result = runner.invoke(app, ["data", "status", "--cwd", str(tmp_path)])
+        with (
+            patch("cfdb.data.dvc_available", return_value=True),
+            patch("cfdb.data.dvc_status", return_value={}),
+        ):
+            result = runner.invoke(app, ["data", "status", "--cwd", str(tmp_path)])
         assert result.exit_code == 0
         assert "up to date" in result.output
 
     def test_status_with_changes(self, runner: CliRunner, tmp_path: Path) -> None:
-        with patch("cfdb.data.dvc_available", return_value=True):
-            with patch(
-                "cfdb.data.dvc_status",
-                return_value={"mesh.dvc": {"changed": True}, "ref.dvc": {"missing": True}},
-            ):
-                result = runner.invoke(app, ["data", "status", "--cwd", str(tmp_path)])
+        with patch("cfdb.data.dvc_available", return_value=True), patch(
+            "cfdb.data.dvc_status",
+            return_value={"mesh.dvc": {"changed": True}, "ref.dvc": {"missing": True}},
+        ):
+            result = runner.invoke(app, ["data", "status", "--cwd", str(tmp_path)])
         assert result.exit_code == 0
         assert "mesh.dvc" in result.output
         assert "ref.dvc" in result.output
@@ -53,12 +54,11 @@ class TestDataStatusCommand:
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         from cfdb.data import DVCError
-        with patch("cfdb.data.dvc_available", return_value=True):
-            with patch(
-                "cfdb.data.dvc_status",
-                side_effect=DVCError("not a dvc repo"),
-            ):
-                result = runner.invoke(app, ["data", "status", "--cwd", str(tmp_path)])
+        with patch("cfdb.data.dvc_available", return_value=True), patch(
+            "cfdb.data.dvc_status",
+            side_effect=DVCError("not a dvc repo"),
+        ):
+            result = runner.invoke(app, ["data", "status", "--cwd", str(tmp_path)])
         assert result.exit_code == 1
         assert "FAIL" in result.output
         assert "not a dvc repo" in result.output
@@ -75,25 +75,29 @@ class TestDataPullCommand:
         assert "DVC not installed" in result.output
 
     def test_pull_all_success(self, runner: CliRunner, tmp_path: Path) -> None:
-        with patch("cfdb.data.dvc_available", return_value=True):
-            with patch("cfdb.data.dvc_pull", return_value="Downloading mesh...\nDone"):
-                result = runner.invoke(app, ["data", "pull", "--cwd", str(tmp_path)])
+        with (
+            patch("cfdb.data.dvc_available", return_value=True),
+            patch("cfdb.data.dvc_pull", return_value="Downloading mesh...\nDone"),
+        ):
+            result = runner.invoke(app, ["data", "pull", "--cwd", str(tmp_path)])
         assert result.exit_code == 0
         assert "DVC pull complete" in result.output
         assert "Done" in result.output
 
     def test_pull_with_targets(self, runner: CliRunner, tmp_path: Path) -> None:
-        with patch("cfdb.data.dvc_available", return_value=True):
-            with patch("cfdb.data.dvc_pull", return_value="") as mock_pull:
-                result = runner.invoke(
-                    app,
-                    [
-                        "data", "pull",
-                        "--cwd", str(tmp_path),
-                        "mesh.dvc",
-                        "reference.dvc",
-                    ],
-                )
+        with (
+            patch("cfdb.data.dvc_available", return_value=True),
+            patch("cfdb.data.dvc_pull", return_value="") as mock_pull,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "data", "pull",
+                    "--cwd", str(tmp_path),
+                    "mesh.dvc",
+                    "reference.dvc",
+                ],
+            )
         assert result.exit_code == 0
         # Verify targets passed through
         call_kwargs = mock_pull.call_args
@@ -101,12 +105,11 @@ class TestDataPullCommand:
 
     def test_pull_dvc_error_propagates(self, runner: CliRunner, tmp_path: Path) -> None:
         from cfdb.data import DVCError
-        with patch("cfdb.data.dvc_available", return_value=True):
-            with patch(
-                "cfdb.data.dvc_pull",
-                side_effect=DVCError("network timeout"),
-            ):
-                result = runner.invoke(app, ["data", "pull", "--cwd", str(tmp_path)])
+        with patch("cfdb.data.dvc_available", return_value=True), patch(
+            "cfdb.data.dvc_pull",
+            side_effect=DVCError("network timeout"),
+        ):
+            result = runner.invoke(app, ["data", "pull", "--cwd", str(tmp_path)])
         assert result.exit_code == 1
         assert "network timeout" in result.output
 

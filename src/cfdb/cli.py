@@ -510,7 +510,7 @@ def report_sweep_cmd(
         from cfdb.reporting.svg_polar import PolarCurve, PolarPoint, render_polar_svg
 
         solver_points: dict[str, list[PolarPoint]] = {}
-        for m, met in zip(manifests, metrics_list):
+        for m, met in zip(manifests, metrics_list, strict=False):
             alpha_str = m.cli_args.get("alpha") if m.cli_args else None
             if alpha_str is None:
                 continue

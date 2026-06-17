@@ -620,7 +620,7 @@ def extract_cl_cd_su2(
     # Cl ≈ ∫₀¹ (Cp_lower - Cp_upper) dx / chord
     # (neglecting angle-of-attack projection; suitable for low α)
     def _trap_integrate(xs: list[float], ys: list[float]) -> float:
-        pairs = sorted(zip(xs, ys))
+        pairs = sorted(zip(xs, ys, strict=False))
         total = 0.0
         for i in range(1, len(pairs)):
             x0, y0 = pairs[i - 1]

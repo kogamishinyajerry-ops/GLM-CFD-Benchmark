@@ -169,7 +169,7 @@ def render_cp_comparison_svg(
     if reference_data is not None:
         ref_x, ref_cp = reference_data
         if ref_x:
-            pairs = sorted(zip(ref_x, ref_cp))
+            pairs = sorted(zip(ref_x, ref_cp, strict=False))
             path_parts = []
             for i, (xi, cpi) in enumerate(pairs):
                 x_px = _linear_map(xi, x_min, x_max, plot_left, plot_right)
@@ -189,11 +189,11 @@ def render_cp_comparison_svg(
                 )
 
     # Draw solver curves
-    for i, (solver_name, (x_list, cp_list)) in enumerate(solver_data.items()):
+    for i, (_, (x_list, cp_list)) in enumerate(solver_data.items()):
         if not x_list:
             continue
         color = _OKABE_ITO[i % len(_OKABE_ITO)]
-        pairs = sorted(zip(x_list, cp_list))
+        pairs = sorted(zip(x_list, cp_list, strict=False))
         path_parts = []
         for j, (xi, cpi) in enumerate(pairs):
             x_px = _linear_map(xi, x_min, x_max, plot_left, plot_right)
@@ -390,7 +390,7 @@ def render_residual_comparison_svg(
     )
 
     # Draw curves
-    for i, (solver, field, values) in enumerate(flat):
+    for i, (_, _, values) in enumerate(flat):
         color = _OKABE_ITO[i % len(_OKABE_ITO)]
         path_parts = []
         for j, v in enumerate(values):

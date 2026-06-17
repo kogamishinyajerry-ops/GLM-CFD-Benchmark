@@ -195,7 +195,7 @@ def render_residual_svg(
     )
 
     # --- Data curves ---
-    for idx, (field_name, values) in enumerate(residuals.items()):
+    for idx, (_, values) in enumerate(residuals.items()):
         color = _OKABE_ITO[idx % len(_OKABE_ITO)]
         points: list[str] = []
         for i, val in enumerate(values):

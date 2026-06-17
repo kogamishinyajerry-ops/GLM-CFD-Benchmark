@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -112,13 +113,11 @@ def generate_multi_solver_report(
 
     # Build summary table rows
     summary_rows: list[dict[str, Any]] = []
-    for m, met in zip(manifests, metrics_list):
+    for m, met in zip(manifests, metrics_list, strict=False):
         alpha = None
         if m.cli_args and "alpha" in m.cli_args:
-            try:
+            with contextlib.suppress(ValueError):
                 alpha = float(m.cli_args["alpha"])
-            except ValueError:
-                pass
         summary_rows.append(
             {
                 "run_id": m.run_id,
@@ -138,7 +137,7 @@ def generate_multi_solver_report(
     qoi_names_sorted = sorted(qoi_names)
 
     qoi_rows: list[dict[str, Any]] = []
-    for row, met in zip(summary_rows, metrics_list):
+    for row, met in zip(summary_rows, metrics_list, strict=False):
         cells: dict[str, Any] = {"case_id": row["case_id"], "solver": row["solver"]}
         for qn in qoi_names_sorted:
             cells[qn] = met.qoi_relative_errors.get(qn)

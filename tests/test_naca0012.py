@@ -34,7 +34,7 @@ class TestNACA4Thickness:
         # Upper surface points 0..49, lower surface points 50..99 (reversed)
         upper_y = y[:50]
         lower_y = y[50:][::-1]  # un-reverse to compare point-by-point
-        for uy, ly in zip(upper_y, lower_y):
+        for uy, ly in zip(upper_y, lower_y, strict=False):
             assert math.isclose(uy, -ly, abs_tol=1e-6)
 
     def test_thickness_at_midchord(self) -> None:

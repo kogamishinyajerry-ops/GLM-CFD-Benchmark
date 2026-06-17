@@ -204,7 +204,6 @@ class TestRunManifest:
     def test_p1b_json_roundtrip(self) -> None:
         """JSON serialize/deserialize preserves P1-b fields."""
         import json
-
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc)
@@ -230,7 +229,6 @@ class TestRunManifest:
 
     def test_p1b_backward_compat_no_fields(self) -> None:
         """Old JSON without P1-b fields loads fine (fields default to None)."""
-        import json
 
         from datetime import datetime, timezone
 

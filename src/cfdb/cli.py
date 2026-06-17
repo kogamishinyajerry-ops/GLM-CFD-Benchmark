@@ -292,7 +292,7 @@ def data_status_cmd(
     ] = Path("."),
 ) -> None:
     """Show DVC status (which tracked files are missing or changed)."""
-    from cfdb.data import dvc_available, dvc_status, DVCError
+    from cfdb.data import DVCError, dvc_available, dvc_status
 
     if not dvc_available():
         typer.echo(
@@ -329,7 +329,7 @@ def data_pull_cmd(
     ] = Path("."),
 ) -> None:
     """Pull DVC-tracked data from remote (meshes, reference datasets)."""
-    from cfdb.data import dvc_available, dvc_pull, DVCError
+    from cfdb.data import DVCError, dvc_available, dvc_pull
 
     if not dvc_available():
         typer.echo(

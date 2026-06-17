@@ -280,7 +280,6 @@ class TestNACA0012CaseSchema:
     def test_case_yaml_validates(self) -> None:
         """Load naca0012_a0/case.yaml and verify it passes CaseSpec validation."""
         from cfdb.registry import CaseRegistry
-        from cfdb.schema import CaseSpec
 
         cases_root = Path(__file__).parent.parent / "cases"
         if not (cases_root / "validation" / "naca0012" / "case.yaml").exists():

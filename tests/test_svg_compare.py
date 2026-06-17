@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from cfdb.reporting.svg_compare import (
     render_cp_comparison_svg,
     render_residual_comparison_svg,

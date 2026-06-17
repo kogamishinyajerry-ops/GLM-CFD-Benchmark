@@ -7,9 +7,6 @@ and use the injected backend instead of hard-coding LocalExecutionBackend.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
 
 from cfdb.adapters import get_adapter
 from cfdb.adapters.base import RunResult

@@ -10,7 +10,6 @@ bottom of each subplot.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 # Reuse the same Okabe-Ito palette as svg_residuals for consistency

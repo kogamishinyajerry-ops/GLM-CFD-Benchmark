@@ -1,0 +1,106 @@
+{% extends "base.html.j2" %}
+{% block title %}{% if single_case %}{{ case.name }} — {% endif %}Cases — CFD-Benchmark{% endblock %}
+
+{% block content %}
+{% if not single_case %}
+{# ===== Case Listing ===== #}
+<h1 style="color: var(--db-primary); margin-bottom: 0.75rem;">Cases</h1>
+
+<div class="card">
+    {% if cases %}
+    <table>
+        <thead>
+            <tr>
+                <th>Case ID</th>
+                <th>Name</th>
+                <th>Category</th>
+                <th>Solvers</th>
+                <th>Runs</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in cases %}
+            <tr class="run-row" onclick="window.location='/cases/{{ c.id }}'">
+                <td><code>{{ c.id }}</code></td>
+                <td>{{ c.name }}</td>
+                <td><span class="badge badge-dry_run">{{ c.category }}</span></td>
+                <td>{{ c.solvers | map(attribute='name') | join(', ') }}</td>
+                <td>{{ run_counts.get(c.id, 0) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p style="margin-top: 0.75rem; color: var(--db-muted); font-size: 0.85rem;">
+        {{ cases|length }} case(s) registered
+    </p>
+    {% else %}
+    <p style="color: var(--db-muted);">No cases registered.</p>
+    {% endif %}
+</div>
+
+{% else %}
+{# ===== Single Case Detail ===== #}
+<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">
+    <a href="/cases" style="color: var(--db-primary); text-decoration: none;">&larr; Back to Cases</a>
+    <h1 style="color: var(--db-primary); margin: 0; font-size: 1.3rem;">{{ case.name }}</h1>
+</div>
+
+{# Case Overview #}
+<div class="card">
+    <dl class="kv-grid">
+        <dt>Case ID</dt><dd><code>{{ case.id }}</code></dd>
+        <dt>Name</dt><dd>{{ case.name }}</dd>
+        <dt>Category</dt><dd>{{ case.category }}</dd>
+        <dt>Description</dt><dd>{{ case.description or 'N/A' }}</dd>
+        <dt>Physics</dt><dd>{{ case.physics.flow }}{% if case.physics.turbulence %} + {{ case.physics.turbulence }}{% endif %}, {{ case.physics.dimensionality }}, {{ 'steady' if case.physics.steady else 'transient' }}</dd>
+        {% if case.conditions.reynolds %}
+        <dt>Reynolds</dt><dd>{{ "%.0f"|format(case.conditions.reynolds) }}</dd>
+        {% endif %}
+        {% if case.conditions.mach %}
+        <dt>Mach</dt><dd>{{ "%.3f"|format(case.conditions.mach) }}</dd>
+        {% endif %}
+        {% if case.conditions.alpha_deg is not none %}
+        <dt>α (deg)</dt><dd>{{ "%.1f"|format(case.conditions.alpha_deg) }}</dd>
+        {% endif %}
+        <dt>Solvers</dt><dd>{{ case.solvers | map(attribute='name') | join(', ') }}</dd>
+        <dt>QoIs</dt><dd>{% if case.outputs.qoi %}{{ case.outputs.qoi | join(', ') }}{% else %}none{% endif %}</dd>
+        {% if case.reference %}
+        <dt>Reference</dt><dd>{{ case.reference.type }}</dd>
+        {% endif %}
+    </dl>
+</div>
+
+{# Case Run History #}
+<div class="card">
+    <div class="card-header">Run History ({{ case_runs|length }})</div>
+    {% if case_runs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Run ID</th>
+                <th>Solver</th>
+                <th>Status</th>
+                <th>Wall Time</th>
+                <th>Metrics</th>
+                <th>Start Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in case_runs %}
+            <tr class="run-row" onclick="window.location='/runs/{{ r.run_id }}'">
+                <td><code style="font-size: 0.85rem;">{{ r.run_id[:25] }}...</code></td>
+                <td>{{ r.solver }}</td>
+                <td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td>
+                <td>{{ "%.2f"|format(r.timing.wall_time_sec) }}s</td>
+                <td><span class="badge" style="background-color: var(--db-info);">—</span></td>
+                <td style="font-size: 0.85rem;">{{ r.timing.start_time.strftime('%Y-%m-%d %H:%M') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--db-muted);">No runs for this case yet.</p>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

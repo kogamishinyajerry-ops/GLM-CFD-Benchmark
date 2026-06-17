@@ -1,0 +1,125 @@
+{% extends "base.html.j2" %}
+{% block title %}Compare Runs — CFD-Benchmark{% endblock %}
+
+{% block content %}
+<h1 style="color: var(--db-primary); margin-bottom: 0.75rem;">Compare Runs</h1>
+
+{% if show_form %}
+<div class="card">
+    <form method="get" action="/compare">
+        <div class="compare-form">
+            <div class="form-group">
+                <label for="run1">Run 1</label>
+                <select name="run1" id="run1" style="font-family: monospace;">
+                    <option value="">-- Select run --</option>
+                    {% for rid in run_ids %}
+                    <option value="{{ rid }}" {% if run1 == rid %}selected{% endif %}>{{ rid }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="run2">Run 2</label>
+                <select name="run2" id="run2" style="font-family: monospace;">
+                    <option value="">-- Select run --</option>
+                    {% for rid in run_ids %}
+                    <option value="{{ rid }}" {% if run2 == rid %}selected{% endif %}>{{ rid }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="align-self: flex-end;">
+                <button type="submit" class="btn btn-primary">Compare</button>
+            </div>
+        </div>
+    </form>
+    {% if error %}
+    <div class="error-box" style="margin-top: 1rem;">{{ error }}</div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if result and not show_form %}
+<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">
+    <a href="/compare" style="color: var(--db-primary); text-decoration: none;">&larr; New Comparison</a>
+    <span style="color: var(--db-muted);">
+        <strong>Run 1:</strong> <code>{{ run1 }}</code>
+        &nbsp;|&nbsp;
+        <strong>Run 2:</strong> <code>{{ run2 }}</code>
+    </span>
+</div>
+
+{# Comparison metadata #}
+<div class="card">
+    <p>
+        <strong>Run 1:</strong> <code>{{ manifest1.run_id }}</code>
+        (case={{ manifest1.case_id }}, solver={{ manifest1.solver }}, status={{ manifest1.status }})<br>
+        <strong>Run 2:</strong> <code>{{ manifest2.run_id }}</code>
+        (case={{ manifest2.case_id }}, solver={{ manifest2.solver }}, status={{ manifest2.status }})
+    </p>
+</div>
+
+{# QoI Differences Table #}
+<div class="card">
+    <div class="card-header">QoI Differences</div>
+    {% if comparisons %}
+    <table>
+        <thead>
+            <tr>
+                <th>QoI</th>
+                <th>Run 1</th>
+                <th>Run 2</th>
+                <th>Abs Diff</th>
+                <th>Rel Diff</th>
+                {% if manifest1.case_id == manifest2.case_id %}
+                <th>Tolerance</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in comparisons %}
+            <tr>
+                <td style="font-family: monospace;">{{ c.name }}</td>
+                <td>{{ "%.4e"|format(c.value1) if c.value1 is not none else '—' }}</td>
+                <td>{{ "%.4e"|format(c.value2) if c.value2 is not none else '—' }}</td>
+                <td>{{ "%+.4e"|format(c.abs_diff) if c.abs_diff is not none else '—' }}</td>
+                <td>{{ "%+.2f%%"|format(c.rel_diff_pct) if c.rel_diff_pct is not none else '—' }}</td>
+                {% if manifest1.case_id == manifest2.case_id %}
+                <td>
+                    {% if c.within_tolerance is none %}
+                    <span class="text-na">N/A</span>
+                    {% elif c.within_tolerance %}
+                    <span class="text-pass">PASS</span>
+                    {% else %}
+                    <span class="text-fail">FAIL</span>
+                    {% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p style="font-weight: 600; margin-top: 0.5rem;">
+        Overall:
+        {% if manifest1.case_id == manifest2.case_id and compare_total_count > 0 %}
+        {{ compare_pass_count }}/{{ compare_total_count }} QoIs within tolerance
+        {% elif manifest1.case_id == manifest2.case_id %}
+        no tolerances defined
+        {% else %}
+        cross-case comparison
+        {% endif %}
+    </p>
+    {% else %}
+    <p style="color: var(--db-muted);">No QoIs to compare.</p>
+    {% endif %}
+</div>
+
+{# Residual Comparison SVG #}
+{% if residual_svg %}
+<div class="card">
+    <div class="card-header">Residual Comparison</div>
+    <div class="svg-container">
+        {{ residual_svg | safe }}
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

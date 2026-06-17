@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CFD-Benchmark Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <nav class="db-nav">
+        <div class="db-nav-brand">
+            <a href="/runs">CFD-Benchmark</a>
+        </div>
+        <div class="db-nav-links">
+            <a href="/runs" class="{% if active_page == 'runs' %}active{% endif %}">Runs</a>
+            <a href="/cases" class="{% if active_page == 'cases' %}active{% endif %}">Cases</a>
+            <a href="/compare" class="{% if active_page == 'compare' %}active{% endif %}">Compare</a>
+            <a href="/sweep" class="{% if active_page == 'sweep' %}active{% endif %}">Sweep</a>
+        </div>
+    </nav>
+
+    <main class="db-main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="db-footer">
+        CFD-Benchmark v{{ version }} &mdash; Web Dashboard
+    </footer>
+</body>
+</html>

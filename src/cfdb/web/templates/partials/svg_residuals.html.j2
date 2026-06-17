@@ -1,0 +1,10 @@
+{# htmx partial: on-demand residual SVG #}
+{% if svg %}
+{{ svg | safe }}
+{% else %}
+<svg viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;">
+    <text x="340" y="200" text-anchor="middle" font-size="14" fill="#999" font-family="sans-serif">
+        No residual data available
+    </text>
+</svg>
+{% endif %}

@@ -1,0 +1,10 @@
+{% for r in runs %}
+<tr class="run-row" onclick="window.location='/runs/{{ r.run_id }}'">
+    <td><code style="font-size: 0.85rem;">{{ r.run_id[:25] }}...</code></td>
+    <td>{{ r.case_id }}</td>
+    <td>{{ r.solver }}</td>
+    <td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td>
+    <td>{{ "%.2f"|format(r.timing.wall_time_sec) }}s</td>
+    <td style="font-size: 0.85rem;">{{ r.timing.start_time.strftime('%Y-%m-%d %H:%M') }}</td>
+</tr>
+{% endfor %}

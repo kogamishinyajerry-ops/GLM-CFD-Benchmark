@@ -1,0 +1,70 @@
+{% extends "base.html.j2" %}
+{% block title %}Runs — CFD-Benchmark{% endblock %}
+
+{% block content %}
+<h1 style="color: var(--db-primary); margin-bottom: 0.75rem;">Runs</h1>
+
+<div class="card">
+    <div class="filter-bar"
+         hx-get="/partials/runs"
+         hx-trigger="change from:.filter-input"
+         hx-target="#run-table-body"
+         hx-indicator="#filter-spinner">
+        <select name="case_id" class="filter-input">
+            <option value="">All Cases</option>
+            {% for cid in all_case_ids %}
+            <option value="{{ cid }}" {% if case_id == cid %}selected{% endif %}>{{ cid }}</option>
+            {% endfor %}
+        </select>
+        <select name="solver" class="filter-input">
+            <option value="">All Solvers</option>
+            {% for s in all_solvers %}
+            <option value="{{ s }}" {% if solver == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select name="status" class="filter-input">
+            <option value="">All Statuses</option>
+            {% for st in all_statuses %}
+            <option value="{{ st }}" {% if status == st %}selected{% endif %}>{{ st }}</option>
+            {% endfor %}
+        </select>
+        <span id="filter-spinner" class="htmx-indicator" style="color: var(--db-muted); font-size: 0.85rem;">Loading...</span>
+    </div>
+
+    {% if runs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Run ID</th>
+                <th>Case</th>
+                <th>Solver</th>
+                <th>Status</th>
+                <th>Wall Time</th>
+                <th>Start Time</th>
+            </tr>
+        </thead>
+        <tbody id="run-table-body">
+            {% include "partials/run_table.html.j2" %}
+        </tbody>
+    </table>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% for p in range(1, total_pages + 1) %}
+        {% if p == page %}
+        <span style="padding: 0.3rem 0.7rem; background: var(--db-primary); color: #fff; border-radius: var(--db-radius); font-size: 0.85rem;">{{ p }}</span>
+        {% else %}
+        <a href="/runs?page={{ p }}&case_id={{ case_id }}&solver={{ solver }}&status={{ status }}&per_page={{ per_page }}">{{ p }}</a>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <p style="margin-top: 0.75rem; color: var(--db-muted); font-size: 0.85rem;">
+        Showing {{ runs|length }} of {{ total_runs }} run(s)
+    </p>
+    {% else %}
+    <p style="color: var(--db-muted);">No runs found.</p>
+    {% endif %}
+</div>
+{% endblock %}

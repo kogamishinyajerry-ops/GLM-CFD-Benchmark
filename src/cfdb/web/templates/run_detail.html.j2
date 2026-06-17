@@ -1,0 +1,177 @@
+{% extends "base.html.j2" %}
+{% block title %}Run {{ run_id }} — CFD-Benchmark{% endblock %}
+
+{% block content %}
+<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">
+    <a href="/runs" style="color: var(--db-primary); text-decoration: none;">&larr; Back to Runs</a>
+    <h1 style="color: var(--db-primary); margin: 0; font-size: 1.3rem;">Run Detail</h1>
+</div>
+
+{# Status header #}
+<div class="card">
+    <p>
+        <strong>Run ID:</strong> <code>{{ manifest.run_id }}</code><br>
+        <strong>Status:</strong>
+        <span class="badge" style="background-color: {{ status_color(manifest.status) }};">
+            {{ manifest.status | upper }}
+        </span>
+        &nbsp;
+        <strong>Metrics:</strong>
+        <span class="badge" style="background-color: {{ status_color(metrics.overall_status) }};">
+            {{ metrics.overall_status | upper }}
+        </span>
+    </p>
+</div>
+
+{# Run Summary #}
+<h2>Run Summary</h2>
+<div class="card">
+    <dl class="kv-grid">
+        <dt>Case ID</dt><dd><code>{{ manifest.case_id }}</code></dd>
+        <dt>Solver</dt><dd>{{ manifest.solver }}</dd>
+        <dt>Backend</dt><dd>{{ manifest.backend }}</dd>
+        <dt>Host</dt><dd>{{ manifest.host or 'N/A' }}</dd>
+        <dt>Start Time</dt><dd>{{ manifest.timing.start_time }}</dd>
+        <dt>End Time</dt><dd>{{ manifest.timing.end_time }}</dd>
+        <dt>Wall Time</dt><dd>{{ "%.3f"|format(manifest.timing.wall_time_sec) }} s</dd>
+        <dt>Git Commit</dt><dd>{{ manifest.git_commit or 'N/A' }}</dd>
+        <dt>Container Digest</dt><dd>{{ manifest.container_digest or 'N/A' }}</dd>
+    </dl>
+</div>
+
+{# Error Details #}
+{% if manifest.error %}
+<h2>Error Details</h2>
+<div class="error-box">{{ manifest.error }}</div>
+{% endif %}
+
+{# Metrics Results #}
+<h2>Metrics Results</h2>
+<div class="card">
+    <p><strong>QoI Pass:</strong>
+        <span class="{% if metrics.qoi_pass %}text-pass{% else %}text-fail{% endif %}">
+            {{ 'YES' if metrics.qoi_pass else 'NO' }}
+        </span>
+    </p>
+
+    {% if metrics.qoi_relative_errors %}
+    <table>
+        <thead>
+            <tr><th>QoI Name</th><th>Relative Error</th><th>Pass</th></tr>
+        </thead>
+        <tbody>
+            {% for qoi, err in metrics.qoi_relative_errors.items() %}
+            <tr>
+                <td style="font-family: monospace;">{{ qoi }}</td>
+                <td>{{ "%.6f"|format(err) }} ({{ "%.2f"|format(err * 100) }}%)</td>
+                <td>{{ 'OK' if metrics.qoi_pass else 'FAIL' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p><em>No QoI errors computed.</em></p>
+    {% endif %}
+
+    {% if metrics.notes %}
+    <div class="notes-box">
+        <strong>Notes:</strong>
+        <ul>
+            {% for note in metrics.notes %}
+            <li>{{ note }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+
+{# Residual Convergence (lazy-loaded via htmx) #}
+{% if has_residuals %}
+<h2>Residual Convergence</h2>
+<div class="card">
+    <div class="svg-container"
+         hx-get="/runs/{{ run_id }}/residuals.svg"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <p style="color: var(--db-muted);">Loading residual plot...</p>
+    </div>
+</div>
+{% endif %}
+
+{# Solver Details #}
+{% if manifest.solver_version or manifest.final_residuals or manifest.cell_count or manifest.step_details %}
+<h2>Solver Details</h2>
+<div class="card">
+    <dl class="kv-grid">
+        {% if manifest.solver_version %}
+        <dt>Solver Version</dt><dd>{{ manifest.solver_version }}</dd>
+        {% endif %}
+        {% if manifest.cell_count %}
+        <dt>Cell Count</dt><dd>{{ manifest.cell_count | int }}</dd>
+        {% endif %}
+        {% if manifest.final_residuals %}
+        <dt>Final Residuals</dt><dd>
+            {% for field, val in manifest.final_residuals.items() %}
+            <code>{{ field }}: {{ "%.4e"|format(val) }}</code>
+            {% if not loop.last %} &nbsp; {% endif %}
+            {% endfor %}
+        </dd>
+        {% endif %}
+    </dl>
+
+    {% if manifest.step_details %}
+    <h3 style="margin-top: 1rem;">Step Details</h3>
+    <table>
+        <thead>
+            <tr><th>Step</th><th>Exit Code</th><th>Wall Time (s)</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+            {% for step in manifest.step_details %}
+            <tr>
+                <td>{{ step.name }}</td>
+                <td>{{ step.exit_code }}</td>
+                <td>{{ "%.3f"|format(step.wall_time_sec) }}</td>
+                <td>
+                    <span class="{% if step.status == 'success' %}text-pass{% else %}text-fail{% endif %}">
+                        {{ step.status | upper }}
+                    </span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endif %}
+
+{# Artifacts #}
+<h2>Artifacts</h2>
+<div class="card">
+    {% if manifest.artifacts %}
+    <table>
+        <thead>
+            <tr><th>Type</th><th>Path</th></tr>
+        </thead>
+        <tbody>
+            {% for type, path in manifest.artifacts.items() %}
+            <tr><td>{{ type }}</td><td><code>{{ path }}</code></td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p><em>No artifacts recorded.</em></p>
+    {% endif %}
+</div>
+
+{# CLI Arguments #}
+{% if manifest.cli_args %}
+<h2>CLI Arguments</h2>
+<div class="card">
+    <dl class="kv-grid" style="max-width: 600px;">
+        {% for k, v in manifest.cli_args.items() %}
+        <dt>{{ k }}</dt><dd><code>{{ v }}</code></dd>
+        {% endfor %}
+    </dl>
+</div>
+{% endif %}
+{% endblock %}

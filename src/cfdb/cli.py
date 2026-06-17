@@ -568,5 +568,305 @@ def report_sweep_cmd(
     typer.echo(f"[OK] Sweep report ({len(manifests)} runs): {out_path}")
 
 
+# ============================================================================
+# P4.2: cfdb serve — Web dashboard
+# ============================================================================
+
+
+@app.command("serve")
+def serve_cmd(
+    runs_dir: Annotated[
+        Path,
+        typer.Option("--runs-dir", help="Directory containing run outputs."),
+    ] = Path("runs"),
+    cases_dir: Annotated[
+        Path,
+        typer.Option("--cases-dir", help="Directory containing case categories."),
+    ] = Path("cases"),
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Host to bind the server to."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Port to listen on."),
+    ] = 8080,
+    storage: Annotated[
+        str,
+        typer.Option(
+            "--storage",
+            help="Storage backend: 'json' (default) or 'sqlite'.",
+        ),
+    ] = "json",
+    db_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--db-path",
+            help="SQLite database path (only used with --storage sqlite). "
+            "Default: <runs-dir>/cfdb.db",
+        ),
+    ] = None,
+    export_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--export",
+            help="Export static site to this directory instead of starting the server.",
+        ),
+    ] = None,
+) -> None:
+    """Start the CFD-Benchmark web dashboard or export a static site."""
+    from cfdb.registry import CaseRegistry
+    from cfdb.web import create_app
+
+    # Validate storage option
+    if storage not in ("json", "sqlite"):
+        typer.echo(f"[FAIL] --storage must be 'json' or 'sqlite' (got '{storage}')", err=True)
+        raise typer.Exit(code=1)
+
+    # Select repository
+    if storage == "sqlite":
+        from cfdb.storage.sqlite_repo import SqliteRepository
+
+        actual_db_path = db_path if db_path is not None else (runs_dir / "cfdb.db")
+        repo = SqliteRepository(actual_db_path, runs_root=runs_dir)
+    else:
+        repo = JsonManifestRepository(runs_dir)
+
+    registry = CaseRegistry(cases_dir)
+
+    if export_dir is not None:
+        # Static export mode
+        _export_static_site(repo, registry, runs_dir, cases_dir, export_dir, storage, db_path)
+        return
+
+    # Server mode
+    typer.echo(f"Starting CFD-Benchmark Dashboard at http://{host}:{port}")
+    typer.echo(f"  Runs: {runs_dir.absolute()}")
+    typer.echo(f"  Cases: {cases_dir.absolute()}")
+    typer.echo(f"  Storage: {storage}")
+    typer.echo("Press Ctrl+C to stop.")
+
+    import uvicorn
+
+    app_instance = create_app(repo, registry, runs_dir, cases_dir)
+    uvicorn.run(app_instance, host=host, port=port, log_level="info")
+
+
+def _export_static_site(
+    repo: object,
+    registry: CaseRegistry,
+    runs_dir: Path,
+    cases_dir: Path,
+    export_dir: Path,
+    storage: str,
+    db_path: Path | None,
+) -> None:
+    """Export a full static site from the dashboard.
+
+    Strategy A: Pre-built HTML reports using existing reporting functions.
+    Strategy B: httpx TestClient crawl for dashboard pages.
+    Both strategies run; results are deduplicated by path.
+    """
+    import json
+
+    from cfdb.reporting.html import generate_html_report
+    from cfdb.reporting.svg_residuals import render_residual_svg
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"Exporting static site to {export_dir.absolute()}...")
+
+    # --- Strategy A: Pre-built reports ---
+
+    # Ensure all runs use the same list_runs call
+    try:
+        run_list = repo.list_runs()  # type: ignore[union-attr]
+    except TypeError:
+        run_list = repo.list_runs()  # type: ignore[union-attr]
+
+    # A1: Per-run reports
+    runs_export_dir = export_dir / "runs"
+    runs_export_dir.mkdir(exist_ok=True)
+    for manifest_summary in run_list:
+        try:
+            manifest, metrics = repo.load_run(manifest_summary.run_id)  # type: ignore[union-attr]
+        except Exception:
+            continue
+        run_dir_path = runs_export_dir / manifest.run_id
+        run_dir_path.mkdir(exist_ok=True)
+        residuals_svg = None
+        if manifest.residuals_history:
+            residuals_svg = render_residual_svg(
+                residuals=manifest.residuals_history,
+                title=f"Residual Convergence — {manifest.case_id} ({manifest.solver})",
+                log_scale=True,
+            )
+        generate_html_report(manifest, metrics, run_dir_path, residuals_svg=residuals_svg)
+
+    # A2: Case listing
+    cases_export_dir = export_dir / "cases"
+    cases_export_dir.mkdir(exist_ok=True)
+    cases = registry.list_all()
+    run_counts: dict[str, int] = {}
+    for r in run_list:
+        run_counts[r.case_id] = run_counts.get(r.case_id, 0) + 1
+
+    # A3: Sweep reports for unique case prefixes
+    case_prefixes = set()
+    for r in run_list:
+        # Take the base case family (everything before the last '_alpha' or '_mesh' etc)
+        # Simple heuristic: first underscore_not_numeric group
+        parts = r.case_id.split("_")
+        prefix_parts = []
+        for part in parts:
+            if part.lstrip("-").isdigit():
+                break
+            prefix_parts.append(part)
+        if prefix_parts:
+            case_prefixes.add("_".join(prefix_parts))
+    # Also include full case_ids as prefixes
+    case_prefixes |= set(c.id for c in cases)
+
+    for prefix in sorted(case_prefixes):
+        matched = [r for r in run_list if r.case_id.startswith(prefix)]
+        if len(matched) >= 2:
+            try:
+                from cfdb.reporting.html import generate_multi_solver_report
+
+                manifests = []
+                metrics_list = []
+                for m in matched:
+                    try:
+                        man, met = repo.load_run(m.run_id)  # type: ignore[union-attr]
+                        manifests.append(man)
+                        metrics_list.append(met)
+                    except Exception:
+                        continue
+                if manifests:
+                    sweep_dir = export_dir / "sweep" / prefix
+                    sweep_dir.mkdir(parents=True, exist_ok=True)
+                    generate_multi_solver_report(
+                        manifests,
+                        metrics_list,
+                        sweep_dir / "index.html",
+                        title=f"Sweep Report — {prefix}",
+                    )
+            except Exception as e:
+                logger.warning("Failed to generate sweep for %s: %s", prefix, e)
+
+    # --- Strategy B: Starlette TestClient crawl ---
+    try:
+        from starlette.testclient import TestClient
+
+        from cfdb.web import create_app
+
+        app = create_app(repo, registry, runs_dir, cases_dir)
+
+        with TestClient(app) as client:
+            # Pages to crawl
+            routes_to_crawl = [
+                "/runs",
+                "/cases",
+                "/compare",
+                "/sweep",
+            ]
+
+            for route in routes_to_crawl:
+                try:
+                    resp = client.get(route)
+                    if resp.status_code == 200:
+                        route_path = route.lstrip("/")
+                        out_dir = export_dir / route_path
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        (out_dir / "index.html").write_text(resp.text, encoding="utf-8")
+                except Exception as e:
+                    logger.warning("Failed to crawl %s: %s", route, e)
+
+            # Crawl individual run pages
+            for manifest_summary in run_list:
+                try:
+                    resp = client.get(f"/runs/{manifest_summary.run_id}")
+                    if resp.status_code == 200:
+                        out_dir = runs_export_dir / manifest_summary.run_id
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        (out_dir / "index.html").write_text(resp.text, encoding="utf-8")
+                except Exception:
+                    continue
+
+            # Crawl individual case pages
+            for case in cases:
+                try:
+                    resp = client.get(f"/cases/{case.id}")
+                    if resp.status_code == 200:
+                        out_dir = cases_export_dir / case.id
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        (out_dir / "index.html").write_text(resp.text, encoding="utf-8")
+                except Exception:
+                    continue
+    except ImportError:
+        typer.echo("  [WARN] httpx not installed — Strategy B (dashboard crawl) skipped.")
+
+    # Copy static files
+    static_src = Path(__file__).parent / "web" / "static"
+    static_dst = export_dir / "static"
+    if static_src.exists():
+        _copy_tree(static_src, static_dst)
+
+    # Write JSON API data files
+    api_dir = export_dir / "api"
+    api_dir.mkdir(exist_ok=True)
+
+    runs_data = []
+    for r in run_list:
+        runs_data.append(
+            {
+                "run_id": r.run_id,
+                "case_id": r.case_id,
+                "solver": r.solver,
+                "status": r.status,
+                "wall_time_sec": r.timing.wall_time_sec,
+                "start_time": r.timing.start_time.isoformat(),
+                "host": r.host,
+                "git_commit": r.git_commit,
+            }
+        )
+    (api_dir / "runs.json").write_text(json.dumps(runs_data, indent=2), encoding="utf-8")
+
+    cases_data = [
+        {
+            "id": c.id,
+            "name": c.name,
+            "category": c.category,
+            "description": c.description,
+            "solvers": [s.name for s in c.solvers],
+            "qois": c.outputs.qoi,
+        }
+        for c in cases
+    ]
+    (api_dir / "cases.json").write_text(json.dumps(cases_data, indent=2), encoding="utf-8")
+
+    # Write top-level index.html (redirect to runs)
+    index_html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">'
+    index_html += '\n<meta http-equiv="refresh" content="0;url=runs/">'
+    index_html += (
+        '\n</head>\n<body><p><a href="runs/">'
+        'CFD-Benchmark Dashboard</a></p></body>\n</html>'
+    )
+    (export_dir / "index.html").write_text(index_html, encoding="utf-8")
+
+    typer.echo(f"[OK] Static site exported to {export_dir.absolute()}")
+
+
+def _copy_tree(src: Path, dst: Path) -> None:
+    """Recursively copy a directory tree."""
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            _copy_tree(item, target)
+        else:
+            target.write_bytes(item.read_bytes())
+
+
 if __name__ == "__main__":
     app()

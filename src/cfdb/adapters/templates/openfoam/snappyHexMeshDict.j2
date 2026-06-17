@@ -59,7 +59,8 @@ castellatedMeshControls
     {
         airfoil
         {
-            level (5 6);
+            // P3.1-SA: level (5 5) — 32x refinement, balanced for single-core Docker
+            level (5 5);
             patchInfo { type wall; }
         }
     }

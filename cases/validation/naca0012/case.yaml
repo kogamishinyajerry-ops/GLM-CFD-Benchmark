@@ -33,7 +33,7 @@ solvers:
         critical: true
       - name: snappy_mesh
         command: "snappyHexMesh -overwrite -case {{ case_dir }}"
-        timeout_sec: 120
+        timeout_sec: 600
         critical: true
       - name: solve
         command: "simpleFoam -case {{ case_dir }}"

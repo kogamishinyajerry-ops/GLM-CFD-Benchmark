@@ -129,6 +129,22 @@ class StarCCMAdapter:
             n_iter = int(solver_config.parameters["n_iter"])
         context["n_iter"] = n_iter
 
+        # Mesh convergence parameters (P4.5a)
+        params = solver_config.parameters or {}
+
+        base_size = params.get("base_size")
+        if base_size is not None and base_size > 0:
+            context["base_size"] = float(base_size)
+            context["prism_layers"] = int(params.get("prism_layers", 8))
+            context["prism_thickness"] = float(params.get("prism_thickness", 0.002))
+            context["surface_min"] = float(
+                params.get("surface_min", float(base_size) * 0.1)
+            )
+            context["surface_max"] = float(
+                params.get("surface_max", float(base_size) * 2.0)
+            )
+        context["mesh_level"] = params.get("mesh_level", 0)
+
         # Merge remaining solver parameters
         if solver_config.parameters:
             context.update(solver_config.parameters)
@@ -419,6 +435,101 @@ class StarCCMAdapter:
             qoi_values=qoi_values if qoi_values else None,
             curves=None,
         )
+
+    # ------------------------------------------------------------------
+    # Mesh convergence study (P4.5a)
+    # ------------------------------------------------------------------
+
+    # Standard refinement levels aligning with harness mesh_density convention
+    _CONVERGENCE_LEVELS: dict[str, float] = {
+        "mesh_160": 0.160,
+        "mesh_80": 0.080,
+        "mesh_40": 0.040,
+        "mesh_20": 0.020,
+    }
+
+    def prepare_mesh_convergence(
+        self,
+        case: CaseSpec,
+        case_dir: Path,
+        run_dir: Path,
+        levels: list[str] | None = None,
+    ) -> list[Path]:
+        """Generate Star-CCM+ Java macros for multiple mesh refinement levels.
+
+        Each level corresponds to a different base_size:
+        - mesh_160: 0.160 m (coarse)
+        - mesh_80:  0.080 m
+        - mesh_40:  0.040 m
+        - mesh_20:  0.020 m (fine)
+
+        Macros are written to run_dir/level_<n>/case/run.java.
+
+        Args:
+            case: CaseSpec configuration.
+            case_dir: Directory containing case.yaml.
+            run_dir: Run directory.
+            levels: List of mesh level keys (default: all 4 levels).
+
+        Returns:
+            List of Paths to generated macro files.
+        """
+        if levels is None:
+            levels = list(self._CONVERGENCE_LEVELS.keys())
+
+        solver_config = self._find_solver_config(case)
+        base_params = dict(solver_config.parameters or {})
+        template_name = "naca0012.java.j2" if self._is_naca_case(case) else "base.java.j2"
+
+        macro_paths: list[Path] = []
+        for i, level in enumerate(levels):
+            base_size = self._CONVERGENCE_LEVELS.get(level)
+            if base_size is None:
+                logger.warning("unknown mesh level '%s', skipping", level)
+                continue
+
+            level_dir = run_dir / f"level_{i:02d}"
+            case_dir_out = level_dir / "case"
+            case_dir_out.mkdir(parents=True, exist_ok=True)
+
+            context = self._build_context(case, case_dir, run_dir)
+            context["base_size"] = base_size
+            context["prism_layers"] = int(
+                base_params.get("prism_layers", 8)
+            )
+            context["prism_thickness"] = float(
+                base_params.get("prism_thickness", 0.002)
+            )
+            context["surface_min"] = float(
+                base_params.get("surface_min", base_size * 0.1)
+            )
+            context["surface_max"] = float(
+                base_params.get("surface_max", base_size * 2.0)
+            )
+            context["mesh_level"] = i
+            context["case_dir"] = case_dir_out.resolve().as_posix()
+
+            macro_content = self._render_template(template_name, context)
+            macro_path = case_dir_out / "run.java"
+            macro_path.write_text(macro_content, encoding="utf-8")
+
+            # Link geometry file (NACA cases expect naca0012.stl in case_dir)
+            if self._is_naca_case(case):
+                stl_src = case_dir / "naca0012.stl"
+                if stl_src.exists():
+                    import shutil
+                    shutil.copy2(stl_src, case_dir_out / "naca0012.stl")
+                    logger.debug("copied naca0012.stl to %s", case_dir_out)
+
+            macro_paths.append(macro_path)
+            logger.info(
+                "prepared mesh convergence level %d/4: base_size=%.4f m -> %s",
+                i + 1,
+                base_size,
+                macro_path,
+            )
+
+        return macro_paths
 
 
 # Ensure the class satisfies the SolverAdapter protocol

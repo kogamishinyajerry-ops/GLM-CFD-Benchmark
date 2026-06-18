@@ -1,0 +1,60 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | Web:  www.OpenFOAM.com
+     \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    Specific dissipation rate field for NACA0012 — k-omega SST model.
+
+    Freestream omega is computed from the eddy-viscosity ratio
+    (mut/nu = 0.1 for external aero per Wilcox 2006, low-turbulence):
+        omega_inf = k_freestream / (nu * viscosity_ratio)
+                 = k_inf / (nu * 0.1)
+
+    Wall BC: omegaWallFunction with the standard blend value — this is the
+    canonical high-y+ SST wall treatment. The blended value uses the
+    rough-wall asymptote (omega ~ 6 * nu / (beta1 * y1^2)) near the wall
+    and the log-layer value further out.
+
+    Jinja2 context: u_inf, nu, reynolds, k_freestream.
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       volScalarField;
+     object      omega;
+ }
+
+dimensions      [0 0 -1 0 0 0 0];
+
+// mut/nu = 0.1 (low-turbulence external aero, Wilcox 2006)
+// omega_inf = k_freestream / (nu * 0.1)
+internalField   uniform {{ omega_freestream }};
+
+boundaryField
+{
+    airfoil
+    {
+        type            omegaWallFunction;
+        blend           0.1;
+        value           uniform {{ omega_freestream }};
+    }
+    farfield
+    {
+        type            freestream;
+        freestreamValue uniform {{ omega_freestream }};
+    }
+    frontAndBack
+    {
+        type            empty;
+    }
+}
+
+// u_inf = {{ u_inf }}, Re = {{ reynolds }}, k_inf = {{ k_freestream }}
+
+// ************************************************************************* //

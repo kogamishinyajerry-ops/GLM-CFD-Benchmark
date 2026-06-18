@@ -242,6 +242,180 @@ class TestOpenFOAMRun:
         assert result.exit_code != 0
 
 
+def _make_sst_dry_run_case() -> CaseSpec:
+    """Build a minimal SST NACA case for potentialFoam injection tests.
+
+    Mirrors the real naca0012_a5 case shape: 3 steps (block_mesh, snappy_mesh,
+    solve) and physics.turbulence='rans_kwsst' so the adapter routes to the
+    kOmegaSST template branch.
+    """
+    from cfdb.schema import (
+        CommandStep,
+        ConditionsSpec,
+        GeometrySpec,
+        MetricSpec,
+        OutputSpec,
+        PhysicsSpec,
+    )
+
+    solver = SolverConfig(
+        name="openfoam",
+        command="",
+        timeout_sec=600,
+        steps=[
+            CommandStep(name="block_mesh", command="blockMesh -case {{ case_dir }}"),
+            CommandStep(
+                name="snappy_mesh",
+                command="snappyHexMesh -overwrite -case {{ case_dir }}",
+            ),
+            CommandStep(name="solve", command="simpleFoam -case {{ case_dir }}"),
+        ],
+        parameters={
+            "nu": 1.6667e-5,
+            "u_inf": 100.0,
+            "l_ref": 1.0,
+            "alpha_deg": 5.0,
+            "n_iter": 1000,
+        },
+    )
+    return CaseSpec(
+        id="naca0012_a5",
+        name="NACA0012 alpha=5 SST",
+        category="validation",
+        physics=PhysicsSpec(
+            flow="rans",
+            turbulence="rans_kwsst",
+            dimensionality="2d",
+            steady=True,
+        ),
+        conditions=ConditionsSpec(reynolds=6.0e6, mach=0.3, alpha_deg=5.0),
+        geometry=GeometrySpec(type="external"),
+        solvers=[solver],
+        outputs=OutputSpec(fields=["U", "p", "k", "omega"], qoi=["cl", "cd"]),
+        metrics=MetricSpec(qoi_relative_tolerance={"cl": 0.10, "cd": 0.10}),
+    )
+
+
+class TestSSTNoPotentialFoamInjection:
+    """SST cases must NOT inject a potentialFoam step.
+
+    An earlier revision injected potentialFoam as a U-field pre-init, but
+    this was abandoned because potentialFoam overwrites U with ∇Φ, and with
+    a freestream farfield BC the Φ Poisson problem is ill-posed — U came
+    out as garbage (mean 0.6 vs freestream 100) and made simpleFoam's k
+    blowup WORSE than without. The fix is now done purely via relaxation
+    (k=0.2), lower initial k (Tu=0.03%), and kLowReWallFunction.
+
+    These tests verify: (1) SST produces the 3 base commands unchanged,
+    (2) SA is also unchanged — Iron Rule #1.
+    """
+
+    def test_sst_no_potentialfoam_injection(self, tmp_path: Path) -> None:
+        """SST dry_run → 3 skipped_commands, no potentialFoam anywhere."""
+        case = _make_sst_dry_run_case()
+        adapter = OpenFOAMAdapter(dry_run=True)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(case, case_dir, run_dir)
+
+        result = adapter.run(case, case_dir, run_dir, resources=None)
+
+        assert result.exit_code == 0
+        assert result.skipped_commands is not None
+        assert len(result.skipped_commands) == 3
+        # Order: block_mesh, snappy_mesh, solve
+        assert "blockMesh" in result.skipped_commands[0]
+        assert "snappyHexMesh" in result.skipped_commands[1]
+        assert "simpleFoam" in result.skipped_commands[2]
+        for cmd in result.skipped_commands:
+            assert "potentialFoam" not in cmd
+
+    def test_sa_same_three_steps(self, tmp_path: Path) -> None:
+        """SA case unchanged — 3 steps, no potentialFoam. Iron Rule #1."""
+        case = _make_sst_dry_run_case()
+        # Flip turbulence to SA (mutate physics in place)
+        case.physics = case.physics.model_copy(
+            update={"turbulence": "rans_sa"}
+        )
+        adapter = OpenFOAMAdapter(dry_run=True)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(case, case_dir, run_dir)
+
+        result = adapter.run(case, case_dir, run_dir, resources=None)
+
+        assert result.exit_code == 0
+        assert result.skipped_commands is not None
+        assert len(result.skipped_commands) == 3
+        for cmd in result.skipped_commands:
+            assert "potentialFoam" not in cmd
+
+    def test_sst_renders_klowre_wallfunction(self, tmp_path: Path) -> None:
+        """SST case k field must use kLowReWallFunction, not kqRWallFunction.
+
+        This is the wall-BC half of the k blowup fix — kqRWallFunction's
+        log-layer k value is applied to the first prism cell and creates
+        a stiff source in the k transport equation that overwhelms
+        under-relaxation. kLowReWallFunction blends smoothly.
+        """
+        case = _make_sst_dry_run_case()
+        adapter = OpenFOAMAdapter(dry_run=True)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(case, case_dir, run_dir)
+
+        # prepare() writes the generated case into run_dir/case
+        k_path = run_dir / "case" / "0" / "k"
+        assert k_path.exists(), f"k file not written at {k_path}"
+        k_text = k_path.read_text(encoding="utf-8")
+        # Check the BC type assignment in the airfoil block, not the whole
+        # file (the comments mention both names for context).
+        import re
+
+        # Find the airfoil block: from `airfoil` up to the closing `}`.
+        m = re.search(
+            r"airfoil\s*\{(.*?)[\n\r]\s*\}", k_text, re.DOTALL
+        )
+        assert m is not None, "could not locate airfoil BC block in k"
+        airfoil_block = m.group(1)
+        assert "kLowReWallFunction" in airfoil_block, (
+            f"airfoil BC must be kLowReWallFunction, got: {airfoil_block}"
+        )
+
+    def test_sst_lower_initial_k(self, tmp_path: Path) -> None:
+        """SST case k internalField must use Tu=0.03% (lower than SA's 0.1%).
+
+        k_init = 1.5 * (u_inf * 0.0003)^2 = 1.5 * (100 * 0.0003)^2
+              = 0.00135
+        vs the SA/global default of 1.5 * (100 * 0.001)^2 = 0.015.
+        Lower initial k reduces the absolute k value that bounding has
+        to clip when P_k spikes at the first near-wall cell.
+        """
+        case = _make_sst_dry_run_case()
+        adapter = OpenFOAMAdapter(dry_run=True)
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        run_dir = tmp_path / "run"
+        adapter.prepare(case, case_dir, run_dir)
+
+        k_path = run_dir / "case" / "0" / "k"
+        assert k_path.exists(), f"k file not written at {k_path}"
+        k_text = k_path.read_text(encoding="utf-8")
+        # Extract internalField value
+        import re
+
+        m = re.search(r"internalField\s+uniform\s+([\d.eE+-]+)", k_text)
+        assert m is not None, "could not parse k internalField"
+        k_init = float(m.group(1))
+        # Expected ~0.00135 (Tu=0.03%, U=100). Allow small float slack.
+        assert abs(k_init - 0.00135) < 1e-6, f"k_init={k_init}, expected 0.00135"
+        # Sanity: must be smaller than SA default of 0.015
+        assert k_init < 0.015
+
+
 class TestOpenFOAMCollectOutputs:
     def test_collect_outputs(self, openfoam_case: CaseSpec, tmp_path: Path) -> None:
         adapter = OpenFOAMAdapter(dry_run=True)

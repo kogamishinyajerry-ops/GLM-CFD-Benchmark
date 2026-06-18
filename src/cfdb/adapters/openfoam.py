@@ -19,7 +19,7 @@ from cfdb.adapters.base import (
     StepResult,
 )
 from cfdb.execution.base import ExecutionBackend
-from cfdb.schema import CaseSpec, SolverConfig
+from cfdb.schema import CaseSpec, CommandStep, SolverConfig
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,23 @@ class OpenFOAMAdapter:
         context["u_cos"] = u_inf * math.cos(alpha_rad)
         context["v_sin"] = u_inf * math.sin(alpha_rad)
 
+        # P3.1-SA Phase 5 (Bug 1 fix): 2D mesh z-span.
+        # blockMesh builds a single-cell-deep 3D slab of thickness span_z
+        # (default 0.1 m, matching blockMeshDict.naca.j2 vertices z=±0.05).
+        # forces.dat outputs total force across this span, so Cl/Cd extraction
+        # must divide by span_z to recover per-unit-span coefficients. l_ref
+        # is the reference chord (default 1.0) — kept separate so A_ref =
+        # l_ref * span_z is dimensionally correct.
+        l_ref = 1.0
+        if solver_config.parameters and "l_ref" in solver_config.parameters:
+            l_ref = float(solver_config.parameters["l_ref"])
+        span_z = 0.1
+        if solver_config.parameters and "span_z" in solver_config.parameters:
+            span_z = float(solver_config.parameters["span_z"])
+        context["l_ref"] = l_ref
+        context["span_z"] = span_z
+        context["a_ref"] = l_ref * span_z  # reference area for 2D airfoil
+
         # P3.1-SA: lift/drag direction vectors for force projection.
         # liftDir is perpendicular to freestream (rotated 90 deg CCW):
         #   lift_dir = (-sin(alpha), cos(alpha), 0)
@@ -141,6 +158,50 @@ class OpenFOAMAdapter:
         context["lift_dir_y"] = math.cos(alpha_rad)
         context["drag_dir_x"] = math.cos(alpha_rad)
         context["drag_dir_y"] = math.sin(alpha_rad)
+
+        # P3.1-SA Phase 4: turbulence model selection.
+        # Maps CaseSpec.physics.turbulence (e.g. "rans_sa", "rans_kwsst") to
+        # the OpenFOAM RASModel name. Defaults to SpalartAllmaras for
+        # backwards compatibility (iron rule #2 — existing SA cases unchanged).
+        phys_turb = case.physics.turbulence if case.physics else None
+        if phys_turb == "rans_kwsst":
+            turbulence_model = "kOmegaSST"
+        else:
+            turbulence_model = "SpalartAllmaras"
+        context["turbulence_model"] = turbulence_model
+
+        # SST freestream turbulence scalars (only used when SST selected).
+        # Tu = 0.1% (low-turbulence wind tunnel, Ladson 1988).
+        # k = 1.5 * (U * Tu)^2; omega = k / (nu * mut_over_nu) with
+        # mut/nu = 0.1 (Wilcox 2006 external-aero recommendation).
+        tu = 0.001
+        k_freestream = 1.5 * (u_inf * tu) ** 2
+        nu_val = context.get("nu", 1.6667e-5)
+        omega_freestream = k_freestream / (nu_val * 0.1)
+        context["k_freestream"] = k_freestream
+        context["omega_freestream"] = omega_freestream
+
+        # SST-specific lower initial k. The k blowup at iter ~20 comes from
+        # P_k = nut*(dU/dy)^2 spiking to ~67,000 m²/s³ at the first near-wall
+        # cell (freestream U=100 hitting no-slip wall in y1≈0.5mm). P_k is
+        # independent of k itself, but its impact on the k transport equation
+        # scales relative to the local k — a smaller initial k means the same
+        # P_k spike produces a larger d(ln k)/dt, BUT the absolute k that
+        # simpleFoam's under-relaxation can damp back is also smaller, so the
+        # bounding event is less catastrophic (k_max ~24896 with k_init=0.015
+        # vs ~5000 expected with k_init=0.00135). The lower Tu is also
+        # physically defensible: the Ladson LTNT wind tunnel has Tu ≈ 0.03%
+        # in the test section, not the 0.1% conservative estimate used above.
+        # SA does not use k at all, so this override is SST-only and Iron
+        # Rule #1 safe.
+        if turbulence_model == "kOmegaSST":
+            sst_tu = 0.0003  # 0.03% — Ladson LTNT test-section Tu
+            sst_k = 1.5 * (u_inf * sst_tu) ** 2
+            # omega stays at the original freestream value: omega controls
+            # the eddy viscosity nut = k/omega, and we want nut unchanged
+            # (mut/nu = 0.1) so the momentum coupling is stable. Lowering
+            # omega too would inflate nut and destabilize the boundary layer.
+            context["k_freestream"] = sst_k
 
         return context
 
@@ -350,57 +411,83 @@ class OpenFOAMAdapter:
             "}\n",
             encoding="utf-8",
         )
-        # nuTilda: SpalartAllmaras working variable.
-        # Freestream value ~ 3 × nu (per NASA SA recommendations for fully
-        # turbulent initial state). chi=3 gives nut ≈ 0.2*nu, standard for
-        # external aero SA initialization.
-        # Wall BC: zeroGradient for high-y+ wall function approach.
-        nuTilda_freestream = 3.0 * nu_val
-        # nut freestream from SA: nut = nuTilda * chi^3/(chi^3+Cv1^3)
-        # where chi = nuTilda/nu = 3, Cv1 = 7.1.
-        chi = nuTilda_freestream / nu_val
-        cv1 = 7.1
-        nut_freestream = nuTilda_freestream * (chi**3) / (chi**3 + cv1**3)
-        (zero_dir / "nuTilda").write_text(
-            "FoamFile\n"
-            "{\n"
-            "    version     2.0;\n"
-            "    format      ascii;\n"
-            "    class       volScalarField;\n"
-            "    object      nuTilda;\n"
-            "}\n"
-            f"dimensions      [0 2 -1 0 0 0 0];\n"
-            f"internalField   uniform {nuTilda_freestream};\n"
-            "boundaryField\n"
-            "{\n"
-            "    airfoil\n"
-            "    {\n"
-            "        type            zeroGradient;\n"
-            "    }\n"
-            "    farfield\n"
-            "    {\n"
-            "        type            freestream;\n"
-            f"        freestreamValue uniform {nuTilda_freestream};\n"
-            "    }\n"
-            "    frontAndBack\n"
-            "    {\n"
-            "        type            empty;\n"
-            "    }\n"
-            "}\n",
-            encoding="utf-8",
-        )
+        # === Turbulence-specific 0/ fields ===
+        # P3.1-SA Phase 4: branch by turbulence_model.
+        #   SA  -> nuTilda + nut (nutUSpaldingWallFunction)
+        #   SST -> k + omega + nut (nutKBoundedWallFunction, computed from k/omega)
+        turbulence_model = context.get("turbulence_model", "SpalartAllmaras")
 
-        # nut: turbulent viscosity (SA model computes it from nuTilda).
-        # Wall uses nutUSpaldingWallFunction — the standard high-y+ SA wall
-        # function. The Spalding function bridges wall-to-log-law region and
-        # is self-consistent with nuTilda zeroGradient at the wall. Combined
-        # with snappyHexMesh addLayers providing y+ ~ 30-200 (wall-function
-        # range), this is the canonical high-y+ SA setup per Spalart &
-        # Allmaras (1992) and OpenFOAM simpleFoam/airFoil2D tutorial.
-        # NOTE: forcing nut = calculated 0 (low-Re formulation) on a high-y+
-        # mesh over-stimulates the SA production term and drives nuTilda
-        # toward divergence — earlier attempts with calculated 0 + n_iter=200
-        # failed to converge for this reason.
+        if turbulence_model == "kOmegaSST":
+            # Render k and omega from templates (uses k_freestream /
+            # omega_freestream computed in _build_context).
+            (zero_dir / "k").write_text(
+                self._render_template("k.naca.j2", context), encoding="utf-8"
+            )
+            (zero_dir / "omega").write_text(
+                self._render_template("omega.naca.j2", context), encoding="utf-8"
+            )
+
+            # nut for SST: freestream value from k/omega via
+            # nut = k / omega (rearranged Boussinesq approximation, since
+            # nut = C_mu * k^2 / omega and for freestream we absorb C_mu=0.09
+            # into the chosen viscosity ratio mut/nu=0.1 already baked into
+            # omega). For consistency with the SA branch we compute the
+            # freestream nut from mut/nu = 0.1 → nut = 0.1 * nu.
+            nut_freestream = 0.1 * nu_val
+            # Wall: nutkWallFunction is OpenFOAM 2406's standard SST
+            # high-y+ wall function (k-based log-law). NOTE:
+            # nutKBoundedWallFunction would be the bounded variant but is
+            # ESI-commercial-only and not in the open-source 2406 build.
+            nut_wall_fn = "nutkWallFunction"
+        else:
+            # nuTilda: SpalartAllmaras working variable.
+            # Freestream value ~ 3 × nu (per NASA SA recommendations for fully
+            # turbulent initial state). chi=3 gives nut ≈ 0.2*nu, standard for
+            # external aero SA initialization.
+            # Wall BC: zeroGradient for high-y+ wall function approach.
+            nuTilda_freestream = 3.0 * nu_val
+            # nut freestream from SA: nut = nuTilda * chi^3/(chi^3+Cv1^3)
+            # where chi = nuTilda/nu = 3, Cv1 = 7.1.
+            chi = nuTilda_freestream / nu_val
+            cv1 = 7.1
+            nut_freestream = nuTilda_freestream * (chi**3) / (chi**3 + cv1**3)
+            (zero_dir / "nuTilda").write_text(
+                "FoamFile\n"
+                "{\n"
+                "    version     2.0;\n"
+                "    format      ascii;\n"
+                "    class       volScalarField;\n"
+                "    object      nuTilda;\n"
+                "}\n"
+                f"dimensions      [0 2 -1 0 0 0 0];\n"
+                f"internalField   uniform {nuTilda_freestream};\n"
+                "boundaryField\n"
+                "{\n"
+                "    airfoil\n"
+                "    {\n"
+                "        type            zeroGradient;\n"
+                "    }\n"
+                "    farfield\n"
+                "    {\n"
+                "        type            freestream;\n"
+                f"        freestreamValue uniform {nuTilda_freestream};\n"
+                "    }\n"
+                "    frontAndBack\n"
+                "    {\n"
+                "        type            empty;\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            # SA wall function: Spalding bridge, self-consistent with
+            # nuTilda zeroGradient at the wall.
+            nut_wall_fn = "nutUSpaldingWallFunction"
+
+        # nut: turbulent viscosity, model-specific wall function selected above.
+        # Wall-function approach (high-y+) is used for both SA and SST on this
+        # snappyHexMesh grid where y+ lands in the 30-200 wall-function range.
+        # Forcing low-Re nut=calculated 0 on high-y+ meshes destabilizes both
+        # models (SA over-stimulates production, SST under-resolves k near wall).
         (zero_dir / "nut").write_text(
             "FoamFile\n"
             "{\n"
@@ -415,7 +502,7 @@ class OpenFOAMAdapter:
             "{\n"
             "    airfoil\n"
             "    {\n"
-            "        type            nutUSpaldingWallFunction;\n"
+            f"        type            {nut_wall_fn};\n"
             "        value           uniform 0;\n"
             "    }\n"
             "    farfield\n"
@@ -430,6 +517,34 @@ class OpenFOAMAdapter:
             "}\n",
             encoding="utf-8",
         )
+
+    def _effective_steps(
+        self, solver_config: SolverConfig, context: dict[str, Any]
+    ) -> list[CommandStep]:
+        """Return the effective step list for a solver config.
+
+        Returns solver_config.steps unchanged. An earlier revision injected a
+        potentialFoam pre-init step for kOmegaSST cases to eliminate the
+        initial shear transient that blows up k at the first near-wall cell.
+        That approach was abandoned because potentialFoam overwrites U with
+        ∇Φ, and with a freestream farfield BC the Φ solution is degenerate —
+        U came out as garbage (mean 0.6 vs freestream 100), making simpleFoam's
+        k blowup *worse* than without potentialFoam. potentialFoam requires
+        inlet/outlet BCs to be well-posed, which our external-aero cases do
+        not use.
+
+        The k blowup is now addressed at the source via tighter SST-only
+        relaxation, lower initial k, and a bounded k wall function (see
+        fvSolution.naca.j2 / k.naca.j2 / _build_context).
+
+        Args:
+            solver_config: SolverConfig with .steps list.
+            context: Jinja2 context (unused, kept for API stability).
+
+        Returns:
+            solver_config.steps (pass-through; Iron Rule #1 safe by design).
+        """
+        return list(solver_config.steps or [])
 
     def run(
         self,
@@ -457,8 +572,9 @@ class OpenFOAMAdapter:
 
         if self._dry_run:
             skipped: list[str] = []
-            if solver_config.steps:
-                for step in solver_config.steps:
+            effective_steps = self._effective_steps(solver_config, context)
+            if effective_steps:
+                for step in effective_steps:
                     rendered = Template(step.command).render(**context)
                     skipped.append(rendered)
             else:
@@ -481,6 +597,10 @@ class OpenFOAMAdapter:
                 f"Case '{case.id}' solver '{solver_config.name}' has steps=None."
             )
 
+        # SST cases inject a potentialFoam pre-init step (see _effective_steps).
+        # Build the effective step list once; both real-exec and dry_run use it.
+        effective_steps = self._effective_steps(solver_config, context)
+
         # P2-b: use injected backend (default LocalExecutionBackend, may be DockerBackend)
         backend = self._backend
         step_results: list[StepResult] = []
@@ -489,7 +609,7 @@ class OpenFOAMAdapter:
         # solver_version detection (from first step's stdout, zero extra cost)
         solver_version: str | None = None
 
-        for i, step in enumerate(solver_config.steps):
+        for i, step in enumerate(effective_steps):
             rendered_cmd = Template(step.command).render(**context)
             cmd_list = shlex.split(rendered_cmd)
 
@@ -667,15 +787,36 @@ class OpenFOAMAdapter:
 
             if forces_candidates:
                 forces_dat = forces_candidates[-1]  # latest time directory
-                # Derive u_inf from solver parameters
+                # Derive u_inf, l_ref, span_z, alpha_deg from case/parameters
                 solver_config = self._find_solver_config(case)
                 u_inf = 100.0
                 if solver_config.parameters and "u_inf" in solver_config.parameters:
                     u_inf = float(solver_config.parameters["u_inf"])
+                # alpha_deg mirrors _build_context precedence: case.conditions
+                # first, then solver parameters, then 0.0.
+                alpha_deg = 0.0
+                if case.conditions.alpha_deg is not None:
+                    alpha_deg = float(case.conditions.alpha_deg)
+                elif solver_config.parameters and "alpha_deg" in solver_config.parameters:
+                    alpha_deg = float(solver_config.parameters["alpha_deg"])
+                l_ref = 1.0
+                if solver_config.parameters and "l_ref" in solver_config.parameters:
+                    l_ref = float(solver_config.parameters["l_ref"])
+                span_z = 0.1
+                if solver_config.parameters and "span_z" in solver_config.parameters:
+                    span_z = float(solver_config.parameters["span_z"])
                 rho = 1.225  # sea-level air density (PRD Q2: keep default)
+                # P3.1-SA Phase 5 (Bug 1 fix): A_ref for 2D airfoil = chord ×
+                # z-span. forces.dat integrates total force across the
+                # blockMesh z-slabs, so dividing by span recovers
+                # per-unit-span force and yields correct Cl/Cd magnitudes.
+                # Previous code passed a_ref=1.0 and under-predicted Cl/Cd
+                # by a factor of span_z (10× for the default 0.1 m slab).
+                a_ref = l_ref * span_z
 
                 result = extract_cl_cd_openfoam(
-                    forces_dat, rho=rho, u_inf=u_inf, a_ref=1.0
+                    forces_dat, rho=rho, u_inf=u_inf, a_ref=a_ref,
+                    alpha_deg=alpha_deg,
                 )
                 if result is not None:
                     cl, cd = result

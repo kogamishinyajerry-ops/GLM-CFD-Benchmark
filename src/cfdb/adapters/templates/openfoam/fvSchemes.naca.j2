@@ -6,8 +6,10 @@
     \\/     M anipulation  |
 -------------------------------------------------------------------------------
 Description
-    Discretization schemes for simpleFoam RANS-SA (SpalartAllmaras)
-    on the NACA0012 airfoil case.
+    Discretization schemes for simpleFoam RANS on the NACA0012 airfoil case.
+    Supports both SA (SpalartAllmaras) and SST (kOmegaSST) via Jinja2
+    variable `turbulence_model`. The turbulence-specific grad/div entries
+    are rendered only for the active model.
 
 \*---------------------------------------------------------------------------*/
 
@@ -28,7 +30,12 @@ gradSchemes
 {
     default         Gauss linear;
     grad(U)         Gauss linear;
+{%- if turbulence_model == "kOmegaSST" %}
+    grad(k)         cellLimited Gauss linear 1;
+    grad(omega)     cellLimited Gauss linear 1;
+{%- else %}
     grad(nuTilda)   cellLimited Gauss linear 1;
+{%- endif %}
 }
 
 divSchemes
@@ -39,15 +46,16 @@ divSchemes
     // introduces excessive numerical viscosity, under-predicting Cl slope
     // and over-predicting Cd by >10% at α=10/15°. linearUpwind needs the
     // matching grad() entry above.
-    //
-    // P3-tail note (2026-06-17): tested div(phi,nuTilda)=upwind as an SA
-    // stabilization attempt — marginally raised Cl on α=5 (0.016→0.021) but
-    // did NOT prevent the step-200 nuTilda divergence on this coarse high-y+
-    // mesh. Reverted to linearUpwind; the root cause is mesh/relaxation, not
-    // scheme order. The QoI rollback in extract_cl_cd_openfoam remains the
-    // safety net that captures physically meaningful pre-divergence values.
     div(phi,U)      Gauss linearUpwind grad(U);
+{%- if turbulence_model == "kOmegaSST" %}
+    div(phi,k)      bounded Gauss linearUpwind grad(k);
+    div(phi,omega)  bounded Gauss linearUpwind grad(omega);
+{%- else %}
+    // P3-tail note (2026-06-17): SA stabilization attempts via upwind on
+    // nuTilda did not prevent step-200 divergence on coarse high-y+ mesh.
+    // Root cause is mesh/relaxation, not scheme order. linearUpwind retained.
     div(phi,nuTilda) bounded Gauss linearUpwind grad(nuTilda);
+{%- endif %}
     div((nuEff*dev2(T(grad(U))))) Gauss linear;
 }
 

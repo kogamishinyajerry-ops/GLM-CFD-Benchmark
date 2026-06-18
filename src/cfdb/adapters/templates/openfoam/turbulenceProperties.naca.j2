@@ -6,7 +6,13 @@
     \\/     M anipulation  |
 -------------------------------------------------------------------------------
 Description
-    Turbulence properties for NACA0012 — RANS with SpalartAllmaras model.
+    Turbulence properties for NACA0012. Model selected by Jinja2 variable
+    `turbulence_model`: "SpalartAllmaras" (default) or "kOmegaSST".
+
+    SST was added in P3.1-SA Phase 4 as the fallback for coarse meshes
+    where snappyHexMesh could not generate the full 10 prism layers SA
+    needs for accurate wall-function operation. SST is more forgiving on
+    high-y+ grids per Menter (1994).
 
 \*---------------------------------------------------------------------------*/
 
@@ -22,7 +28,7 @@ simulationType  RAS;
 
 RAS
 {
-    RASModel        SpalartAllmaras;
+    RASModel        {{ turbulence_model | default("SpalartAllmaras") }};
     turbulence      on;
     printCoeffs     on;
 }

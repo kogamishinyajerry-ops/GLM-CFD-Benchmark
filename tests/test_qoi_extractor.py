@@ -9,6 +9,7 @@ import pytest
 
 from cfdb.post.qoi_extractor import (
     _is_float,
+    extract_cl_cd_openfoam,
     extract_naca0012_cp_openfoam,
     extract_naca0012_cp_su2,
     extract_openfoam_centerline_umax,
@@ -451,3 +452,61 @@ class TestIsFloat:
         guard for time-dir name detection in extract_openfoam_centerline_umax."""
         assert _is_float("nan") is True
         assert _is_float("inf") is True
+
+
+class TestExtractClCdOpenFOAM:
+    """P3.1-SA Phase 5: tests for forces.dat parsing and the two bug fixes
+    (z-span normalisation and wind-axis projection at alpha != 0)."""
+
+    def _write_force_dat(self, path: Path, fx: float, fy: float) -> None:
+        """Write a minimal Foundation-style force.dat with one data row."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Force\n"
+            "# Time  forces (Fx Fy Fz) moments (Mx My Mz)\n"
+            f"100.0  ({fx} {fy} 0) (0 0 0)\n"
+        )
+
+    def test_alpha_zero_body_axis_unchanged(self, tmp_path: Path) -> None:
+        """At alpha=0 wind-axis projection is a no-op; Cl = Fy/q/A."""
+        f = tmp_path / "postProcessing/forces/0/force.dat"
+        # Fy=72.4, q=6125, A=0.1 → Cl=0.1182
+        self._write_force_dat(f, fx=29.5, fy=72.4)
+        cl, cd = extract_cl_cd_openfoam(
+            f, rho=1.225, u_inf=100.0, a_ref=0.1, alpha_deg=0.0
+        )
+        assert cl == pytest.approx(72.4 / (0.5 * 1.225 * 100**2 * 0.1), rel=1e-3)
+        assert cd == pytest.approx(29.5 / (0.5 * 1.225 * 100**2 * 0.1), rel=1e-3)
+
+    def test_alpha_nonzero_wind_axis_projection(self, tmp_path: Path) -> None:
+        """At alpha=5°, lift = -Fx·sin(a) + Fy·cos(a); drag = Fx·cos(a) + Fy·sin(a)."""
+        import math
+
+        f = tmp_path / "postProcessing/forces/0/force.dat"
+        self._write_force_dat(f, fx=29.5, fy=72.4)
+        a = math.radians(5)
+        q = 0.5 * 1.225 * 100**2
+        A = 0.1
+        expected_lift = -29.5 * math.sin(a) + 72.4 * math.cos(a)
+        expected_drag = 29.5 * math.cos(a) + 72.4 * math.sin(a)
+        cl, cd = extract_cl_cd_openfoam(
+            f, rho=1.225, u_inf=100.0, a_ref=A, alpha_deg=5.0
+        )
+        assert cl == pytest.approx(expected_lift / q / A, rel=1e-3)
+        assert cd == pytest.approx(expected_drag / q / A, rel=1e-3)
+        # And Cl should be slightly less than Fy/q/A (lift has -Fx·sin term)
+        body_cl = 72.4 / q / A
+        assert cl < body_cl
+
+    def test_span_normalisation_factor_of_ten(self, tmp_path: Path) -> None:
+        """Default blockMesh span_z=0.1 — Cl with a_ref=0.1 must be 10×
+        Cl with a_ref=1.0. Regression for the P3.1-SA Phase 5 Bug 1 fix."""
+        f = tmp_path / "postProcessing/forces/0/force.dat"
+        self._write_force_dat(f, fx=29.5, fy=72.4)
+        cl_01, _ = extract_cl_cd_openfoam(
+            f, rho=1.225, u_inf=100.0, a_ref=0.1, alpha_deg=0.0
+        )
+        cl_1, _ = extract_cl_cd_openfoam(
+            f, rho=1.225, u_inf=100.0, a_ref=1.0, alpha_deg=0.0
+        )
+        assert cl_01 == pytest.approx(cl_1 * 10.0, rel=1e-6)

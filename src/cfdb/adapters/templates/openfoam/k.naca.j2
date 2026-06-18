@@ -1,0 +1,68 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | Web:  www.OpenFOAM.com
+     \\/     M anipulation  |
+-------------------------------------------------------------------------------
+Description
+    Turbulent kinetic energy field for NACA0012 — k-omega SST model.
+
+    Freestream k is computed from a turbulence intensity of 0.1% (typical
+    for external aero / wind-tunnel low-turbulence conditions matching
+    Ladson 1988):
+        k = 1.5 * (U * Tu)^2
+    where Tu = 0.001 (0.1%) and U = u_inf.
+
+    Wall BC: kLowReWallFunction. This is the bounded low-Re variant that
+    smoothly blends between the analytical near-wall k profile (k ~ y^2
+    for the viscous sublayer) and the freestream value, WITHOUT the large
+    k production that kqRWallFunction injects at the first near-wall cell
+    on high-y+ meshes. kqRWallFunction produced bounding k max > 7000
+    within 20 iterations because its log-layer k value (~30) is applied
+    directly to the first prism cell (y1 ≈ 0.5mm), creating a stiff source
+    in the k transport equation that overwhelms under-relaxation. The
+    LowRe variant caps this at O(k_freestream) and lets the turbulence
+    field grow naturally as the boundary layer develops.
+    See OpenFOAM 2406 src/atmosphericModels/TurbulenceModels/compressible/
+    kEpsilon/kLowReWallFunction for the blending formula.
+
+    Jinja2 context: u_inf, nu, reynolds, k_freestream.
+
+\*---------------------------------------------------------------------------*/
+
+ FoamFile
+ {
+     version     2.0;
+     format      ascii;
+     class       volScalarField;
+     object      k;
+ }
+
+dimensions      [0 2 -2 0 0 0 0];
+
+// Tu = 0.03% (set by adapter for SST — Ladson LTNT test-section Tu).
+// k_inf = 1.5 * (u_inf * 0.0003)^2
+internalField   uniform {{ k_freestream }};
+
+boundaryField
+{
+    airfoil
+    {
+        type            kLowReWallFunction;
+        value           uniform {{ k_freestream }};
+    }
+    farfield
+    {
+        type            freestream;
+        freestreamValue uniform {{ k_freestream }};
+    }
+    frontAndBack
+    {
+        type            empty;
+    }
+}
+
+// u_inf = {{ u_inf }}, Re = {{ reynolds }}, Tu = 0.1%
+
+// ************************************************************************* //

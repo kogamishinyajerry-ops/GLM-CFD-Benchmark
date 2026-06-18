@@ -24,17 +24,20 @@ Description
 scale 1;
 
 // NACA0012 chord = 1.0, domain extends ~10 chords upstream / 12 downstream.
+// span_z is the 2D slab thickness (default 0.1 m). forces output integrates
+// across this span so Cl/Cd extraction must divide by it.
+{% set span_half = (span_z | default(0.1)) / 2 %}
 vertices
 (
-    (-10.0 -10.0  -0.05)    // 0
-    ( 12.0 -10.0  -0.05)    // 1
-    ( 12.0  10.0  -0.05)    // 2
-    (-10.0  10.0  -0.05)    // 3
+    (-10.0 -10.0  -{{ span_half }})    // 0
+    ( 12.0 -10.0  -{{ span_half }})    // 1
+    ( 12.0  10.0  -{{ span_half }})    // 2
+    (-10.0  10.0  -{{ span_half }})    // 3
 
-    (-10.0 -10.0   0.05)    // 4
-    ( 12.0 -10.0   0.05)    // 5
-    ( 12.0  10.0   0.05)    // 6
-    (-10.0  10.0   0.05)    // 7
+    (-10.0 -10.0   {{ span_half }})    // 4
+    ( 12.0 -10.0   {{ span_half }})    // 5
+    ( 12.0  10.0   {{ span_half }})    // 6
+    (-10.0  10.0   {{ span_half }})    // 7
 );
 
 blocks

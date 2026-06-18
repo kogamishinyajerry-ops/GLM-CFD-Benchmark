@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import re
 from pathlib import Path
 
@@ -394,6 +395,7 @@ def extract_cl_cd_openfoam(
     rho: float = 1.225,
     u_inf: float = 100.0,
     a_ref: float = 1.0,
+    alpha_deg: float = 0.0,
 ) -> tuple[float, float] | None:
     """Extract Cl/Cd from OpenFOAM forces.dat with divergence rollback.
 
@@ -424,14 +426,23 @@ def extract_cl_cd_openfoam(
             # Forces
             # time total_x total_y total_z pressure_x ... viscous_x ...
 
-    Cl = Fy / q_inf / A_ref, Cd = Fx / q_inf / A_ref
-    where q_inf = 0.5 * rho * U_inf^2.
+    Force projection (P3.1-SA Phase 5):
+      OpenFOAM ``forces`` outputs body-axis forces (Fx along geometry x,
+      Fy along geometry y). To get wind-axis coefficients (drag parallel
+      to freestream, lift perpendicular) we rotate by alpha_deg:
+          lift = -Fx*sin(a) + Fy*cos(a)
+          drag =  Fx*cos(a) + Fy*sin(a)
+      Cl = lift / q_inf / A_ref, Cd = drag / q_inf / A_ref
+      where q_inf = 0.5 * rho * U_inf^2.
+      For alpha=0 (symmetric case at zero incidence) this reduces to the
+      classical Cl=Fy/q/A, Cd=Fx/q/A.
 
     Args:
         forces_dat: Path to forces.dat (or force.dat — Foundation spelling).
         rho: Freestream density (kg/m³), default 1.225 (sea-level air).
         u_inf: Freestream velocity magnitude (m/s).
-        a_ref: Reference area (m²), default 1.0 (chord × span for 2D).
+        a_ref: Reference area (m²) — for 2D cases use chord * span_z.
+        alpha_deg: Angle of attack in degrees, for wind-axis projection.
 
     Returns:
         Tuple (cl, cd) from the latest stable step, or None if parsing fails.
@@ -517,6 +528,19 @@ def extract_cl_cd_openfoam(
 
     cd = best_fx / q_inf / a_ref
     cl = best_fy / q_inf / a_ref
+
+    # P3.1-SA Phase 5: rotate body-axis (Fx,Fy) to wind-axis (drag,lift).
+    # OpenFOAM ``forces`` reports forces in the geometry frame, so for
+    # nonzero alpha the raw Fy undercounts lift by sin(alpha)·Fx (the
+    # pressure drag contribution projected onto the lift axis) and Fx
+    # undercounts drag by sin(alpha)·Fy. For alpha=0 this is a no-op.
+    if alpha_deg != 0.0:
+        a = math.radians(alpha_deg)
+        ca, sa = math.cos(a), math.sin(a)
+        drag = best_fx * ca + best_fy * sa
+        lift = -best_fx * sa + best_fy * ca
+        cd = drag / q_inf / a_ref
+        cl = lift / q_inf / a_ref
     return cl, cd
 
 

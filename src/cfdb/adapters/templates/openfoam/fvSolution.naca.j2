@@ -6,11 +6,31 @@
     \\/     M anipulation  |
 -------------------------------------------------------------------------------
 Description
-    SIMPLE algorithm + under-relaxation for NACA0012 (simpleFoam RANS-SA).
+    SIMPLE algorithm + under-relaxation for NACA0012 (simpleFoam).
+    Supports both SA and SST via `turbulence_model`.
 
-    Under-relaxation: p 0.2, U 0.3, nuTilda 0.1 — tuned for SA stability on
-    high-y+ snappyHexMesh grids. nuTilda relax=0.1 is the primary SA divergence
-    fix (P3.1-SA Phase 1); U relax=0.3 prevents momentum overshoot at high-α.
+    SA under-relaxation: p 0.2, U 0.3, nuTilda 0.1 — nuTilda relax=0.1 is
+    the primary SA divergence fix (P3.1-SA Phase 1); U relax=0.3 prevents
+    momentum overshoot at high-α.
+
+    SST under-relaxation: p 0.2, U 0.3, k 0.2, omega 0.5. SST needs tighter
+    U/k relaxation than the textbook 0.7/0.7 airFoil2D tutorial because the
+    P3.1 grid uses high-y+ wall functions on coarse prism layers, where the
+    initial transient produces P_k = nut*(dU/dy)^2 ≈ 67,000 m²/s³ at the
+    first near-wall cell (freestream U=100 m/s hitting no-slip wall in y1
+    ≈ 0.5 mm). With the default k relax=0.5 this transient propagates and
+    bounding k max spikes to 7000+ within 20 iterations, contaminating the
+    boundary layer and biasing Cl low by 4x.
+
+    A potentialFoam pre-init step was tried and abandoned — it overwrites
+    U with ∇Φ, but with freestream farfield BCs the Φ Poisson problem is
+    ill-posed, producing a degenerate U field (mean 0.6 vs freestream 100)
+    that made the k blowup *worse* (k_max 24896 vs 7655 without). The fix
+    here is instead: tighter k relax (0.2), lower initial k (Tu=0.03%),
+    and a bounded k wall function (kLowReWallFunction). Together these
+    cap P_k's impact on the k transport equation during the first ~50
+    iterations while simpleFoam builds up the boundary layer.
+    omega stays at 0.5 — it converges faster than k and is well-bounded.
 
 \*---------------------------------------------------------------------------*/
 
@@ -44,6 +64,22 @@ solvers
         tolerance       1e-08;
         relTol          0.01;
     }
+{%- if turbulence_model == "kOmegaSST" %}
+    k
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-08;
+        relTol          0.01;
+    }
+    omega
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-08;
+        relTol          0.01;
+    }
+{%- else %}
     nuTilda
     {
         solver          smoothSolver;
@@ -51,6 +87,7 @@ solvers
         tolerance       1e-7;
         relTol          0.001;
     }
+{%- endif %}
 }
 
 SIMPLE
@@ -64,10 +101,19 @@ SIMPLE
     {
         U               1e-5;
         p               1e-5;
+{%- if turbulence_model == "kOmegaSST" %}
+        // SST scalars ARE in residualControl — k/omega converge faster
+        // than SA's nuTilda and hitting their residuals is a reliable
+        // convergence indicator. (Contrast with SA where nuTilda was
+        // intentionally omitted — see Phase 1 notes in git history.)
+        k               1e-5;
+        omega           1e-5;
+{%- else %}
         // nuTilda intentionally NOT in residualControl — SA working variable
         // converges very slowly and its residual plateau at ~0.06 is normal
         // for high-y+ meshes. Forcing nuTilda convergence via residualControl
         // causes early SIMPLE termination with un-converged turbulence.
+{%- endif %}
     }
 }
 
@@ -75,9 +121,16 @@ relaxationFactors
 {
     equations
     {
+{%- if turbulence_model == "kOmegaSST" %}
+        U               0.3;
+        p               0.2;
+        k               0.2;
+        omega           0.5;
+{%- else %}
         U               0.3;
         p               0.2;
         nuTilda         0.1;
+{%- endif %}
     }
 }
 

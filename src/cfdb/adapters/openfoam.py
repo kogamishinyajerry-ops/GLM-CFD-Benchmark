@@ -434,10 +434,18 @@ class OpenFOAMAdapter:
             # omega). For consistency with the SA branch we compute the
             # freestream nut from mut/nu = 0.1 → nut = 0.1 * nu.
             nut_freestream = 0.1 * nu_val
-            # Wall: nutkWallFunction is OpenFOAM 2406's standard SST
-            # high-y+ wall function (k-based log-law). NOTE:
-            # nutKBoundedWallFunction would be the bounded variant but is
-            # ESI-commercial-only and not in the open-source 2406 build.
+            # P3.1-SST Phase 10 (Plan A): low-Re direct integration.
+            # ABANDONED 2026-06-18 — snappyHexMesh could not generate the
+            # y+<1 prism stack on the current surface refinement level
+            # (see snappyHexMeshDict.j2 addLayersControls comment). Plan A
+            # requires either deeper surface refinement (level 7-8) or a
+            # structured blockMesh O-grid; deferred to a future milestone.
+            #
+            # Plan B (shipped): keep nutkWallFunction (high-y+ log-law WF)
+            # with finalLayerThickness 1.2 mm → y+ ≈ 30 in the wall-function
+            # sweet spot. Cd_pressure remains ~4× too high as a documented
+            # limitation, but Cl is within 5% of Ladson and the configuration
+            # is stable.
             nut_wall_fn = "nutkWallFunction"
         else:
             # nuTilda: SpalartAllmaras working variable.

@@ -23,7 +23,7 @@ geometry:
 mesh:
   family: unstructured_hex
   levels: ["coarse"]
-  target_y_plus: 1.0
+  target_y_plus: 30.0
 solvers:
   - name: openfoam
     command: ""

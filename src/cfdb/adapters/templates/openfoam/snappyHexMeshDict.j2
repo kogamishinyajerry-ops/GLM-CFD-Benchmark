@@ -160,13 +160,56 @@ addLayersControls
     // suction peak (Cp ≈ -1.5 at x/c=0.025 per Ladson) is under-resolved,
     // biasing Cl low by ~4×.
     //
-    // Target y+ ≈ 30 (sweet spot for high-y+ wall functions):
+    // P3.1-SST Phase 9 (Plan B): target y+ ≈ 30 in the wall-function sweet
+    // spot. v8 used finalLayerThickness 0.5 mm → first-cell 0.08 mm → median
+    // y+ ≈ 12 (94% of airfoil cells in the y+ 5–30 "buffer layer" where
+    // nutkWallFunction is unreliable). This biased Cd_pressure 2.9× high
+    // (0.0086 vs expected ~0.003) while Cl was already correct at 0.439.
+    //
+    // P3.1-SST Phase 10 (Plan A): low-Re direct integration, y+ < 1.
+    // ABANDONED 2026-06-18 after v10b and v10c both demonstrated that
+    // snappyHexMesh cannot generate a sub-micron first cell on the current
+    // surface-refinement level (5 6). Detailed failure mode:
+    //
+    //   - v10b: 15 prism layers, finalLayerThickness 50 μm (outermost),
+    //     ~2.86 μm innermost. snappyHexMesh layer addition iteration 0
+    //     produced 441482 illegal faces (concave / zero area / negative
+    //     pyramid volume); iteration 1 then refused to insert any cell at
+    //     all (0 / 236160 added). Final mesh: 56198 cells, no prism layers,
+    //     Fx_viscous collapsed to 0.09 N (near-inviscid solution).
+    //   - v10c: thicknessModel firstAndExpansion, 10 layers,
+    //     firstLayerThickness 4.46 μm (y+ = 1 at Re=6e6, u_tau≈3.74 m/s),
+    //     expansionRatio 1.2, total stack ~0.18 mm. Same failure: iteration
+    //     0 inserted 151680/157440 (96.3%) but generated 398604 illegal
+    //     faces, iteration 1 discarded all of them (0/157440). Final mesh
+    //     again 56198 cells with no prism layers.
+    //
+    // Root cause: first-cell 4-5 μm is ~1000× smaller than the
+    // surface-refinement-level-5 cells (~5.7 mm) that the prism stack grows
+    // into. snappyHexMesh's displacementMedialAxis shrinker cannot compress
+    // the interior cells by that factor without violating mesh-quality
+    // limits (maxNonOrtho, face pyramids). Making low-Re work would require
+    // either (a) much deeper surface refinement (level 7-8 → 1.4-0.7 mm
+    // cells) to close the aspect-ratio gap at 4-8× total cell cost, or
+    // (b) replacing snappyHexMesh with a structured blockMesh O-grid for
+    // the airfoil. Both are out of scope for this iteration; Plan A is
+    // deferred to a future mesh-infrastructure milestone.
+    //
+    // Plan B (below) is the shipped configuration. Cd_pressure remains
+    // ~4× too high (v8/v9 measured +0.0086 where streamlined airfoils at
+    // α=5° should be 0.002-0.004), diagnosed as excessive suction-side BL
+    // growth over x/c ∈ [0, 0.3] weakening the LE suction peak — but Cl is
+    // within 5% of Ladson (v8: 0.439 vs 0.456; v9: 0.448 vs 0.456) and the
+    // configuration is stable and reproducible.
+    //
+    // Thickness sizing for y+ ≈ 30:
     //   y+ = u_tau·y_1/nu → y_1 = 30·nu/u_tau
-    // With Cf≈0.005 → τ_w≈30 Pa → u_tau≈5 m/s → y_1 ≈ 0.1 mm.
-    // finalLayerThickness 0.5 mm with expansionRatio 1.2 over 10 layers gives
-    // outermost layer 0.5 mm, innermost (first-cell) ≈ 0.08 mm → y+ ≈ 24.
-    // Total stack thickness ≈ 2.5 mm, well clear of the medial-axis truncation
-    // that previously cut the layer short.
+    // With Cf≈0.005 → τ_w≈30 Pa → u_tau≈5 m/s → y_1 ≈ 0.1 mm at LE, but the
+    // flat-plate-equivalent is closer to 0.25 mm where u_tau is lower. Use
+    // finalLayerThickness 1.2 mm with expansionRatio 1.2 over 10 layers →
+    // outermost layer 1.2 mm, innermost (first-cell) ≈ 0.19 mm → y+ ≈ 30 on
+    // the bulk of the airfoil. Total stack ≈ 5.9 mm, still < 6% of chord and
+    // clear of the medial-axis truncation that previously cut the layer short.
     relativeSizes false;
 
     thicknessModel finalAndExpansion;
@@ -180,7 +223,7 @@ addLayersControls
     }
 
     expansionRatio 1.2;
-    finalLayerThickness 0.0005;  // 0.5 mm (absolute)
+    finalLayerThickness 0.0012;  // 1.2 mm (absolute) — Plan B, y+ ≈ 30
     minThickness 1e-05;          // 10 μm floor
 
     nGrow 0;

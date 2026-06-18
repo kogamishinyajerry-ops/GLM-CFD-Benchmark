@@ -158,3 +158,8 @@
 - **真实数据是最好的测试**：合成 forces.dat 单测全过，真实 OpenCFD forces.dat 立刻暴露级联发散回滚逻辑的反向扫描错误（P3-tail Critical bug）
 - **OpenCFD image env 已 baked-in**：`opencfd/openfoam-run:2406` PATH 含 OpenFOAM bin，无需 `source bashrc`，但残留文档假设要 source
 - **SA 在粗网格 high-y+ 易发散**：`div(phi,nuTilda)=linearUpwind` 不稳定，改为 `upwind`（airFoil2D tutorial 默认）；QoI rollback 是安全网而非根治
+- **P3.1-SST Phase 8 (Plan C-1, 2026-06-18) — Cl 偏低 4 倍的根因**：
+  - **两个叠加 bug**：(1) STL z 错位（z∈[0,0.1] vs blockMesh z∈[-0.05,+0.05]）；(2) snappyHexMesh curvature refinement 从未触发（fan-triangulated STL 无 sharp feature edges），LE 周向仅 ~12 cells，无法解析 Cp suction peak
+  - **修复**：(1) `gen_geometry.py:write_stl` 加 `z_center=0.0` 参数让 STL z 对称于 0；(2) snappyHexMeshDict 加 `leRefinementBox`（x∈[0,0.05], y∈[-0.02,0.02], level 7）+ maxLocalCells 200k→300k
+  - **效果**：a5 Cl 从 0.107 → **0.439**（Ladson 0.456，误差 3.8%）；Cd 从 0.053 → 0.016（仍偏高 69%，怀疑未完全收敛或远场 BC 反射）
+  - **教训**：先验证网格生成器输出（STL z 范围、cells per refinement level、layer coverage）再调湍流模型参数；之前 7 轮迭代都在改 SA/SST，根因却在几何/网格

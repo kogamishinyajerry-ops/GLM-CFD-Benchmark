@@ -129,6 +129,46 @@ class TestSTLOutput:
         assert "facet normal" in content
         assert "vertex" in content
 
+    def test_stl_z_centered_on_zero(self, tmp_path: Path) -> None:
+        """STL slab must be centered on z=0 to match blockMesh's ±span_half layout.
+
+        Regression test for the Plan C-1 fix: previously write_stl put the slab
+        at z∈[0, z_extent] while blockMesh used z∈[-z_extent/2, +z_extent/2],
+        so half of the STL fell outside the background mesh and corrupted
+        snappyHexMesh's airfoil patch identification. With z_center=0 (the
+        new default) the STL z range must be symmetric: ±z_extent/2.
+        """
+        from cases.validation.naca0012.gen_geometry import write_stl
+        x = np.array([0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
+        y = np.array([0.0, 0.06, 0.0, 0.0, -0.06, 0.0])
+        path = tmp_path / "airfoil.stl"
+        write_stl(x, y, path, z_extent=0.1, name="naca0012", z_center=0.0)
+        content = path.read_text(encoding="utf-8")
+        z_vals = set()
+        for line in content.splitlines():
+            if line.strip().startswith("vertex"):
+                z_vals.add(line.split()[-1])
+        # Must have exactly two z planes, symmetric around 0.
+        assert z_vals == {"-0.050000", "0.050000"}, (
+            f"STL z planes not symmetric around 0: {z_vals}"
+        )
+
+    def test_stl_z_center_offset(self, tmp_path: Path) -> None:
+        """z_center offset is honoured for callers that need a non-zero origin."""
+        from cases.validation.naca0012.gen_geometry import write_stl
+        x = np.array([0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
+        y = np.array([0.0, 0.06, 0.0, 0.0, -0.06, 0.0])
+        path = tmp_path / "airfoil.stl"
+        write_stl(x, y, path, z_extent=0.1, name="naca0012", z_center=0.5)
+        content = path.read_text(encoding="utf-8")
+        z_vals = set()
+        for line in content.splitlines():
+            if line.strip().startswith("vertex"):
+                z_vals.add(line.split()[-1])
+        assert z_vals == {"0.450000", "0.550000"}, (
+            f"z_center=0.5 should give z planes [0.45, 0.55], got {z_vals}"
+        )
+
 
 class TestGenerateNACA0012:
     """Tests for the generate_naca0012 convenience function."""

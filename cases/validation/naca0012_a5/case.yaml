@@ -2,11 +2,15 @@ id: naca0012_a5
 name: NACA0012 Airfoil α=5° (Ladson 1988 Validation)
 category: validation
 description: >
-  NACA0012 at α=5°, Re=6e6, M=0.3, RANS-SA. Part of alpha sweep
-  (α=0/5/10/15°) for polar curve validation against Ladson 1988.
+  NACA0012 at α=5°, Re=6e6, M=0.3, RANS k-ω SST. Switched from SA to SST
+  in P3.1-SA Phase 4 (2026-06-17) after snappyHexMesh could not generate
+  the full 10 prism layers SA needs for accurate wall-function operation
+  on a single-core Docker mesh budget. SST is more forgiving on coarse
+  high-y+ grids per Menter (1994). Part of alpha sweep (α=0/5/10/15°) for
+  polar curve validation against Ladson 1988.
 physics:
   flow: rans
-  turbulence: rans_sa
+  turbulence: rans_kwsst
   dimensionality: 2d
   steady: true
 conditions:
@@ -35,7 +39,7 @@ solvers:
         critical: true
       - name: solve
         command: "simpleFoam -case {{ case_dir }}"
-        timeout_sec: 900
+        timeout_sec: 3600
         critical: true
     parameters:
       # nu chosen for Re = U*L/nu = 100*1/1.6667e-5 ≈ 6.0e6, matching Ladson
@@ -59,7 +63,7 @@ solvers:
       aoa_deg: 5.0
       reynolds: 6.0e6
 outputs:
-  fields: ["U", "p", "nuTilda"]
+  fields: ["U", "p", "k", "omega"]
   curves: ["cp_distribution"]
   qoi:
     - cl

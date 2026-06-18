@@ -41,15 +41,44 @@ geometry
         min (-0.2 -0.2 -0.1);
         max ( 1.2  0.2  0.1);
     }
+
+    // P3.1-SST Phase 8 (Plan C-1, 2026-06-18): leading-edge local
+    // refinement box. The previous setup relied on STL curvature to drive
+    // extra LE refinement, but snappyHexMesh's curvature refinement never
+    // triggered (the fan-triangulated STL has no sharp feature edges at the
+    // LE, so `resolveFeatureAngle` and `curvature` marking stayed at 0
+    // cells). At base surface level (5 6) the LE周向 only ~12 cells,
+    // under-resolving the Cp suction peak (Cp_min ≈ -1.5 at x/c=0.025 per
+    // Ladson) and biasing Cl low by ~4× while Cd comes out ~4× too high
+    // (numerical dissipation). This small LE box forces level 7 (Δx≈1.4 mm,
+    // smaller than the LE radius ρ_LE≈6 mm) in a tight region around the
+    // stagnation point, giving ~40 cells around the LE circumference. Box
+    // bounds kept very tight (x∈[0, 0.05], y∈[-0.02, 0.02]) — only the
+    // actual high-gradient suction-peak zone — so level-7 cell count stays
+    // within budget (~50k extra cells, total ~180k < 250k cap).
+    leRefinementBox
+    {
+        type searchableBox;
+        min (0.0 -0.02 -0.06);
+        max (0.05  0.02  0.06);
+    }
 };
 
 castellatedMeshControls
 {
-    maxLocalCells 200000;
-    maxGlobalCells 1000000;
+    // P3.1-SST Phase 8 (Plan C-1): raised 200k→300k to accommodate the LE
+    // refinement box (level 7) without snappyHexMesh stopping early. Worst
+    // case estimate: 90k level-7 cells + 100k surface (5/6) cells + 10k
+    // background = ~200k total, comfortably under 300k.
+    maxLocalCells 300000;
+    maxGlobalCells 1500000;
     minRefinementCells 0;
 
-    nCellsBetweenLevels 2;
+    // P3.1-SA Phase 5: nCellsBetweenLevels 2→3 for smoother refinement
+    // transitions at the higher Level (5 6) surface refinement. Reduces
+    // adjacent-cell volume ratios that previously triggered prism-layer
+    // medial-axis truncation.
+    nCellsBetweenLevels 3;
 
     features
     (
@@ -59,8 +88,16 @@ castellatedMeshControls
     {
         airfoil
         {
-            // P3.1-SA: level (4 5) — 16-32x, balanced for single-core Docker
-            level (4 5);
+            // P3.1-SA Phase 5 (Bug 2 fix): level (5 6) — 32-64x background
+            // refinement on the airfoil surface. Phase 4 used (4 5) and
+            // under-resolved the leading-edge Cp suction peak (Level 4 →
+            // Δx≈11 mm at the LE, comparable to the leading-edge radius
+            // ρ_LE≈6 mm for NACA0012), biasing Cl low by ~4× even after the
+            // span normalisation fix. Level 5 gives Δx≈5.7 mm at the LE,
+            // Level 6 inside refinement gives Δx≈2.8 mm — enough to resolve
+            // the suction peak at α=5°. Cell budget impact: ~3× more airfoil
+            // surface cells, still well under maxLocalCells 200k.
+            level (5 6);
             patchInfo { type wall; }
         }
     }
@@ -74,9 +111,29 @@ castellatedMeshControls
             mode inside;
             levels ((1E15 2));
         }
+
+        // P3.1-SST Phase 8 (Plan C-1): LE local refinement to level 7.
+        // Inside this tight box around the leading edge, force cells to
+        // refinement level 7 (Δx≈1.4 mm). This is in addition to the
+        // surface (5 6) refinement — the surface stays at level 6 but the
+        // volume around the LE goes one level deeper, giving ~40 cells
+        // around the LE circumference vs ~12 without it.
+        leRefinementBox
+        {
+            mode inside;
+            levels ((1E15 7));
+        }
     }
 
-    locationInMesh (0.5 0.0 0.0);
+    // P3.1-SA Phase 5 (Bug 2 fix): locationInMesh must be unambiguously in
+    // the fluid region. The previous value (0.5 0 0) sits ON the chord line,
+    // and NACA0012 half-thickness at x=0.5 is y_t≈0.053 — so the point is
+    // inside the airfoil envelope. snappyHexMesh happened to tolerate this
+    // (the open STL surface does not form a closed solid, so the inside/
+    // outside test is ill-defined), but it makes mesh correctness depend on
+    // STL winding luck. Move the point one chord upstream at y=0 (clearly
+    // outside the airfoil) to make the intent unambiguous.
+    locationInMesh (-1.0 0.0 0.0);
 
     allowFreeStandingZoneFaces true;
 }
@@ -95,11 +152,23 @@ snapControls
 
 addLayersControls
 {
-    relativeSizes true;
+    // P3.1-SA Phase 5 (Bug 2 fix): switch to absolute sizing to control y+
+    // directly. Phase 3-4 used relativeSizes=true with finalLayerThickness=0.3,
+    // which coupled layer thickness to the neighbouring cell size (~5.7 mm at
+    // surface level 5), producing a first-layer thickness ~0.7 mm and y+~150.
+    // At that y+ the wall function sits deep in the log layer and the LE
+    // suction peak (Cp ≈ -1.5 at x/c=0.025 per Ladson) is under-resolved,
+    // biasing Cl low by ~4×.
+    //
+    // Target y+ ≈ 30 (sweet spot for high-y+ wall functions):
+    //   y+ = u_tau·y_1/nu → y_1 = 30·nu/u_tau
+    // With Cf≈0.005 → τ_w≈30 Pa → u_tau≈5 m/s → y_1 ≈ 0.1 mm.
+    // finalLayerThickness 0.5 mm with expansionRatio 1.2 over 10 layers gives
+    // outermost layer 0.5 mm, innermost (first-cell) ≈ 0.08 mm → y+ ≈ 24.
+    // Total stack thickness ≈ 2.5 mm, well clear of the medial-axis truncation
+    // that previously cut the layer short.
+    relativeSizes false;
 
-    // P3.1-SA Phase 2: 10 prism layers, expansionRatio=1.15,
-    // finalLayerThickness=0.3. Combined with level (4 5) surface refinement
-    // and 120x90 background, targets y+ < 30 on single-core Docker.
     thicknessModel finalAndExpansion;
 
     layers
@@ -110,9 +179,9 @@ addLayersControls
         }
     }
 
-    expansionRatio 1.15;
-    finalLayerThickness 0.3;
-    minThickness 0.1;
+    expansionRatio 1.2;
+    finalLayerThickness 0.0005;  // 0.5 mm (absolute)
+    minThickness 1e-05;          // 10 μm floor
 
     nGrow 0;
     featureAngle 60;
@@ -120,13 +189,13 @@ addLayersControls
     nSmoothSurfaceNormals 1;
     nSmoothThickness 10;
     nSmoothNormals 3;
-    maxFaceThicknessRatio 0.5;
-    maxThicknessToMedialRatio 0.3;
+    maxFaceThicknessRatio 0.8;
+    maxThicknessToMedialRatio 0.5;
     minMedialAxisAngle 90;
     slipFeatureAngle 30;
     nBufferCellsNoExtrude 0;
-    nLayerIter 50;
-    nRelaxedIter 20;
+    nLayerIter 80;
+    nRelaxedIter 40;
 }
 
 meshQualityControls

@@ -104,48 +104,62 @@ def write_stl(
     path: Path,
     z_extent: float = 0.1,
     name: str = "naca0012",
+    z_center: float = 0.0,
 ) -> None:
-    """Write airfoil as a thin 3D STL (extruded in z).
+    """Write airfoil as a thin 3D STL (extruded in z), centered on z_center.
 
     snappyHexMesh requires a closed 3D surface. We extrude the 2D profile by
-    z_extent in +z direction to form a thin slab.
+    z_extent along z, with the slab centered on ``z_center`` so the two end-
+    cap planes sit at ``z_center ± z_extent/2``. This matches the default
+    blockMeshDict layout (z from -span_half to +span_half with span_half =
+    span_z/2) and avoids the previous z-offset bug where the slab sat at
+    z∈[0, z_extent] while blockMesh used z∈[-z_extent/2, +z_extent/2], so
+    the STL fell half outside the background mesh.
 
     Args:
         x, y: 2D profile coordinate arrays (upper surface + reversed lower).
         path: Output STL file path.
         z_extent: Slab thickness in z direction (default 0.1).
         name: Solid name in STL header.
+        z_center: Mid-plane z coordinate of the slab (default 0.0, matching
+            blockMeshDict's symmetric ±span_half vertex layout).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     n_half = len(x) // 2  # points on upper (and lower) surface
 
+    # Two end-cap planes, centered on z_center so the STL is symmetric in z
+    # and aligns with the blockMesh slab (z ∈ [z_center-z_extent/2,
+    # z_center+z_extent/2]).
+    z_top = z_center + z_extent / 2.0
+    z_bot = z_center - z_extent / 2.0
+
     lines = [f"solid {name}"]
 
-    # Top face (z = z_extent): triangles fanning the upper-lower closed curve
+    # Top cap (z = z_top): triangles fanning the upper-lower closed curve
     for i in range(2 * n_half - 1):
-        v0 = (float(x[i]), float(y[i]), z_extent)
-        v1 = (float(x[i + 1]), float(y[i + 1]), z_extent)
+        v0 = (float(x[i]), float(y[i]), z_top)
+        v1 = (float(x[i + 1]), float(y[i + 1]), z_top)
         # Connect to the symmetric point on the other side (closing the slab)
         # For simplicity, triangulate as a fan from the first vertex
         if i + 2 < 2 * n_half:
-            v2 = (float(x[i + 2]), float(y[i + 2]), z_extent)
+            v2 = (float(x[i + 2]), float(y[i + 2]), z_top)
             _write_triangle(lines, v0, v1, v2)
 
-    # Bottom face (z = 0): mirror of top face (reverse winding for normal flip)
+    # Bottom cap (z = z_bot): mirror of top cap (reverse winding for normal flip)
     for i in range(2 * n_half - 1):
-        v0 = (float(x[i]), float(y[i]), 0.0)
+        v0 = (float(x[i]), float(y[i]), z_bot)
         if i + 2 < 2 * n_half:
-            v2 = (float(x[i + 2]), float(y[i + 2]), 0.0)
-            v1 = (float(x[i + 1]), float(y[i + 1]), 0.0)
+            v2 = (float(x[i + 2]), float(y[i + 2]), z_bot)
+            v1 = (float(x[i + 1]), float(y[i + 1]), z_bot)
             _write_triangle(lines, v0, v1, v2)
 
-    # Side walls (front cap at z=0 plane and back cap at z=z_extent plane)
-    # Front cap: quad from (x[i],y[i],0)-(x[i+1],y[i+1],0)-(x[i+1],y[i+1],z)-(x[i],y[i],z)
+    # Side walls connecting the two z planes (the actual airfoil outer surface
+    # that snappyHexMesh refines and extrudes prism layers from).
     for i in range(2 * n_half - 1):
-        v0 = (float(x[i]), float(y[i]), 0.0)
-        v1 = (float(x[i + 1]), float(y[i + 1]), 0.0)
-        v2 = (float(x[i + 1]), float(y[i + 1]), z_extent)
-        v3 = (float(x[i]), float(y[i]), z_extent)
+        v0 = (float(x[i]), float(y[i]), z_bot)
+        v1 = (float(x[i + 1]), float(y[i + 1]), z_bot)
+        v2 = (float(x[i + 1]), float(y[i + 1]), z_top)
+        v3 = (float(x[i]), float(y[i]), z_top)
         _write_triangle(lines, v0, v1, v2)
         _write_triangle(lines, v0, v2, v3)
 
@@ -171,6 +185,7 @@ def generate_naca0012(
     n_points: int = 200,
     thickness: float = 0.12,
     z_extent: float = 0.1,
+    z_center: float = 0.0,
 ) -> tuple[Path, Path]:
     """Generate NACA0012 airfoil geometry files (.dat + .stl).
 
@@ -181,6 +196,8 @@ def generate_naca0012(
         n_points: Points per surface (default 200).
         thickness: Thickness fraction (default 0.12 for NACA0012).
         z_extent: STL slab thickness (default 0.1).
+        z_center: Mid-plane z of the slab (default 0.0 to match blockMesh's
+            symmetric ±span_half vertex layout).
 
     Returns:
         Tuple (dat_path, stl_path) of generated files.
@@ -189,7 +206,7 @@ def generate_naca0012(
     dat_path = out_dir / "naca0012.dat"
     stl_path = out_dir / "naca0012.stl"
     write_selig_format(x, y, dat_path, name="NACA0012")
-    write_stl(x, y, stl_path, z_extent=z_extent, name="naca0012")
+    write_stl(x, y, stl_path, z_extent=z_extent, z_center=z_center, name="naca0012")
     return dat_path, stl_path
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import re
 from pathlib import Path
 
@@ -394,6 +395,7 @@ def extract_cl_cd_openfoam(
     rho: float = 1.225,
     u_inf: float = 100.0,
     a_ref: float = 1.0,
+    alpha_deg: float = 0.0,
 ) -> tuple[float, float] | None:
     """Extract Cl/Cd from OpenFOAM forces.dat with divergence rollback.
 
@@ -424,14 +426,29 @@ def extract_cl_cd_openfoam(
             # Forces
             # time total_x total_y total_z pressure_x ... viscous_x ...
 
-    Cl = Fy / q_inf / A_ref, Cd = Fx / q_inf / A_ref
-    where q_inf = 0.5 * rho * U_inf^2.
+    The ``forces`` function object writes the resultant force in the GLOBAL
+    (x, y, z) coordinate frame. For a non-zero angle of attack the force must
+    be projected onto the wind axes before normalising — lift is perpendicular
+    to the freestream, drag is parallel::
+
+        L = Fy·cos α − Fx·sin α      (perpendicular to U_inf)
+        D = Fx·cos α + Fy·sin α      (parallel to U_inf)
+        Cl = L / q_inf / A_ref,  Cd = D / q_inf / A_ref,  q_inf = ½·ρ·U_inf²
+
+    At ``alpha_deg = 0`` this reduces to ``Cl = Fy/q/A``, ``Cd = Fx/q/A`` —
+    the historical (pre-rotation) behaviour, so existing α=0 callers are
+    unaffected. Prefer :func:`extract_cl_cd_coefficient_dat` when a
+    ``coefficient.dat`` (``forceCoeffs`` output) is available — there OpenFOAM
+    has already done the rotation and normalisation internally.
 
     Args:
         forces_dat: Path to forces.dat (or force.dat — Foundation spelling).
         rho: Freestream density (kg/m³), default 1.225 (sea-level air).
         u_inf: Freestream velocity magnitude (m/s).
-        a_ref: Reference area (m²), default 1.0 (chord × span for 2D).
+        a_ref: Reference area (m²), default 1.0. For a 2D span-extruded mesh
+            this is chord × span_thickness (e.g. 1.0 × 0.1 = 0.1).
+        alpha_deg: Angle of attack in degrees used to rotate the global-frame
+            force into wind axes. Default 0.0 (no rotation).
 
     Returns:
         Tuple (cl, cd) from the latest stable step, or None if parsing fails.
@@ -515,9 +532,113 @@ def extract_cl_cd_openfoam(
                 break
         _, best_fx, best_fy = force_history[best_idx]
 
-    cd = best_fx / q_inf / a_ref
-    cl = best_fy / q_inf / a_ref
+    # Project the global-frame force onto wind axes (lift ⟂, drag ∥ U_inf).
+    alpha_rad = math.radians(alpha_deg)
+    cos_a = math.cos(alpha_rad)
+    sin_a = math.sin(alpha_rad)
+    lift = best_fy * cos_a - best_fx * sin_a
+    drag = best_fx * cos_a + best_fy * sin_a
+
+    cd = drag / q_inf / a_ref
+    cl = lift / q_inf / a_ref
     return cl, cd
+
+
+def extract_cl_cd_coefficient_dat(coeff_dat: Path) -> tuple[float, float] | None:
+    """Extract Cl/Cd from an OpenFOAM ``forceCoeffs`` ``coefficient.dat``.
+
+    OpenFOAM v2106+ writes the ``forceCoeffs`` function-object output to
+    ``postProcessing/<name>/<time>/coefficient.dat``. The coefficients there
+    are ALREADY rotated into wind axes (via ``liftDir``/``dragDir``) and
+    normalised by ``magUInf``/``lRef``/``Aref`` — so Cl/Cd are read directly,
+    with no rotation or q_inf re-computation (unlike :func:`extract_cl_cd_openfoam`
+    which reads the raw global-frame ``force.dat``).
+
+    The column layout differs across OpenFOAM versions, so the column-name
+    header (the last comment line that contains both ``Cd`` and ``Cl``) is
+    parsed to locate the columns by name rather than fixed position::
+
+        # Time    Cd          Cs          Cl          CmPitch     ...
+        694       9.41e-03    0.0         4.52e-01    -1.2e-02    ...
+
+    Data rows align 1:1 with the header tokens (the leading ``Time`` column
+    matches the leading time value). Rows are scanned from the last backward
+    to the most recent *physically plausible* (cl, cd) — this guards against a
+    late-diverging simpleFoam run that writes finite-but-garbage coefficients
+    (e.g. Cl=1e15) to the final rows. Without this, the preferred coefficient
+    path would be LESS robust than the raw force.dat fallback, which already
+    has a 10x magnitude rollback guard. A divergence (or a row wider header
+    than data) yields None rather than a misleading benchmark value.
+
+    Args:
+        coeff_dat: Path to coefficient.dat.
+
+    Returns:
+        Tuple (cl, cd) from the last plausible data row, or None if parsing
+        fails / every row is implausible.
+    """
+    if not coeff_dat.exists():
+        logger.warning("coefficient.dat not found: %s", coeff_dat)
+        return None
+
+    try:
+        content = coeff_dat.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("failed to read coefficient.dat %s: %s", coeff_dat, e)
+        return None
+
+    header_cols: list[str] | None = None
+    data_rows: list[list[str]] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            tokens = stripped.lstrip("#").split()
+            lowered = [t.lower() for t in tokens]
+            # The column-name line is the comment that names both Cd and Cl.
+            if "cd" in lowered and "cl" in lowered:
+                header_cols = tokens
+            continue
+        data_rows.append(stripped.split())
+
+    if header_cols is None:
+        logger.warning("no Cd/Cl column header found in %s", coeff_dat)
+        return None
+    if not data_rows:
+        logger.warning("no data rows in %s", coeff_dat)
+        return None
+
+    lowered_cols = [c.lower() for c in header_cols]
+    try:
+        cd_idx = lowered_cols.index("cd")
+        cl_idx = lowered_cols.index("cl")
+    except ValueError:
+        logger.warning("Cd/Cl column index lookup failed in %s", coeff_dat)
+        return None
+
+    # Physical sanity ceilings: a 2D airfoil Cl never approaches 50 (attached
+    # |Cl| < ~2) and Cd stays well under 10 even for bluff/separated flow.
+    # Anything beyond signals divergence, not a real coefficient.
+    _CL_LIMIT = 50.0
+    _CD_LIMIT = 10.0
+    for row in reversed(data_rows):
+        if cd_idx >= len(row) or cl_idx >= len(row):
+            continue
+        try:
+            cd = float(row[cd_idx])
+            cl = float(row[cl_idx])
+        except ValueError:
+            continue
+        if abs(cl) <= _CL_LIMIT and abs(cd) <= _CD_LIMIT:
+            return cl, cd
+
+    logger.warning(
+        "no physically plausible Cl/Cd row in %s (last rows diverged or "
+        "too short)",
+        coeff_dat,
+    )
+    return None
 
 
 def _safe_float_from_line(line: str) -> float:

@@ -230,6 +230,55 @@ class TestNacaRouting:
         assert (system / "blockMeshDict").exists()
         assert (system / "snappyHexMeshDict").exists()
 
+    def test_controldict_uses_forcecoeffs_with_correct_aref(
+        self, tmp_path: Path
+    ) -> None:
+        """controlDict.naca renders a forceCoeffs FO (not raw forces) with
+        Aref = chord × 2D span = 1.0 × 0.1 = 0.1, so coefficient.dat holds
+        wind-axis sectional Cl/Cd directly."""
+        case = _make_naca_case(alpha_deg=5.0)
+        adapter = OpenFOAMAdapter(dry_run=True)
+        case_dir = tmp_path / "case_src"
+        case_dir.mkdir()
+        (case_dir / "geometry").mkdir()
+        (case_dir / "geometry" / "naca0012.stl").write_text(
+            "dummy", encoding="utf-8"
+        )
+        run_dir = tmp_path / "run"
+
+        adapter.prepare(case, case_dir, run_dir)
+
+        cd_text = (run_dir / "case" / "system" / "controlDict").read_text(
+            encoding="utf-8"
+        )
+        assert "type            forceCoeffs;" in cd_text
+        # The old raw-forces FO must be gone (it ignored liftDir/dragDir/Aref).
+        assert "type            forces;" not in cd_text
+        assert "Aref            0.1" in cd_text
+
+    def test_blockmesh_z_extent_coheres_with_aref(self, tmp_path: Path) -> None:
+        """blockMeshDict z half-thickness is rendered from span_thickness
+        (0.1/2 = 0.05) so the 2D span and the forceCoeffs Aref cannot drift."""
+        case = _make_naca_case(alpha_deg=5.0)
+        adapter = OpenFOAMAdapter(dry_run=True)
+        case_dir = tmp_path / "case_src"
+        case_dir.mkdir()
+        (case_dir / "geometry").mkdir()
+        (case_dir / "geometry" / "naca0012.stl").write_text(
+            "dummy", encoding="utf-8"
+        )
+        run_dir = tmp_path / "run"
+
+        adapter.prepare(case, case_dir, run_dir)
+
+        bm = (run_dir / "case" / "system" / "blockMeshDict").read_text(
+            encoding="utf-8"
+        )
+        assert "-0.05)" in bm
+        assert " 0.05)" in bm
+        # No stray, unrendered Jinja tokens left behind.
+        assert "{{" not in bm
+
     def test_prepare_naca_creates_initial_fields(self, tmp_path: Path) -> None:
         """prepare renders 0/U, 0/p, 0/nuTilda for NACA."""
         case = _make_naca_case(alpha_deg=5.0)
@@ -377,10 +426,37 @@ class TestCollectOutputsNaca:
         assert "forces.dat" in str(args[0]) or "force.dat" in str(args[0])
         assert kwargs.get("rho") == 1.225
         assert kwargs.get("u_inf") == 100.0
+        # Aref = l_ref(1.0) × span(0.1) = 0.1; alpha rotation passed through.
+        assert kwargs.get("a_ref") == pytest.approx(0.1)
+        assert kwargs.get("alpha_deg") == pytest.approx(5.0)
 
         assert artifacts.qoi_values is not None
         assert artifacts.qoi_values["cl"] == pytest.approx(0.42)
         assert artifacts.qoi_values["cd"] == pytest.approx(0.012)
+
+    def test_collect_outputs_naca_prefers_coefficient_dat(
+        self, tmp_path: Path
+    ) -> None:
+        """forceCoeffs coefficient.dat is read directly (no rotation/Aref math
+        in Python) and preferred over the raw force.dat fallback."""
+        case = _make_naca_case(alpha_deg=5.0)
+        adapter = OpenFOAMAdapter(dry_run=False)
+
+        run_dir = tmp_path / "run"
+        case_dir_out = run_dir / "case"
+        cdir = case_dir_out / "postProcessing" / "forces" / "694"
+        cdir.mkdir(parents=True)
+        (cdir / "coefficient.dat").write_text(
+            "# Force coefficients\n"
+            "# Time          Cd        Cs    Cl        CmPitch\n"
+            "694  0.009500  0.0  0.456000  -0.012\n",
+            encoding="utf-8",
+        )
+
+        artifacts = adapter.collect_outputs(case, run_dir)
+        assert artifacts.qoi_values is not None
+        assert artifacts.qoi_values["cl"] == pytest.approx(0.456)
+        assert artifacts.qoi_values["cd"] == pytest.approx(0.0095)
 
     def test_collect_outputs_naca_fallback_force_dat(self, tmp_path: Path) -> None:
         """collect_outputs falls back to force.dat (Foundation spelling)."""

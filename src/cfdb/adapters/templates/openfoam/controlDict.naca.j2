@@ -45,7 +45,11 @@ functions
 {
     forces
     {
-        type            forces;
+        // forceCoeffs rotates the force onto wind axes (liftDir/dragDir) and
+        // normalises by magUInf/lRef/Aref internally, writing Cl/Cd directly
+        // to coefficient.dat. Aref = chord x 2D span thickness (0.1 m) so the
+        // result is a sectional (per-unit-span) coefficient.
+        type            forceCoeffs;
         libs            ("libforces.so");
         writeControl    timeStep;
         writeInterval   50;
@@ -61,7 +65,7 @@ functions
         pitchAxis       (0 0 1);
         magUInf         {{ u_inf }};
         lRef            {{ l_ref }};
-        Aref            1.0;
+        Aref            {{ a_ref }};
     }
 
     fieldAverage

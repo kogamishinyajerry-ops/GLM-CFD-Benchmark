@@ -188,6 +188,171 @@ class TestExtractClCdOpenFOAM:
         result = extract_cl_cd_openfoam(path, u_inf=0.0)
         assert result is None
 
+    def test_alpha_zero_is_unrotated_backcompat(self, tmp_path: Path) -> None:
+        """alpha_deg defaults to 0 → cl=Fy/qA, cd=Fx/qA (historical)."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        path = tmp_path / "forces.dat"
+        path.write_text("1.0 (3.0 7.0 0) (0 0 0)\n", encoding="utf-8")
+        cl, cd = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        # q_inf = 0.5 → cl = 7/0.5 = 14, cd = 3/0.5 = 6
+        assert math.isclose(cl, 14.0)
+        assert math.isclose(cd, 6.0)
+
+    def test_alpha_rotation_projects_to_wind_axes(self, tmp_path: Path) -> None:
+        """Non-zero alpha rotates the global-frame force onto wind axes:
+        Lift = Fy·cosα − Fx·sinα, Drag = Fx·cosα + Fy·sinα."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        path = tmp_path / "forces.dat"
+        # Global force Fx=10 (streamwise), Fy=100 (vertical).
+        path.write_text("1.0 (10.0 100.0 0) (0 0 0)\n", encoding="utf-8")
+        alpha = 5.0
+        result = extract_cl_cd_openfoam(
+            path, rho=1.0, u_inf=1.0, a_ref=1.0, alpha_deg=alpha
+        )
+        assert result is not None
+        cl, cd = result
+        ar = math.radians(alpha)
+        q = 0.5
+        lift = 100.0 * math.cos(ar) - 10.0 * math.sin(ar)
+        drag = 10.0 * math.cos(ar) + 100.0 * math.sin(ar)
+        assert math.isclose(cl, lift / q, rel_tol=1e-9)
+        assert math.isclose(cd, drag / q, rel_tol=1e-9)
+        # Sanity: rotation lowers Cl and raises Cd vs the unrotated case.
+        assert cl < 100.0 / q
+        assert cd > 10.0 / q
+
+    def test_alpha_90_turns_vertical_force_into_pure_drag(self, tmp_path: Path) -> None:
+        """At α=90° the freestream points along +y, so a purely vertical
+        global force becomes pure drag and zero lift (rotation sanity)."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        path = tmp_path / "forces.dat"
+        path.write_text("1.0 (0.0 10.0 0) (0 0 0)\n", encoding="utf-8")
+        cl, cd = extract_cl_cd_openfoam(
+            path, rho=1.0, u_inf=1.0, a_ref=1.0, alpha_deg=90.0
+        )
+        assert math.isclose(cl, 0.0, abs_tol=1e-9)
+        assert math.isclose(cd, 10.0 / 0.5, rel_tol=1e-9)
+
+    def test_a_ref_scales_coefficients_inversely(self, tmp_path: Path) -> None:
+        """Halving the reference area doubles the coefficients (Aref bug fix:
+        2D span thickness 0.1 → Aref 0.1, not 1.0)."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+        path = tmp_path / "forces.dat"
+        path.write_text("1.0 (1.0 1.0 0) (0 0 0)\n", encoding="utf-8")
+        cl1, cd1 = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=1.0)
+        cl2, cd2 = extract_cl_cd_openfoam(path, rho=1.0, u_inf=1.0, a_ref=0.1)
+        assert math.isclose(cl2, cl1 * 10.0, rel_tol=1e-9)
+        assert math.isclose(cd2, cd1 * 10.0, rel_tol=1e-9)
+
+
+class TestExtractClCdCoefficientDat:
+    """Tests for extract_cl_cd_coefficient_dat (forceCoeffs coefficient.dat)."""
+
+    def test_basic_header_parse_last_row(self, tmp_path: Path) -> None:
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        content = (
+            "# Force coefficients\n"
+            "# dragDir : (0.9962 0.0872 0)\n"
+            "# Time          Cd             Cs             Cl"
+            "             CmPitch\n"
+            "500   0.012000  0.0  0.440000  -0.010\n"
+            "694   0.009500  0.0  0.456000  -0.012\n"
+        )
+        path = tmp_path / "coefficient.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_coefficient_dat(path)
+        assert result is not None
+        cl, cd = result
+        assert math.isclose(cl, 0.456000)
+        assert math.isclose(cd, 0.009500)
+
+    def test_columns_located_by_name_not_position(self, tmp_path: Path) -> None:
+        """Cl/Cd found by column name; a 'Cd(f)' decoy must not match 'Cd'."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        content = (
+            "# Time   Cl      Cd      Cd(f)    Cd(r)\n"
+            "100  0.812000  0.012500  0.006  0.0065\n"
+        )
+        path = tmp_path / "coefficient.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_coefficient_dat(path)
+        assert result is not None
+        cl, cd = result
+        assert math.isclose(cl, 0.812000)
+        assert math.isclose(cd, 0.012500)
+
+    def test_columns_decoy_before_real_cd(self, tmp_path: Path) -> None:
+        """'Cd(f)' decoy appearing BEFORE the real Cd column must not be
+        matched — index() returns the first EXACT 'cd', not 'cd(f)'."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        content = (
+            "# Time   Cd(f)    Cd(r)   Cd       Cl\n"
+            "100  0.006  0.0065  0.012500  0.812000\n"
+        )
+        path = tmp_path / "coefficient.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_coefficient_dat(path)
+        assert result is not None
+        cl, cd = result
+        assert math.isclose(cl, 0.812000)
+        assert math.isclose(cd, 0.012500)
+
+    def test_diverged_last_row_rolls_back_to_plausible(self, tmp_path: Path) -> None:
+        """A late-diverged run writes finite-but-garbage coefficients to the
+        final rows; the scan rolls back to the most recent plausible row."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        content = (
+            "# Time   Cd        Cs    Cl        CmPitch\n"
+            "600  0.009500  0.0  0.456000  -0.012\n"
+            "650  1.2e+14    0.0  3.4e+15   -9.9e+13\n"   # diverged
+            "694  8.7e+15    0.0  -2.2e+16  -1.0e+14\n"   # diverged worse
+        )
+        path = tmp_path / "coefficient.dat"
+        path.write_text(content, encoding="utf-8")
+        result = extract_cl_cd_coefficient_dat(path)
+        assert result is not None
+        cl, cd = result
+        # Rolls back to time 600 (the last physically plausible row).
+        assert math.isclose(cl, 0.456000)
+        assert math.isclose(cd, 0.009500)
+
+    def test_all_rows_diverged_returns_none(self, tmp_path: Path) -> None:
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        content = (
+            "# Time   Cd       Cs    Cl       CmPitch\n"
+            "650  1.2e+14  0.0  3.4e+15  -9.9e+13\n"
+            "694  8.7e+15  0.0  -2.2e+16  -1.0e+14\n"
+        )
+        path = tmp_path / "coefficient.dat"
+        path.write_text(content, encoding="utf-8")
+        assert extract_cl_cd_coefficient_dat(path) is None
+
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        assert extract_cl_cd_coefficient_dat(tmp_path / "no.dat") is None
+
+    def test_no_column_header_returns_none(self, tmp_path: Path) -> None:
+        """Data rows present but no Cd/Cl column-name comment → None."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        path = tmp_path / "coefficient.dat"
+        path.write_text("# Force coefficients\n694 0.0095 0.456\n", encoding="utf-8")
+        assert extract_cl_cd_coefficient_dat(path) is None
+
+    def test_no_data_rows_returns_none(self, tmp_path: Path) -> None:
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        path = tmp_path / "coefficient.dat"
+        path.write_text("# Time Cd Cs Cl CmPitch\n", encoding="utf-8")
+        assert extract_cl_cd_coefficient_dat(path) is None
+
+    def test_short_row_returns_none(self, tmp_path: Path) -> None:
+        """Header names a Cl column index beyond the data row width → None."""
+        from cfdb.post.qoi_extractor import extract_cl_cd_coefficient_dat
+        path = tmp_path / "coefficient.dat"
+        path.write_text(
+            "# Time Cd Cs Cl CmPitch\n694 0.0095\n", encoding="utf-8"
+        )
+        assert extract_cl_cd_coefficient_dat(path) is None
+
 
 class TestSafeFloatFromLine:
     """Tests for the _safe_float_from_line helper (time token parser)."""

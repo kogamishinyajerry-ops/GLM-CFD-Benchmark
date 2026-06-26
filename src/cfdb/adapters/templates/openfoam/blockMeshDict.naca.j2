@@ -6,7 +6,7 @@
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
 Description
-    NACA0012 background hex mesh — single rectangular block.
+    NACA0012 background hex mesh - single rectangular block.
 
     snappyHexMesh does all the airfoil-related refinement and patch
     assignment; blockMesh only generates the uniform background grid.
@@ -24,17 +24,19 @@ Description
 scale 1;
 
 // NACA0012 chord = 1.0, domain extends ~10 chords upstream / 12 downstream.
+// z half-thickness ({{ z_half }}) is rendered from span_thickness so the 2D
+// span and the forceCoeffs Aref (chord x span) stay coherent.
 vertices
 (
-    (-10.0 -10.0  -0.05)    // 0
-    ( 12.0 -10.0  -0.05)    // 1
-    ( 12.0  10.0  -0.05)    // 2
-    (-10.0  10.0  -0.05)    // 3
+    (-10.0 -10.0  -{{ z_half }})    // 0
+    ( 12.0 -10.0  -{{ z_half }})    // 1
+    ( 12.0  10.0  -{{ z_half }})    // 2
+    (-10.0  10.0  -{{ z_half }})    // 3
 
-    (-10.0 -10.0   0.05)    // 4
-    ( 12.0 -10.0   0.05)    // 5
-    ( 12.0  10.0   0.05)    // 6
-    (-10.0  10.0   0.05)    // 7
+    (-10.0 -10.0   {{ z_half }})    // 4
+    ( 12.0 -10.0   {{ z_half }})    // 5
+    ( 12.0  10.0   {{ z_half }})    // 6
+    (-10.0  10.0   {{ z_half }})    // 7
 );
 
 blocks

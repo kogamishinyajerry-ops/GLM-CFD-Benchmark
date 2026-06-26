@@ -142,6 +142,21 @@ class OpenFOAMAdapter:
         context["drag_dir_x"] = math.cos(alpha_rad)
         context["drag_dir_y"] = math.sin(alpha_rad)
 
+        # Reference length (chord) and area for forceCoeffs normalisation.
+        # l_ref defaults to unit chord; solver parameters may override it.
+        context.setdefault("l_ref", 1.0)
+        # 2D span thickness from blockMeshDict.naca.j2 (z spans -0.05..+0.05
+        # = 0.1 m). Aref = chord × span so the forceCoeffs FO yields sectional
+        # (per-unit-span) Cl/Cd. If the mesh z-extent ever changes, override
+        # span_thickness via solver parameters to keep Aref consistent.
+        span_thickness = float(context.get("span_thickness", 0.1))
+        context["span_thickness"] = span_thickness
+        context["a_ref"] = float(context["l_ref"]) * span_thickness
+        # blockMeshDict extrudes the 2D slice symmetrically about z=0, so the
+        # half-thickness drives both mesh z-extent and Aref — templating it
+        # here keeps the mesh span and Aref from silently diverging.
+        context["z_half"] = span_thickness / 2.0
+
         return context
 
     def _render_template(self, template_name: str, context: dict[str, Any]) -> str:
@@ -651,46 +666,70 @@ class OpenFOAMAdapter:
             return ArtifactManifest(files=files, qoi_values=None, curves=None)
 
         if self._is_naca_case(case):
-            # === P3-hotfix: extract Cl/Cd from forces.dat ===
-            from cfdb.post.qoi_extractor import extract_cl_cd_openfoam
+            # === Cl/Cd extraction (forceCoeffs preferred, force.dat fallback) ===
+            from cfdb.post.qoi_extractor import (
+                extract_cl_cd_coefficient_dat,
+                extract_cl_cd_openfoam,
+            )
 
-            forces_candidates = sorted(
-                case_dir_out.glob("postProcessing/forces/*/forces.dat"),
+            # Normalisation parameters (shared by both extraction paths).
+            solver_config = self._find_solver_config(case)
+            params = solver_config.parameters or {}
+            u_inf = float(params.get("u_inf", 100.0))
+            l_ref = float(params.get("l_ref", 1.0))
+            # alpha: prefer case conditions, fall back to solver parameters.
+            alpha_deg = 0.0
+            if case.conditions.alpha_deg is not None:
+                alpha_deg = float(case.conditions.alpha_deg)
+            elif "alpha_deg" in params:
+                alpha_deg = float(params["alpha_deg"])
+            # Aref = chord × 2D span thickness (blockMeshDict z-extent = 0.1 m),
+            # matching the forceCoeffs Aref so both paths agree.
+            span_thickness = float(params.get("span_thickness", 0.1))
+            a_ref = l_ref * span_thickness
+            rho = 1.225  # sea-level air density (PRD Q2: keep default)
+
+            result: tuple[float, float] | None = None
+
+            # Preferred: forceCoeffs coefficient.dat (rotation + normalisation
+            # already done in-solver; read Cl/Cd directly).
+            coeff_candidates = sorted(
+                case_dir_out.glob("postProcessing/forces/*/coefficient.dat"),
                 key=lambda p: _safe_float_dir(p.parent.name),
             )
-            # Fallback: force.dat (Foundation spelling — PRD R1)
-            if not forces_candidates:
+            if coeff_candidates:
+                result = extract_cl_cd_coefficient_dat(coeff_candidates[-1])
+
+            # Fallback: raw forces.dat / force.dat (Foundation spelling — PRD
+            # R1). Apply AoA rotation + Aref here since these hold global-frame
+            # forces in Newtons.
+            if result is None:
                 forces_candidates = sorted(
-                    case_dir_out.glob("postProcessing/forces/*/force.dat"),
+                    case_dir_out.glob("postProcessing/forces/*/forces.dat"),
                     key=lambda p: _safe_float_dir(p.parent.name),
                 )
-
-            if forces_candidates:
-                forces_dat = forces_candidates[-1]  # latest time directory
-                # Derive u_inf from solver parameters
-                solver_config = self._find_solver_config(case)
-                u_inf = 100.0
-                if solver_config.parameters and "u_inf" in solver_config.parameters:
-                    u_inf = float(solver_config.parameters["u_inf"])
-                rho = 1.225  # sea-level air density (PRD Q2: keep default)
-
-                result = extract_cl_cd_openfoam(
-                    forces_dat, rho=rho, u_inf=u_inf, a_ref=1.0
-                )
-                if result is not None:
-                    cl, cd = result
-                    qoi_values["cl"] = cl
-                    qoi_values["cd"] = cd
-                else:
-                    logger.warning(
-                        "forces.dat found but Cl/Cd extraction returned "
-                        "None for case %s",
-                        case.id,
+                if not forces_candidates:
+                    forces_candidates = sorted(
+                        case_dir_out.glob("postProcessing/forces/*/force.dat"),
+                        key=lambda p: _safe_float_dir(p.parent.name),
                     )
+                if forces_candidates:
+                    result = extract_cl_cd_openfoam(
+                        forces_candidates[-1],
+                        rho=rho,
+                        u_inf=u_inf,
+                        a_ref=a_ref,
+                        alpha_deg=alpha_deg,
+                    )
+
+            if result is not None:
+                cl, cd = result
+                qoi_values["cl"] = cl
+                qoi_values["cd"] = cd
             else:
                 logger.warning(
-                    "no forces.dat found under postProcessing/forces/ "
-                    "for case %s",
+                    "no coefficient.dat/forces.dat found (or extraction "
+                    "returned None) under postProcessing/forces/ for case %s",
                     case.id,
                 )
         else:

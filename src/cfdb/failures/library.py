@@ -3,8 +3,9 @@
 Red lines enforced here:
 
 - The library only ever grows: records are never deleted, ``count`` never
-  decreases, and saving a state with fewer records than what is already on
-  disk raises instead of silently shrinking history (lessons are assets).
+  decreases, and saving a state that drops any fingerprint already on disk
+  raises instead of silently rewriting history (lessons are assets). The
+  guard compares fingerprint sets, so equal-count replacement also bites.
 - Ingest is incremental and idempotent per run: each run_id is only counted
   once, so re-ingesting the same runs directory never inflates counts, while
   a *new* run reproducing a known fingerprint increments ``count`` and
@@ -74,7 +75,13 @@ class IngestSummary(BaseModel):
     """Run directories inspected."""
 
     passed: int = 0
-    """Runs skipped because they are verified passes or dry runs."""
+    """Runs skipped because they are verified passes (manifest success +
+    recomputed metrics pass). Dry runs are never counted here — a dry run
+    verified nothing."""
+
+    dry_run_skipped: int = 0
+    """Runs skipped because they are dry runs (nothing executed, nothing
+    verified); excluded from pass statistics."""
 
     new_records: int = 0
     """New failure fingerprints added to the library."""
@@ -126,19 +133,26 @@ class FailureLibrary:
         self._ingested_run_ids = set(data.ingested_run_ids)
 
     def _save(self) -> None:
-        """Persist library state, refusing to shrink existing history.
+        """Persist library state, refusing to drop any existing record.
+
+        The guard is a fingerprint superset check, not a count comparison:
+        every fingerprint already on disk must still be present in the state
+        about to be written. This also bites on equal-count replacement
+        (swapping one record for another), which a size check would miss.
 
         Raises:
-            RuntimeError: If the on-disk library holds more records than the
+            RuntimeError: If any on-disk fingerprint is absent from the
                           in-memory state (append-only red line).
         """
         if self._path.exists():
             on_disk = _LibraryFile.model_validate_json(self._path.read_text(encoding="utf-8"))
-            if len(on_disk.records) > len(self._records):
+            dropped = {record.fingerprint for record in on_disk.records} - set(self._records)
+            if dropped:
                 raise RuntimeError(
-                    f"refusing to shrink failure library {self._path}: "
-                    f"{len(on_disk.records)} records on disk, "
-                    f"{len(self._records)} in memory (library is append-only)"
+                    f"refusing to overwrite failure library {self._path}: "
+                    f"{len(dropped)} on-disk record(s) missing from the state "
+                    f"about to be written (library is append-only): "
+                    f"{sorted(dropped)}"
                 )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = _LibraryFile(
@@ -185,6 +199,8 @@ class FailureLibrary:
         new fingerprint -> new record; known fingerprint -> count++ and
         last_seen update. Runs with missing/corrupt manifest.json are
         reported in the summary errors instead of being silently skipped.
+        Dry runs are skipped without entering any statistic other than
+        ``dry_run_skipped`` (a dry run verified nothing).
 
         Args:
             runs_dir: Root runs directory (json repo layout).
@@ -215,6 +231,13 @@ class FailureLibrary:
                 )
             except Exception as exc:
                 summary.errors.append(f"{run_id}: unreadable manifest.json ({exc})")
+                continue
+
+            if manifest.status == "dry_run":
+                # A dry run executed nothing and verified nothing: it is
+                # neither a failure nor a verified pass, so it stays out of
+                # both statistics and the idempotency ledger.
+                summary.dry_run_skipped += 1
                 continue
 
             metrics: MetricsResult | None = None

@@ -259,6 +259,62 @@ class TestFailuresCommands:
         assert result.exit_code == 0
         assert "SETUP_ERROR" in result.output
 
+    def test_ingest_missing_runs_dir_exits_1(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A nonexistent runs directory is an error line + nonzero exit."""
+        result = runner.invoke(
+            app,
+            [
+                "failures", "ingest",
+                "--runs-dir", str(tmp_path / "no_such_runs"),
+                "--library", str(tmp_path / "library.json"),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "runs directory not found" in combined_output(result)
+
+    def test_ingest_corrupt_manifest_partial_success_exits_1(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Corrupt manifest: error line + exit 1, but good runs still persist."""
+        runs_dir = tmp_path / "runs"
+        library = tmp_path / "failures" / "library.json"
+        write_run(runs_dir, "run_fail", status="failed", overall_status="fail")
+        corrupt_dir = runs_dir / "run_corrupt"
+        corrupt_dir.mkdir(parents=True)
+        (corrupt_dir / "manifest.json").write_text("{not json", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["failures", "ingest", "--runs-dir", str(runs_dir), "--library", str(library)],
+        )
+        assert result.exit_code == 1
+        output = combined_output(result)
+        assert "run_corrupt" in output
+        assert "1 new failure(s)" in output  # partial success summarized
+        # Partial results were persisted despite the nonzero exit.
+        data = json.loads(library.read_text(encoding="utf-8"))
+        assert len(data["records"]) == 1
+
+    def test_ingest_dry_run_not_counted_as_verified_pass(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A dry run is reported as dry-run skipped, never as a verified pass."""
+        runs_dir = tmp_path / "runs"
+        write_run(runs_dir, "run_dry", status="dry_run", overall_status="unknown")
+        result = runner.invoke(
+            app,
+            [
+                "failures", "ingest",
+                "--runs-dir", str(runs_dir),
+                "--library", str(tmp_path / "library.json"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "0 verified pass" in result.output
+        assert "1 dry-run skipped" in result.output
+
     def test_list_rejects_unknown_mode(self, runner: CliRunner, tmp_path: Path) -> None:
         result = runner.invoke(
             app,
@@ -435,6 +491,22 @@ class TestGateExitCodes:
         assert "TAMPERED" in result.output
 
 
+    def test_corrupt_baselines_file_exit_3(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Tamper witness: a corrupt baselines.json must exit 3, never crash
+        and never degrade into NO_BASELINE (exit 2)."""
+        runs_dir = tmp_path / "runs"
+        write_run(runs_dir, "run_new")
+        baselines = tmp_path / "baselines" / "baselines.json"
+        baselines.parent.mkdir(parents=True)
+        baselines.write_text("{definitely not valid json", encoding="utf-8")
+
+        result = self._gate(runner, tmp_path, "run_new")
+        assert result.exit_code == 3
+        assert "corrupt or unreadable" in combined_output(result)
+
+
 class TestAgentEvalCommands:
     def _init(self, runner: CliRunner, tmp_cases: Path, tmp_path: Path) -> Path:
         agentbench_dir = tmp_path / "agentbench"
@@ -517,6 +589,130 @@ class TestAgentEvalCommands:
         assert "reference/qoi.json" in combined_output(result)
         # No score is ever ledgered against a drifted ruler.
         assert not (agentbench_dir / CASE_ID / "ledger.jsonl").exists()
+
+    def test_init_refuses_existing_contract_without_force(
+        self, runner: CliRunner, tmp_cases: Path, tmp_path: Path
+    ) -> None:
+        """Re-running init on an existing contract must refuse and hint --force."""
+        agentbench_dir = self._init(runner, tmp_cases, tmp_path)
+        contract_path = agentbench_dir / CASE_ID / "contract.json"
+        before = contract_path.read_bytes()
+
+        result = runner.invoke(
+            app,
+            [
+                "agent-eval", "init", "-c", CASE_ID,
+                "--cases-dir", str(tmp_cases),
+                "--agentbench-dir", str(agentbench_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "--force" in combined_output(result)
+        # The frozen ruler is untouched.
+        assert contract_path.read_bytes() == before
+
+    def test_init_force_reanchors_with_loud_warning(
+        self, runner: CliRunner, tmp_cases: Path, tmp_path: Path
+    ) -> None:
+        """--force re-anchors and prints old -> new ruler ids loudly."""
+        import hashlib
+
+        agentbench_dir = self._init(runner, tmp_cases, tmp_path)
+        contract_path = agentbench_dir / CASE_ID / "contract.json"
+        old_ruler_id = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
+
+        # Change the ruler material so the re-anchored contract differs.
+        ref_path = tmp_cases / "smoke" / CASE_ID / "reference" / "qoi.json"
+        ref_path.write_text(
+            ref_path.read_text(encoding="utf-8").replace("0.371", "0.372"),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "agent-eval", "init", "-c", CASE_ID, "--force",
+                "--cases-dir", str(tmp_cases),
+                "--agentbench-dir", str(agentbench_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        new_ruler_id = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
+        assert new_ruler_id != old_ruler_id
+        output = combined_output(result)
+        assert "RULER RE-ANCHORED" in output
+        assert f"#{old_ruler_id}" in output
+        assert f"#{new_ruler_id}" in output
+
+    def test_score_missing_submission_dir_exit_1_no_ledger(
+        self, runner: CliRunner, tmp_cases: Path, tmp_path: Path
+    ) -> None:
+        """Void input: a missing submission directory never enters the ledger."""
+        agentbench_dir = self._init(runner, tmp_cases, tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "agent-eval", "score", "-c", CASE_ID,
+                "--submission", str(tmp_path / "no_such_submission"),
+                "--cases-dir", str(tmp_cases),
+                "--agentbench-dir", str(agentbench_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "not found" in combined_output(result)
+        assert not (agentbench_dir / CASE_ID / "ledger.jsonl").exists()
+
+    @pytest.mark.parametrize("payload", ["{not json", "[1, 2, 3]"])
+    def test_score_unparsable_qoi_exit_1_no_ledger(
+        self, runner: CliRunner, tmp_cases: Path, tmp_path: Path, payload: str
+    ) -> None:
+        """Void input: corrupt or non-object qoi.json never enters the ledger."""
+        agentbench_dir = self._init(runner, tmp_cases, tmp_path)
+        submission = tmp_path / "sub_bad"
+        submission.mkdir()
+        (submission / "qoi.json").write_text(payload, encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "agent-eval", "score", "-c", CASE_ID,
+                "--submission", str(submission),
+                "--cases-dir", str(tmp_cases),
+                "--agentbench-dir", str(agentbench_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "ledger" in combined_output(result)
+        assert not (agentbench_dir / CASE_ID / "ledger.jsonl").exists()
+
+    def test_score_gate_failing_submission_is_still_ledgered(
+        self, runner: CliRunner, tmp_cases: Path, tmp_path: Path
+    ) -> None:
+        """Boundary witness: a readable submission that fails a validity gate
+        is an invalid SAMPLE (score=None) and DOES enter the ledger — only
+        void inputs stay out."""
+        agentbench_dir = self._init(runner, tmp_cases, tmp_path)
+        submission = tmp_path / "sub_gatefail"
+        submission.mkdir()
+        # Parseable JSON object, but missing the expected QoI -> qoi_complete fails.
+        (submission / "qoi.json").write_text(json.dumps({"other": 1.0}), encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "agent-eval", "score", "-c", CASE_ID,
+                "--submission", str(submission),
+                "--cases-dir", str(tmp_cases),
+                "--agentbench-dir", str(agentbench_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Valid:      False" in result.output
+        ledger_path = agentbench_dir / CASE_ID / "ledger.jsonl"
+        assert ledger_path.exists()
+        entry = json.loads(ledger_path.read_text(encoding="utf-8").splitlines()[0])
+        assert entry["valid"] is False
+        assert entry["score"] is None
 
     def test_score_without_contract_fails(
         self, runner: CliRunner, tmp_cases: Path, tmp_path: Path

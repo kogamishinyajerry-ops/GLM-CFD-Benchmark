@@ -12,12 +12,16 @@ the append-only ledger, and the mandatory tamper witnesses:
 from __future__ import annotations
 
 import json
+import logging
+import math
 from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from cfdb.agentbench import (
+    DEFAULT_WEIGHTS,
     EXIT_FROZEN_DRIFT,
     FrozenDriftError,
     ScoringContract,
@@ -31,6 +35,7 @@ from cfdb.agentbench import (
     verify_frozen,
 )
 from cfdb.agentbench.contract import VALIDITY_GATES_KEY, WEIGHTS_KEY
+from cfdb.agentbench.scorer import WallTimeRecord, append_ledger
 from cfdb.registry import CaseRegistry
 
 CASE_ID = "agent_case"
@@ -136,10 +141,15 @@ class TestScoring:
         assert result.gates == {"qoi_complete": True, "within_budget": True}
         # mean(|0.55-0.5|/0.5, |0.021-0.02|/0.02) = mean(0.1, 0.05) = 0.075
         assert result.breakdown["qoi_error"] == pytest.approx(-1.0 * 0.075)
-        assert result.breakdown["wall_time_sec"] == pytest.approx(-0.001 * 50.0)
-        assert result.score == pytest.approx(-0.075 - 0.05)
+        # wall_time_sec is self-reported: never weighted by default.
+        assert "wall_time_sec" not in result.breakdown
+        assert result.score == pytest.approx(-0.075)
         assert result.submission_id == "sub_a"
         assert result.scored_at != ""
+        # Wall time is ledgered, but explicitly marked self-reported.
+        assert result.wall_time is not None
+        assert result.wall_time.value_sec == pytest.approx(50.0)
+        assert result.wall_time.self_reported is True
 
     def test_missing_qoi_json_invalid(self, bench) -> None:
         _, case, case_dir, contract, ledger, tmp = bench
@@ -178,12 +188,15 @@ class TestScoring:
 
     def test_missing_weighted_metric_never_fabricates_score(self, tmp_path: Path) -> None:
         # No budget configured -> within_budget passes vacuously, but the
-        # wall_time_sec weight has no measurement -> score must stay None.
+        # explicitly configured wall_time_sec weight has no measurement ->
+        # score must stay None.
         cases_root = tmp_path / "cases"
         case_dir = _write_case(cases_root, max_runtime_sec=None)
         registry = CaseRegistry(cases_root)
         case = registry.load(CASE_ID)
-        contract = init_contract(CASE_ID, registry)
+        contract = init_contract(
+            CASE_ID, registry, weights={"qoi_error": -1.0, "wall_time_sec": -0.001}
+        )
         sub = _write_submission(tmp_path, qoi={"cl": 0.5, "cd": 0.02}, wall_time_sec=None)
         result = score_submission(contract, case, case_dir, sub)
         assert result.valid is True
@@ -252,7 +265,7 @@ class TestTamperWitnesses:
         assert result.valid is True
         # Recomputed 0.075 wins over the forged 0.0.
         assert result.breakdown["qoi_error"] == pytest.approx(-0.075)
-        assert result.score == pytest.approx(-0.125)
+        assert result.score == pytest.approx(-0.075)
         assert result.score != 999.0
         assert any("qoi_error" in n and "ignored" in n for n in result.notes)
 
@@ -268,14 +281,219 @@ class TestTamperWitnesses:
         assert [e.submission_id for e in ranking] == ["sub_good"]
 
     def test_witness_3b_forged_score_on_invalid_ledger_line_excluded(self, bench) -> None:
-        from cfdb.agentbench import append_ledger
-
         _, _, _, _, ledger, _ = bench
         forged = SubmissionScore(
             submission_id="forged", valid=False, score=123.0, scored_at="2026-01-01T00:00:00Z"
         )
         append_ledger(ledger, forged)
         assert ranked(read_ledger(ledger)) == []
+
+
+class TestNonFinite:
+    """NaN/inf submissions must void, and a score can never be non-finite."""
+
+    @pytest.mark.parametrize("hostile", [float("nan"), float("inf"), float("-inf")])
+    def test_witness_nonfinite_expected_qoi_voids_submission(self, bench, hostile) -> None:
+        """Tamper witness: a NaN/inf QoI submission must be voided, not scored."""
+        _, case, case_dir, contract, ledger, tmp = bench
+        sub = _write_submission(tmp, qoi={"cl": hostile, "cd": 0.02})
+        result = score_submission(contract, case, case_dir, sub, ledger)
+        assert result.gates["qoi_complete"] is False
+        assert result.valid is False
+        assert result.score is None
+        assert any("non-finite" in n for n in result.notes)
+        # The voided entry is ledgered for audit but never ranks.
+        assert ranked(read_ledger(ledger)) == []
+
+    def test_nonfinite_wall_time_fails_budget_gate_closed(self, bench) -> None:
+        _, case, case_dir, contract, ledger, tmp = bench
+        sub = _write_submission(
+            tmp, qoi={"cl": 0.5, "cd": 0.02}, wall_time_sec=float("nan")
+        )
+        result = score_submission(contract, case, case_dir, sub, ledger)
+        assert result.gates["within_budget"] is False
+        assert result.valid is False
+        assert result.score is None
+        assert result.wall_time is not None
+        assert result.wall_time.value_sec is None
+
+    def test_nonfinite_reference_never_yields_score(self, tmp_path: Path) -> None:
+        # All reference values NaN -> qoi_error unavailable -> score=None,
+        # never NaN (frozen before contract init so no drift fires).
+        cases_root = tmp_path / "cases"
+        case_dir = _write_case(cases_root)
+        (case_dir / "reference" / "qoi.json").write_text(
+            json.dumps({"cl": float("nan"), "cd": float("nan")}), encoding="utf-8"
+        )
+        registry = CaseRegistry(cases_root)
+        case = registry.load(CASE_ID)
+        contract = init_contract(CASE_ID, registry)
+        sub = _write_submission(tmp_path, qoi={"cl": 0.5, "cd": 0.02})
+        result = score_submission(contract, case, case_dir, sub)
+        assert result.score is None
+        assert any("fail-closed" in n for n in result.notes)
+
+    def test_score_is_never_nonfinite(self, bench) -> None:
+        # Property over hostile submissions: score is either None or finite.
+        _, case, case_dir, contract, _, tmp = bench
+        hostile_qois = [
+            {"cl": float("nan"), "cd": float("nan")},
+            {"cl": float("inf"), "cd": 0.02},
+            {"cl": 1e308, "cd": -1e308},
+            {"cl": 0.5, "cd": float("-inf")},
+        ]
+        for i, qoi in enumerate(hostile_qois):
+            sub = _write_submission(tmp, f"hostile_{i}", qoi=qoi)
+            result = score_submission(contract, case, case_dir, sub)
+            assert result.score is None or math.isfinite(result.score)
+
+    def test_nonfinite_weights_rejected_by_contract(self, bench) -> None:
+        _, _, _, contract, _, _ = bench
+        with pytest.raises(ValidationError, match="non-finite weights"):
+            ScoringContract(
+                case_id=CASE_ID,
+                frozen=dict(contract.frozen),
+                weights={"qoi_error": float("nan")},
+            )
+
+
+class TestSelfReportedWallTime:
+    """wall_time_sec is self-reported: unweighted by default, marked in ledger."""
+
+    def test_default_weights_exclude_wall_time(self) -> None:
+        assert DEFAULT_WEIGHTS == {"qoi_error": -1.0}
+
+    def test_explicit_wall_time_weight_warns(self, bench, caplog) -> None:
+        registry, case, case_dir, _, _, tmp = bench
+        with caplog.at_level(logging.WARNING, logger="cfdb.agentbench.contract"):
+            contract = init_contract(
+                CASE_ID, registry, weights={"qoi_error": -1.0, "wall_time_sec": -0.001}
+            )
+        assert any("wall_time_sec is self-reported" in r.message for r in caplog.records)
+        sub = _write_submission(tmp, qoi={"cl": 0.5, "cd": 0.02}, wall_time_sec=50.0)
+        result = score_submission(contract, case, case_dir, sub)
+        assert result.valid is True
+        assert result.breakdown["wall_time_sec"] == pytest.approx(-0.05)
+        assert any("wall_time_sec is self-reported" in n for n in result.notes)
+
+    def test_ledger_marks_wall_time_self_reported(self, bench) -> None:
+        _, case, case_dir, contract, ledger, tmp = bench
+        sub = _write_submission(tmp, qoi={"cl": 0.5, "cd": 0.02}, wall_time_sec=42.0)
+        score_submission(contract, case, case_dir, sub, ledger)
+        raw = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+        assert raw["wall_time"] == {"value_sec": 42.0, "self_reported": True}
+
+    def test_old_ledger_line_without_wall_time_still_parses(self) -> None:
+        # Backward compatibility: pre-existing ledger lines lack wall_time.
+        old_line = json.dumps(
+            {
+                "submission_id": "legacy",
+                "valid": True,
+                "score": -0.1,
+                "breakdown": {"qoi_error": -0.1},
+                "gates": {"qoi_complete": True},
+                "scored_at": "2026-01-01T00:00:00Z",
+                "notes": [],
+            }
+        )
+        entry = SubmissionScore.model_validate_json(old_line)
+        assert entry.wall_time is None
+        assert ranked([entry]) == [entry]
+
+
+class TestInitRefusesOverwrite:
+    """Re-anchoring the ruler must be loud: never silently overwrite."""
+
+    def test_save_contract_refuses_existing(self, bench, tmp_path: Path) -> None:
+        _, _, _, contract, _, _ = bench
+        path = tmp_path / "agentbench" / CASE_ID / "contract.json"
+        save_contract(contract, path)
+        with pytest.raises(FileExistsError, match="refusing to overwrite"):
+            save_contract(contract, path)
+        # The original contract is untouched.
+        assert load_contract(path) == contract
+
+    def test_save_contract_force_overwrites(self, bench, tmp_path: Path) -> None:
+        _, _, _, contract, _, _ = bench
+        path = tmp_path / "agentbench" / CASE_ID / "contract.json"
+        save_contract(contract, path)
+        updated = contract.model_copy(update={"case_id": "agent_case"})
+        save_contract(updated, path, force=True)
+        assert load_contract(path) == updated
+
+
+class TestRankedIntegrity:
+    """ranked() re-verifies ledger lines instead of trusting them."""
+
+    def test_witness_forged_score_inconsistent_with_breakdown_excluded(self, bench) -> None:
+        # Tamper witness: a forged score field that does not follow from the
+        # recorded breakdown never ranks, even with valid=True and gates True.
+        _, _, _, _, ledger, _ = bench
+        forged = SubmissionScore(
+            submission_id="forged_score",
+            valid=True,
+            score=999.0,
+            breakdown={"qoi_error": -0.5},
+            gates={"qoi_complete": True, "within_budget": True},
+            scored_at="2026-01-01T00:00:00Z",
+        )
+        append_ledger(ledger, forged)
+        assert ranked(read_ledger(ledger)) == []
+
+    def test_witness_nan_score_ledger_line_excluded(self, bench) -> None:
+        # Tamper witness: an attacker appends a raw ledger line carrying
+        # literal NaN tokens (bypassing append_ledger). The line parses,
+        # but a non-finite score never ranks.
+        _, _, _, _, ledger, _ = bench
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        raw_line = (
+            '{"submission_id": "nan_score", "valid": true, "score": NaN, '
+            '"breakdown": {"qoi_error": NaN}, '
+            '"gates": {"qoi_complete": true, "within_budget": true}, '
+            '"scored_at": "2026-01-01T00:00:00Z", "notes": []}\n'
+        )
+        ledger.write_text(raw_line, encoding="utf-8")
+        entries = read_ledger(ledger)
+        assert len(entries) == 1
+        assert math.isnan(entries[0].score or 0.0)
+        assert ranked(entries) == []
+
+    def test_witness_nan_score_in_memory_excluded(self) -> None:
+        forged = SubmissionScore(
+            submission_id="nan_score",
+            valid=True,
+            score=float("nan"),
+            breakdown={"qoi_error": float("nan")},
+            gates={"qoi_complete": True, "within_budget": True},
+            scored_at="2026-01-01T00:00:00Z",
+        )
+        assert ranked([forged]) == []
+
+    def test_witness_failed_gate_with_valid_true_excluded(self, bench) -> None:
+        # Internal inconsistency (valid=True but a recorded gate failed) is
+        # a forgery signature: the line never ranks.
+        forged = SubmissionScore(
+            submission_id="gate_mismatch",
+            valid=True,
+            score=-0.5,
+            breakdown={"qoi_error": -0.5},
+            gates={"qoi_complete": True, "within_budget": False},
+            scored_at="2026-01-01T00:00:00Z",
+        )
+        assert ranked([forged]) == []
+
+    def test_genuine_entries_survive_integrity_check(self, bench) -> None:
+        _, case, case_dir, contract, ledger, tmp = bench
+        sub = _write_submission(tmp, qoi={"cl": 0.55, "cd": 0.021})
+        score_submission(contract, case, case_dir, sub, ledger)
+        ranking = ranked(read_ledger(ledger))
+        assert [e.submission_id for e in ranking] == ["sub_a"]
+        assert math.isfinite(ranking[0].score or float("nan"))
+
+    def test_wall_time_record_defaults(self) -> None:
+        record = WallTimeRecord()
+        assert record.value_sec is None
+        assert record.self_reported is True
 
 
 class TestLedger:

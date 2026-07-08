@@ -144,8 +144,12 @@ def classify(manifest: RunManifest, metrics: MetricsResult | None) -> FailureMod
         manifest.status == "success"
         and metrics is not None
         and metrics.qoi_pass is False
-        and metrics.qoi_relative_errors
+        and (metrics.qoi_failed or metrics.qoi_relative_errors)
     ):
+        # qoi_failed (Stage-A) covers both relative-tolerance failures and
+        # zero-reference absolute-tolerance failures, so the latter no longer
+        # fall through to UNKNOWN. Legacy metrics (empty qoi_failed) keep the
+        # old qoi_relative_errors trigger.
         return "TOLERANCE_EXCEEDED"
     if _env_missing_text(manifest):
         return "ENV_MISSING"
@@ -185,6 +189,17 @@ def build_signature(
     if mode == "MISSING_REFERENCE":
         return "; ".join(_matching_notes(metrics, _MISSING_REFERENCE_PATTERN))
     if mode == "TOLERANCE_EXCEEDED":
+        if metrics is not None and metrics.qoi_failed:
+            # Stage-A semantics: sign with the QoIs that actually failed
+            # their gate, so distinct failure sets over the same measured
+            # QoIs are not over-deduplicated into one fingerprint.
+            return f"qoi={','.join(sorted(metrics.qoi_failed))}"
+        # Legacy metrics without qoi_failed: fall back to the historical
+        # all-measured-QoIs signature to keep old fingerprints stable.
+        logger.info(
+            "TOLERANCE_EXCEEDED signature: qoi_failed empty (legacy metrics), "
+            "falling back to qoi_relative_errors keys"
+        )
         qoi_names = sorted(metrics.qoi_relative_errors) if metrics is not None else []
         return f"qoi={','.join(qoi_names)}"
     if mode == "ENV_MISSING":

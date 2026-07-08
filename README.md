@@ -26,9 +26,11 @@ cfdb --version
 
 ## Commands
 
-The CLI provides 4 core commands plus the v4 trust-platform command set
+The CLI provides the core pipeline commands (`list-cases`, `validate-case`,
+`run`, `report`), data/aggregation commands (`data`, `compare`,
+`report-sweep`, `serve`), and the v4 trust-platform command set
 (`provenance`, `trust`, `failures`, `baseline`, `gate`, `agent-eval`,
-`showcase`):
+`showcase`). The most-used ones:
 
 ### 1. `list-cases` — List all registered cases
 
@@ -114,6 +116,12 @@ is append-only: records are deduplicated by fingerprint, recurrences
 increment `count`, and history is never deleted. `annotate` attaches a
 human-written guard note describing how to prevent the failure next time.
 
+`ingest` exits `1` when any run could not be ingested (missing runs
+directory, missing/corrupt `manifest.json`) — partial results are still
+persisted and summarized first. Dry runs are reported separately as
+"dry-run skipped" and never counted as verified passes (a dry run executed
+nothing and verified nothing).
+
 ### 8. `baseline` — Baseline governance (v4)
 
 ```bash
@@ -141,7 +149,10 @@ candidate run's QoI errors against the re-read baseline. Exit codes:
 | 0 | `PASS` |
 | 1 | `REGRESSION` or `INVALID_RUN` |
 | 2 | `NO_BASELINE` (a missing baseline is never a pass) |
-| 3 | `TAMPERED` (baseline artifacts no longer match the anchored hash) |
+| 3 | `TAMPERED` (baseline artifacts no longer match the anchored hash) — also used when `baselines.json` itself is corrupt/unreadable (fail-closed) |
+
+A corrupt or unreadable candidate run is `INVALID_RUN` (exit 1), never a
+crash and never a pass.
 
 ### 10. `agent-eval` — Frozen-ruler agent submission scoring (v4)
 
@@ -160,6 +171,15 @@ fields in the submission are ignored. Every score is appended to
 `agentbench/<case>/ledger.jsonl`; invalid submissions get `score=None`
 and never rank.
 
+`init` refuses to overwrite an existing contract: re-anchoring the ruler
+requires `--force` and prints a loud warning with the old and new ruler
+ids (scores taken with different rulers are not comparable).
+
+`score` distinguishes void inputs from invalid samples: a missing
+submission directory or an unparsable `qoi.json` exits `1` **without
+writing to the ledger**, while a readable submission that fails a validity
+gate is a legitimate scoring event ledgered with `score=None`.
+
 ### 11. `showcase` — Single-file trust-platform showcase HTML (v4)
 
 ```bash
@@ -171,7 +191,34 @@ Renders a self-contained HTML page (inline CSS/SVG, no external links)
 from the real repository artifacts under `--repo-root`: provenance audit,
 trust profiles, failure library wall, regression gate status, and the
 agent-eval ledger. Sections without data render an explicit empty state —
-sample data is never faked.
+sample data is never faked. The regression section only evaluates the gate
+against a candidate run distinct from the baseline itself (`status ==
+"success"`, not a dry run); with no such candidate it renders an honest
+empty state instead of a vacuous run-vs-itself PASS.
+
+## Verification boundary
+
+What the trust platform verifies — and, just as importantly, what it does
+not:
+
+- **`agent-eval` scores measure agreement with the frozen reference, NOT
+  that a CFD computation actually produced the submission.** Submission
+  authenticity is out of scope: an agent could hand-write a `qoi.json`
+  that matches the reference. Mitigation roadmap: held-out references and
+  artifact spot-re-runs.
+- **The frozen-contract and baseline anchors assume the repository write
+  boundary is enforced outside `cfdb`.** An agent with repository write
+  access could re-anchor the contract (`agent-eval init --force`) or
+  re-promote a baseline. For stronger guarantees, record the `ruler_id`
+  and baseline `metrics_sha256` out-of-band.
+- **`wall_time_sec` is self-reported by the submitter.** It is never
+  recomputed, feeds only the `within_budget` gate, is marked
+  `self_reported` in every ledger record, and is excluded from the default
+  ranking weights.
+- **`ledger.jsonl` / `library.json` integrity is process-level
+  (append-only discipline), not cryptographic.** There is no hash chain: a
+  process that respects the library/ledger APIs cannot rewrite history,
+  but direct file edits are outside this boundary.
 
 ## Mock Cases (P0)
 
@@ -222,7 +269,7 @@ GLM-CFD-Benchmark/
 ├── src/cfdb/           # Source code (src layout)
 │   ├── schema.py       # Pydantic v2 data models
 │   ├── registry.py     # Case registry
-│   ├── cli.py          # Typer CLI (4 commands)
+│   ├── cli.py          # Typer CLI (core + data + v4 trust-platform commands)
 │   ├── core/           # Runner (pipeline orchestrator)
 │   ├── adapters/       # SolverAdapter protocol + implementations
 │   ├── execution/      # ExecutionBackend protocol + local backend

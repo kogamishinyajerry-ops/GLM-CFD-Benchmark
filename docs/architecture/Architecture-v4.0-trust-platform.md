@@ -16,6 +16,21 @@
 - **人签专属**：baseline promote 只能人显式执行（CLI 必填 --engineer），自动晋升结构性不可达。
 - 每个新 gate 必须有 **tamper witness 测试**（篡改必咬），「全绿」无咬合实证 = 假信心。
 
+### §0.1 验证边界声明（R1 审查轮后显式化——声明 ≤ 证据等级）
+
+三线审查（Codex 治理审 + loop-auditor + 六镜头对抗波）后确立的**范围外**事项，
+对外宣称时必须带上这些限定，否则「裁判所」超过证据等级：
+
+1. **提交真实性不在验证范围**：agent-eval 度量的是「提交数值与冻结参考的吻合度」，
+   **不证明**提交背后真的跑过 CFD（参考值公开在 case.yaml，抄参考即满分）。
+   中期缓解路线：held-out reference 拆分 / 产物抽查重跑。
+2. **仓写边界假设**：frozen contract 与 baseline 锚均为仓内自锚——能写本仓的主体
+   可以篡改后重锚。更强保证需把 ruler_id / baseline sha 记录到仓外人签渠道。
+3. **wall_time 自报**：提交方自报，已从默认排名权重移除；within_budget 门保留但
+   账本标注 self-reported。
+4. **账本完整性为进程级**：ledger.jsonl / library.json 的 append-only 是进程内纪律
+   （超集校验），非密码学 hash-chain。hash-chain 在 backlog。
+
 ## 1. 新模块总览（six pillars，全部挂在既有分层之下）
 
 ```

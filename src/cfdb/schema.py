@@ -8,9 +8,15 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+"""Float that rejects NaN/Inf at validation time (defense in depth).
+
+Used for persisted metric values so a NaN can never round-trip through
+metrics.json into downstream reporting as a silent pass."""
 
 
 class PhysicsSpec(BaseModel):
@@ -369,7 +375,7 @@ class MetricsResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    qoi_relative_errors: dict[str, float] = Field(default_factory=dict)
+    qoi_relative_errors: dict[str, FiniteFloat] = Field(default_factory=dict)
     """Per-QoI relative error. Missing QoIs are not included (noted in notes)."""
 
     qoi_pass: bool = False
@@ -385,7 +391,7 @@ class MetricsResult(BaseModel):
     """Additional notes (budget warnings, missing QoI, etc.)."""
 
     # === P3-hotfix: computed QoI values for polar rendering ===
-    qoi_computed_values: dict[str, float] | None = None
+    qoi_computed_values: dict[str, FiniteFloat] | None = None
     """Computed QoI values (real Cl, Cd, etc.) from the run.
 
     Unlike qoi_relative_errors (which stores |computed - ref| / |ref|),
@@ -406,3 +412,15 @@ class MetricsResult(BaseModel):
 
     Budget overruns keep warning semantics (they never flip pass/fail),
     but showcase/trust efficiency dimensions consume this flag."""
+
+    # === NaN-family hardening: downstream visibility fields ===
+    qoi_absolute_errors: dict[str, FiniteFloat] = Field(default_factory=dict)
+    """Absolute errors |computed - ref| for zero-reference QoIs.
+
+    Recorded whenever both the computed and reference values are present
+    (and finite), whether or not an absolute tolerance is configured, so
+    reporting layers can always show the raw deviation."""
+
+    qoi_failed: list[str] = Field(default_factory=list)
+    """Sorted union of QoI names that exceeded their relative tolerance
+    or their zero-reference absolute tolerance. Empty on pass."""

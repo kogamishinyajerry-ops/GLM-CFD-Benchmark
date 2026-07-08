@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Literal
 
@@ -37,8 +38,12 @@ WEIGHTS_KEY = "__weights__"
 VALIDITY_GATES_KEY = "__validity_gates__"
 """Frozen-map key anchoring the sha256 of the contract's validity gates."""
 
-DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0, "wall_time_sec": -0.001}
-"""Default public scoring weights (negative = lower metric is better)."""
+DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0}
+"""Default public scoring weights (negative = lower metric is better).
+
+``wall_time_sec`` is deliberately absent: it is a self-reported value and
+must never drive the ranking by default. It can be added back explicitly
+via ``init_contract(..., weights=...)``, which logs a loud warning."""
 
 DEFAULT_VALIDITY_GATES: list[str] = ["qoi_complete", "within_budget"]
 """Default validity gates a submission must pass to receive a score."""
@@ -91,6 +96,14 @@ class ScoringContract(BaseModel):
         """Reject contracts that freeze nothing (an empty ruler gates nothing)."""
         if len(self.frozen) == 0:
             raise ValueError("frozen map must not be empty (fail-closed)")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weights_finite(self) -> ScoringContract:
+        """Reject non-finite weights (a NaN/inf ruler can never score)."""
+        bad = sorted(m for m, w in self.weights.items() if not math.isfinite(w))
+        if len(bad) > 0:
+            raise ValueError(f"non-finite weights are not allowed (fail-closed): {bad}")
         return self
 
 
@@ -196,6 +209,11 @@ def init_contract(
     case_dir = registry.get_case_dir(case_id)
     final_weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
     final_gates = list(DEFAULT_VALIDITY_GATES if validity_gates is None else validity_gates)
+    if "wall_time_sec" in final_weights:
+        logger.warning(
+            "wall_time_sec is self-reported: weighting it lets submissions "
+            "influence their own ranking"
+        )
 
     frozen: dict[str, str] = {}
     for rel in _collect_frozen_files(case, case_dir):
@@ -246,13 +264,25 @@ def verify_frozen(contract: ScoringContract, case_dir: Path) -> list[str]:
     return drifted
 
 
-def save_contract(contract: ScoringContract, path: Path) -> None:
+def save_contract(contract: ScoringContract, path: Path, *, force: bool = False) -> None:
     """Write a contract to disk as pretty-printed JSON.
+
+    Overwriting an existing contract changes the ruler mid-game, so it is
+    refused by default: re-initialization must be loud and deliberate.
 
     Args:
         contract: Contract to persist.
         path: Destination file (parent directories are created).
+        force: Allow overwriting an existing contract file.
+
+    Raises:
+        FileExistsError: If ``path`` already exists and ``force`` is False.
     """
+    if force is False and path.exists():
+        raise FileExistsError(
+            f"scoring contract already exists at {path}: refusing to overwrite "
+            "the frozen ruler (pass force=True to re-anchor deliberately)"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(contract.model_dump_json(indent=2) + "\n", encoding="utf-8")
 

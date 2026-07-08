@@ -33,6 +33,8 @@ from cfdb.regression import BaselineStore
 from cfdb.reporting.showcase import (
     EMPTY_STATE,
     HONESTY_FOOTER,
+    NO_CANDIDATE_COPY,
+    VERIFICATION_BOUNDARY,
     assert_self_contained,
     render_showcase,
 )
@@ -132,6 +134,17 @@ def _build_populated_repo(root: Path) -> dict[str, Path]:
         start=datetime(2026, 1, 2, tzinfo=timezone.utc),
         errors={"cd": 0.02},
         values={"cd": 0.408},
+    )
+    # Independent candidate run for the regression gate: the showcase never
+    # evaluates the baseline run against itself, so a second success run
+    # (newest) is required for a genuine PASS row.
+    _write_run(
+        runs,
+        "run_candidate",
+        case_id="case_real",
+        start=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        errors={"cd": 0.021},
+        values={"cd": 0.4084},
     )
 
     library = FailureLibrary(root / "failures" / "library.json")
@@ -252,7 +265,55 @@ class TestRegressionSection:
         html = _render(populated["root"])
         assert 'data-verdict="PASS"' in html
         assert "run_ok" in html
+        # The evaluated candidate is the independent run, not the baseline.
+        assert "run_candidate" in html
         assert "Zhuanz" in html
+
+    def test_baseline_only_repo_renders_empty_state_never_self_pass(
+        self, tmp_path: Path
+    ) -> None:
+        """Honesty: with only the baseline run itself (plus non-qualifying
+        dry-run/failed runs), the gate row shows an explicit empty state and
+        never a vacuous run-vs-itself PASS."""
+        root = tmp_path / "solo"
+        _write_case(root / "cases", "case_solo", citation="Someone, 2020")
+        runs = root / "runs"
+        _write_run(
+            runs,
+            "run_base",
+            case_id="case_solo",
+            start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            errors={"cd": 0.02},
+            values={"cd": 0.408},
+        )
+        # Non-qualifying newer runs: neither may become the gate candidate.
+        _write_run(
+            runs,
+            "run_dry",
+            case_id="case_solo",
+            start=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            status="dry_run",
+            overall="unknown",
+        )
+        _write_run(
+            runs,
+            "run_failed",
+            case_id="case_solo",
+            start=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            status="failed",
+            overall="fail",
+            error="solver crashed",
+        )
+        store = BaselineStore(
+            baselines_path=root / "baselines" / "baselines.json", runs_root=runs
+        )
+        store.promote("run_base", engineer="Zhuanz")
+
+        html = _render(root)
+        assert NO_CANDIDATE_COPY in html
+        assert 'data-verdict="PASS"' not in html
+        # The row is explicitly marked not-evaluated, never a real verdict.
+        assert 'data-verdict="NOT-EVALUATED"' in html
 
     def test_tampered_baseline_metrics_shows_tampered(
         self, populated: dict[str, Path]
@@ -286,6 +347,29 @@ class TestAgentbenchSection:
         assert 'data-frozen="INTACT"' in html
         assert "sub_a" not in html  # summary table, not per-submission dump
         assert EMPTY_STATE["agentbench"] not in html
+        # One scoring event of one unique submission.
+        assert 'data-events="1"' in html
+        assert 'data-unique="1"' in html
+
+    def test_scoring_events_distinguished_from_unique_submissions(
+        self, populated: dict[str, Path]
+    ) -> None:
+        """Re-scoring the same submission adds an event, not a submission."""
+        root = populated["root"]
+        registry = CaseRegistry(root / "cases")
+        contract = init_contract("case_real", registry)
+        score_submission(
+            contract,
+            registry.load("case_real"),
+            registry.get_case_dir("case_real"),
+            root / "submissions" / "sub_a",
+            ledger_path=root / "agentbench" / "case_real" / "ledger.jsonl",
+        )
+        html = _render(root)
+        assert 'data-events="2"' in html
+        assert 'data-unique="1"' in html
+        # The ledger-discipline caveat is stated right on the section.
+        assert "打分事件数 ≠ 唯一 submission 数" in html
 
 
 class TestEmptyStates:
@@ -308,6 +392,15 @@ class TestEmptyStates:
         (root / "cases").mkdir(parents=True)
         assert HONESTY_FOOTER in _render(root)
         assert HONESTY_FOOTER in _render(populated["root"])
+
+    def test_verification_boundary_always_present(
+        self, tmp_path: Path, populated: dict[str, Path]
+    ) -> None:
+        """The verification-boundary statement ships on every rendered page."""
+        root = tmp_path / "empty_repo"
+        (root / "cases").mkdir(parents=True)
+        assert VERIFICATION_BOUNDARY in _render(root)
+        assert VERIFICATION_BOUNDARY in _render(populated["root"])
 
 
 class TestTrustSection:

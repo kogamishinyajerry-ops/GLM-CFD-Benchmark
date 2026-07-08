@@ -9,11 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from cfdb.schema import MetricsResult, RunManifest, TimingSpec
 
 logger = logging.getLogger(__name__)
 
-_CURRENT_SCHEMA_VERSION = 1
+_CURRENT_SCHEMA_VERSION = 2
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
@@ -66,7 +68,7 @@ class SqliteRepository:
         if cursor.fetchone() is None:
             self._execute_sql_file(_MIGRATIONS_DIR / "v1_initial.sql")
             logger.info("SQLite schema v1 initialized at %s", self._db_path)
-            return
+            # Fall through: fresh DBs must still apply v1 -> vN migrations.
 
         cursor = self._conn.execute("SELECT MAX(version) as v FROM schema_version")
         row = cursor.fetchone()
@@ -121,8 +123,8 @@ class SqliteRepository:
                 run_id, case_id, solver, backend, status, solver_version,
                 timing_wall_time_sec, timing_start, timing_end, host,
                 git_commit, container_digest, error, cli_args_json,
-                cell_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cell_count, created_at, metrics_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 manifest.run_id,
@@ -141,6 +143,10 @@ class SqliteRepository:
                 cli_args_json,
                 manifest.cell_count,
                 now,
+                # v2: whole-model JSON so every MetricsResult field (incl.
+                # honesty fields like ungated_qoi / budget_exceeded) survives
+                # the SQLite round-trip without a column per field.
+                metrics.model_dump_json(),
             ),
         )
 
@@ -395,22 +401,44 @@ class SqliteRepository:
         )
 
     def _load_metrics(self, run_id: str) -> MetricsResult:
-        """Load metrics for a run from run_metrics table.
+        """Load metrics for a run.
 
-        P3-hotfix: The run_metrics table is intentionally NOT altered (iron
-        rule #2 safety). The qoi_computed_values field (which holds real
-        Cl/Cd for polar rendering) is persisted via the dual-write JSON
-        (metrics.json). When runs_root is set, we read qoi_computed_values
-        back from that JSON file and merge it into the MetricsResult
-        reconstructed from the SQLite columns.
+        Schema v2: the full MetricsResult is persisted as JSON in
+        runs.metrics_json, so every field (qoi_relative_errors,
+        qoi_computed_values, ungated_qoi, budget_exceeded, and any future
+        field with a default) round-trips losslessly. If metrics_json is
+        present but invalid, we raise instead of silently returning
+        defaults (fail-closed: corrupt honesty data must bite).
+
+        Legacy rows (saved before v2, metrics_json is NULL) fall back to
+        the old per-field reconstruction from run_metrics plus the
+        P3-hotfix dual-write JSON read for qoi_computed_values.
 
         Args:
             run_id: The run identifier.
 
         Returns:
-            MetricsResult with qoi_relative_errors reconstructed from table,
-            and qoi_computed_values loaded from JSON if available.
+            MetricsResult reconstructed from metrics_json (v2) or from the
+            run_metrics table (legacy fallback).
+
+        Raises:
+            ValueError: If metrics_json exists but cannot be parsed into a
+                valid MetricsResult (corruption / tampering).
         """
+        cursor = self._conn.execute(
+            "SELECT metrics_json FROM runs WHERE run_id = ?", (run_id,)
+        )
+        row = cursor.fetchone()
+        if row is not None and row["metrics_json"]:
+            try:
+                return MetricsResult.model_validate_json(row["metrics_json"])
+            except ValidationError as e:
+                raise ValueError(
+                    f"corrupt metrics_json for run '{run_id}': "
+                    "refusing to substitute default metrics"
+                ) from e
+
+        # Legacy fallback (pre-v2 rows): reconstruct from run_metrics table.
         cursor = self._conn.execute(
             "SELECT metric_name, metric_value, pass FROM run_metrics WHERE run_id = ?",
             (run_id,),

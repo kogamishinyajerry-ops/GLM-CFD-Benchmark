@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+from collections.abc import Iterable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -47,6 +48,11 @@ HONESTY_LEVELS: frozenset[str] = frozenset(
 # Reproducibility mapping scale: a worst-QoI coefficient of variation of
 # REPRO_CV_SCALE (10%) or more maps to score 0.0; CV 0 maps to 1.0.
 REPRO_CV_SCALE: float = 0.10
+
+# Efficiency penalty for budget violations: the wall-time score is reduced
+# by BUDGET_EXCEEDED_PENALTY * (fraction of successful runs whose recomputed
+# metrics flagged budget_exceeded), then clamped back into [0, 1].
+BUDGET_EXCEEDED_PENALTY: float = 0.5
 
 #: Canonical dimension order (also the radar axis order).
 DIMENSION_NAMES: tuple[str, ...] = (
@@ -98,13 +104,15 @@ class TrustProfile(BaseModel):
     Defaults fail-closed to DECLARED-NOT-VERIFIED when not supplied."""
 
     accuracy: DimensionScore = Field(default_factory=DimensionScore)
-    """1 - clamp(mean_rel_err / tolerance); worst QoI wins."""
+    """1 - clamp(mean_err / tolerance) per QoI over the relative and
+    absolute error channels (equal weight); worst QoI wins."""
 
     robustness: DimensionScore = Field(default_factory=DimensionScore)
     """Successful runs / total runs."""
 
     efficiency: DimensionScore = Field(default_factory=DimensionScore)
-    """1 - clamp(mean wall time / runtime budget); no budget -> None."""
+    """1 - clamp(mean wall time / runtime budget), minus a disclosed
+    penalty for runs flagged budget_exceeded; no budget -> None."""
 
     completeness: DimensionScore = Field(default_factory=DimensionScore)
     """Expected outputs (fields/curves/qoi) delivery rate, latest run."""
@@ -161,7 +169,19 @@ def _clamp01(value: float) -> float:
 def _score_accuracy(
     case: CaseSpec, metrics_by_run: dict[str, MetricsResult], success_ids: list[str]
 ) -> DimensionScore:
-    """Compute accuracy: 1 - clamp(mean_rel_err / tolerance), worst QoI.
+    """Compute accuracy from the relative and absolute QoI error channels.
+
+    For every QoI with a relative tolerance the per-QoI score is
+    ``1 - clamp(mean_rel_err / tolerance)``; for every QoI with an
+    absolute tolerance (the zero-reference channel recorded in
+    ``metrics.qoi_absolute_errors``) it is
+    ``1 - clamp(mean_abs_err / tolerance)``. Both channels carry equal
+    weight: all per-QoI scores are pooled and the worst one wins. Every
+    evidence line names its channel.
+
+    A non-positive tolerance cannot be scored (division by zero); that
+    QoI is skipped with an explicit evidence note — the dimension
+    degrades to None rather than crashing or fabricating a value.
 
     Args:
         case: Case specification (source of QoI tolerances).
@@ -171,28 +191,54 @@ def _score_accuracy(
     Returns:
         DimensionScore; None score when no tolerance or no error data.
     """
-    tolerances = case.metrics.qoi_relative_tolerance
-    if not tolerances:
-        return DimensionScore(evidence=["no QoI relative tolerances defined for this case"])
+    rel_tolerances = case.metrics.qoi_relative_tolerance
+    abs_tolerances = case.metrics.qoi_absolute_tolerance
+    if not rel_tolerances and not abs_tolerances:
+        return DimensionScore(
+            evidence=["no QoI relative or absolute tolerances defined for this case"]
+        )
 
     evidence: list[str] = []
     per_qoi_scores: list[float] = []
-    for qoi, tol in sorted(tolerances.items()):
-        errors = [
-            metrics_by_run[rid].qoi_relative_errors[qoi]
-            for rid in success_ids
-            if rid in metrics_by_run and qoi in metrics_by_run[rid].qoi_relative_errors
-        ]
-        if not errors:
-            evidence.append(f"{qoi}: no recomputed relative error available in successful runs")
-            continue
-        mean_err = statistics.fmean(errors)
-        score = 1.0 - _clamp01(mean_err / tol)
-        per_qoi_scores.append(score)
-        evidence.append(
-            f"{qoi}: mean_rel_err={mean_err:.4g} over {len(errors)} run(s), "
-            f"tolerance={tol:.4g} -> {score:.3f}"
-        )
+
+    channels: list[tuple[str, dict[str, float], dict[str, dict[str, float]]]] = [
+        (
+            "relative",
+            rel_tolerances,
+            {rid: metrics_by_run[rid].qoi_relative_errors for rid in metrics_by_run},
+        ),
+        (
+            "absolute",
+            abs_tolerances,
+            {rid: metrics_by_run[rid].qoi_absolute_errors for rid in metrics_by_run},
+        ),
+    ]
+    for channel, tolerances, errors_by_run in channels:
+        for qoi, tol in sorted(tolerances.items()):
+            if tol <= 0.0:
+                evidence.append(
+                    f"{qoi} ({channel} channel): non-positive tolerance {tol!r}, "
+                    "cannot be scored, skipped"
+                )
+                continue
+            errors = [
+                errors_by_run[rid][qoi]
+                for rid in success_ids
+                if rid in errors_by_run and qoi in errors_by_run[rid]
+            ]
+            if not errors:
+                evidence.append(
+                    f"{qoi} ({channel} channel): no recomputed {channel} error "
+                    "available in successful runs"
+                )
+                continue
+            mean_err = statistics.fmean(errors)
+            score = 1.0 - _clamp01(mean_err / tol)
+            per_qoi_scores.append(score)
+            evidence.append(
+                f"{qoi} ({channel} channel): mean_err={mean_err:.4g} over "
+                f"{len(errors)} run(s), tolerance={tol:.4g} -> {score:.3f}"
+            )
 
     if not per_qoi_scores:
         return DimensionScore(evidence=evidence)
@@ -220,12 +266,26 @@ def _score_robustness(manifests: list[RunManifest]) -> DimensionScore:
     )
 
 
-def _score_efficiency(case: CaseSpec, successes: list[RunManifest]) -> DimensionScore:
-    """Compute efficiency: 1 - clamp(mean wall time / runtime budget).
+def _score_efficiency(
+    case: CaseSpec,
+    successes: list[RunManifest],
+    metrics_by_run: dict[str, MetricsResult],
+) -> DimensionScore:
+    """Compute efficiency from wall time and recorded budget violations.
+
+    Base score is ``1 - clamp(mean wall time / runtime budget)``. It is
+    then reduced by ``BUDGET_EXCEEDED_PENALTY * f`` where ``f`` is the
+    fraction of successful runs whose recomputed metrics flagged
+    ``budget_exceeded`` (Stage-A field), clamped back into [0, 1]. Any
+    such violation is disclosed as an explicit evidence line. Runs whose
+    metrics are unreadable never count as exceeded (explicit degradation,
+    never a fabricated violation).
 
     Args:
         case: Case specification (source of the runtime budget).
         successes: Successful run manifests.
+        metrics_by_run: Loaded metrics keyed by run_id (source of the
+            ``budget_exceeded`` flag).
 
     Returns:
         DimensionScore; None score when no budget or no successful runs.
@@ -237,13 +297,53 @@ def _score_efficiency(case: CaseSpec, successes: list[RunManifest]) -> Dimension
         return DimensionScore(evidence=["no successful runs to measure wall time on"])
     mean_wall = statistics.fmean(m.timing.wall_time_sec for m in successes)
     score = 1.0 - _clamp01(mean_wall / budget)
-    return DimensionScore(
-        score=score,
-        evidence=[
-            f"mean wall time {mean_wall:.2f}s over {len(successes)} successful run(s), "
-            f"budget {budget}s -> {score:.3f}"
-        ],
-    )
+    evidence = [
+        f"mean wall time {mean_wall:.2f}s over {len(successes)} successful run(s), "
+        f"budget {budget}s -> {score:.3f}"
+    ]
+    exceeded_ids = [
+        m.run_id
+        for m in successes
+        if m.run_id in metrics_by_run
+        and metrics_by_run[m.run_id].budget_exceeded is True
+    ]
+    if exceeded_ids:
+        fraction = len(exceeded_ids) / len(successes)
+        penalty = BUDGET_EXCEEDED_PENALTY * fraction
+        score = _clamp01(score - penalty)
+        evidence.append(
+            f"{len(exceeded_ids)}/{len(successes)} successful run(s) flagged "
+            f"budget_exceeded ({', '.join(exceeded_ids)}) -> penalty "
+            f"{penalty:.3f}, score {score:.3f}"
+        )
+    return DimensionScore(score=score, evidence=evidence)
+
+
+def _artifact_delivers(name: str, artifact_keys: Iterable[str]) -> bool:
+    """Check whether any manifest artifact key delivers a named output.
+
+    Manifest artifact keys are run-relative POSIX paths as recorded by
+    the adapters' ``collect_outputs()`` (e.g. the OpenFOAM field ``U``
+    is stored under keys like ``case/1/U``, and a curve ``residuals``
+    may be stored as ``case/postProcessing/residuals.csv``). An output
+    counts as delivered when the final path segment equals the declared
+    name, either exactly or after stripping one file extension.
+
+    Args:
+        name: Declared output name (field or curve) from the case spec.
+        artifact_keys: Manifest artifact keys of the run.
+
+    Returns:
+        True when at least one artifact key matches the name.
+    """
+    for key in artifact_keys:
+        leaf = key.rsplit("/", 1)[-1]
+        if leaf == name:
+            return True
+        stem, sep, _ = leaf.rpartition(".")
+        if sep and stem == name:
+            return True
+    return False
 
 
 def _score_completeness(
@@ -252,8 +352,9 @@ def _score_completeness(
     """Compute completeness: expected outputs delivery rate on latest run.
 
     Expected outputs are the case's declared fields + curves + qoi. Field
-    and curve delivery is checked against the manifest artifact labels;
-    QoI delivery is checked against recomputed QoI values in metrics.json
+    and curve delivery is checked against the manifest artifact keys,
+    which are run-relative paths (see :func:`_artifact_delivers`); QoI
+    delivery is checked against recomputed QoI values in metrics.json
     (never against self-reported values).
 
     Args:
@@ -281,7 +382,11 @@ def _score_completeness(
     evidence: list[str] = [f"checked latest run {latest.run_id}"]
     n_present = 0
     for kind, name in expected:
-        present = name in computed_qoi if kind == "qoi" else name in latest.artifacts
+        present = (
+            name in computed_qoi
+            if kind == "qoi"
+            else _artifact_delivers(name, latest.artifacts)
+        )
         if present:
             n_present += 1
         else:
@@ -401,7 +506,7 @@ def build_profile(
         honesty=honesty,
         accuracy=_score_accuracy(case, metrics_by_run, success_ids),
         robustness=_score_robustness(manifests),
-        efficiency=_score_efficiency(case, successes),
+        efficiency=_score_efficiency(case, successes, metrics_by_run),
         completeness=_score_completeness(case, latest, latest_metrics),
         reproducibility=_score_reproducibility(metrics_by_run, success_ids),
         notes=notes,

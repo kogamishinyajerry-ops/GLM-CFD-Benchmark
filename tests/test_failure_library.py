@@ -43,12 +43,14 @@ def _metrics(
     qoi_pass: bool = False,
     notes: list[str] | None = None,
     qoi_relative_errors: dict[str, float] | None = None,
+    qoi_failed: list[str] | None = None,
 ) -> MetricsResult:
     return MetricsResult(
         qoi_relative_errors=qoi_relative_errors or {},
         qoi_pass=qoi_pass,
         overall_status=overall_status,
         notes=notes or [],
+        qoi_failed=qoi_failed or [],
     )
 
 
@@ -117,6 +119,14 @@ class TestClassify:
     def test_tolerance_exceeded(self) -> None:
         manifest = _manifest(status="success")
         metrics = _metrics(qoi_pass=False, qoi_relative_errors={"cl": 0.5})
+        assert classify(manifest, metrics) == "TOLERANCE_EXCEEDED"
+
+    def test_tolerance_exceeded_via_qoi_failed_only(self) -> None:
+        """Zero-reference absolute-tolerance failure: qoi_failed is set but
+        qoi_relative_errors is empty. Must classify TOLERANCE_EXCEEDED, not
+        fall into the UNKNOWN blind spot."""
+        manifest = _manifest(status="success")
+        metrics = _metrics(qoi_pass=False, qoi_failed=["cmy"])
         assert classify(manifest, metrics) == "TOLERANCE_EXCEEDED"
 
     def test_env_missing(self) -> None:
@@ -204,9 +214,43 @@ class TestSignature:
         )
 
     def test_tolerance_exceeded_signature_lists_sorted_qoi(self) -> None:
+        """Legacy fallback pin: empty qoi_failed (old data) keeps the
+        historical all-measured-QoIs signature, so old fingerprints stay
+        stable."""
         metrics = _metrics(qoi_pass=False, qoi_relative_errors={"cl": 0.5, "cd": 0.9})
         manifest = _manifest(status="success")
         assert build_signature(manifest, metrics, "TOLERANCE_EXCEEDED") == "qoi=cd,cl"
+
+    def test_tolerance_exceeded_signature_uses_qoi_failed(self) -> None:
+        """Stage-A semantics: the signature names only the QoIs that failed
+        their gate, not every measured QoI."""
+        metrics = _metrics(
+            qoi_pass=False,
+            qoi_relative_errors={"cl": 0.5, "cd": 0.9},
+            qoi_failed=["cl"],
+        )
+        manifest = _manifest(status="success")
+        assert build_signature(manifest, metrics, "TOLERANCE_EXCEEDED") == "qoi=cl"
+
+    def test_distinct_failed_qoi_sets_get_distinct_fingerprints(self) -> None:
+        """Over-dedup regression (Codex P2a): two runs measuring the same
+        QoIs but failing different ones must not collapse into one record."""
+        manifest = _manifest(status="success")
+        errors = {"cl": 0.5, "cd": 0.9}
+        m_cl = _metrics(qoi_pass=False, qoi_relative_errors=errors, qoi_failed=["cl"])
+        m_cd = _metrics(qoi_pass=False, qoi_relative_errors=errors, qoi_failed=["cd"])
+        sig_cl = build_signature(manifest, m_cl, "TOLERANCE_EXCEEDED")
+        sig_cd = build_signature(manifest, m_cd, "TOLERANCE_EXCEEDED")
+        fp_cl = compute_fingerprint("case_a", "solver_x", "TOLERANCE_EXCEEDED", sig_cl)
+        fp_cd = compute_fingerprint("case_a", "solver_x", "TOLERANCE_EXCEEDED", sig_cd)
+        assert fp_cl != fp_cd
+
+    def test_tolerance_exceeded_signature_for_zero_reference_failure(self) -> None:
+        """Absolute-tolerance (zero-reference) failures produce a proper
+        qoi=... signature even with empty qoi_relative_errors."""
+        metrics = _metrics(qoi_pass=False, qoi_failed=["cmy"])
+        manifest = _manifest(status="success")
+        assert build_signature(manifest, metrics, "TOLERANCE_EXCEEDED") == "qoi=cmy"
 
     def test_env_missing_signature(self) -> None:
         manifest = _manifest(error="bash: simpleFoam: command not found")
@@ -370,6 +414,54 @@ class TestFailureLibrary:
         tampered._records = {}
         with pytest.raises(RuntimeError, match="append-only"):
             tampered._save()
+
+    def test_save_refuses_equal_count_replacement(self, tmp_path: Path) -> None:
+        """Tamper witness: swapping one record for another (record count
+        unchanged) must bite — the guard compares fingerprint sets, not
+        sizes."""
+        runs = tmp_path / "runs"
+        _write_run(
+            runs,
+            _manifest(run_id="20260708T120000Z_case_a_solver_x_00000001", status="timeout"),
+            _metrics(),
+        )
+        lib = self._library(tmp_path)
+        lib.ingest(runs)
+
+        tampered = self._library(tmp_path)
+        original = tampered.records()[0]
+        replacement = original.model_copy(
+            update={"fingerprint": "feedfacefeedface", "signature": "step=forged exit=1"}
+        )
+        tampered._records = {replacement.fingerprint: replacement}
+        assert len(tampered._records) == 1  # same count as on disk
+        with pytest.raises(RuntimeError, match="append-only"):
+            tampered._save()
+        # On-disk state untouched by the refused write.
+        fresh = self._library(tmp_path)
+        assert fresh.records()[0].fingerprint == original.fingerprint
+
+    def test_ingest_skips_dry_run_without_counting_as_pass(self, tmp_path: Path) -> None:
+        """A dry run verified nothing: it must not enter the library, must
+        not count as a verified pass, and must not be marked ingested."""
+        runs = tmp_path / "runs"
+        _write_run(
+            runs,
+            _manifest(run_id="20260708T120000Z_case_a_solver_x_00000001", status="dry_run"),
+            None,
+        )
+        lib = self._library(tmp_path)
+        summary = lib.ingest(runs)
+        assert summary.dry_run_skipped == 1
+        assert summary.passed == 0
+        assert summary.new_records == 0
+        assert lib.records() == []
+
+        # Re-ingest: still counted as dry_run_skipped, never already_ingested.
+        summary2 = lib.ingest(runs)
+        assert summary2.dry_run_skipped == 1
+        assert summary2.already_ingested == 0
+        assert summary2.passed == 0
 
     def test_missing_manifest_reported_not_silently_skipped(self, tmp_path: Path) -> None:
         runs = tmp_path / "runs"

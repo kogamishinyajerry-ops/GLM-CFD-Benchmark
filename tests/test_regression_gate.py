@@ -5,6 +5,11 @@ Includes the mandatory tamper witnesses:
   2. Edit the anchored QoI values inside baselines.json (run file untouched,
      hash still matches) -> cross-check against the re-read file bites.
   3. With no baseline, evaluate() never returns PASS.
+  4. Non-finite candidate errors (NaN/Inf) never PASS.
+  5. Promoting a run with no QoI errors at all is rejected.
+  6. Truncated candidate metrics.json -> INVALID_RUN, never a crash.
+  7. Corrupted baselines.json -> dedicated BaselineFileError, never
+     silently treated as "no baselines".
 """
 
 from __future__ import annotations
@@ -22,6 +27,8 @@ from cfdb.regression import (
     evaluate,
     sha256_of_file,
 )
+from cfdb.regression.baseline import BaselineFileError
+from cfdb.regression.gate import _gate_channel
 from cfdb.schema import MetricsResult, RunManifest, TimingSpec
 
 
@@ -35,6 +42,7 @@ def write_run(
     overall_status: str = "pass",
     qoi_relative_errors: dict[str, float] | None = None,
     qoi_computed_values: dict[str, float] | None = None,
+    qoi_absolute_errors: dict[str, float] | None = None,
 ) -> Path:
     """Write a run directory with manifest.json + metrics.json; return run dir."""
     now = datetime.now(timezone.utc)
@@ -51,6 +59,7 @@ def write_run(
         qoi_pass=overall_status == "pass",
         overall_status=overall_status,
         qoi_computed_values=qoi_computed_values,
+        qoi_absolute_errors=qoi_absolute_errors or {},
     )
     run_dir = runs_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -95,6 +104,58 @@ class TestPromote:
         with pytest.raises(ValueError, match="only 'pass' runs"):
             store.promote("run_fail", engineer="Zhuanz")
         assert store.get("naca0012", "openfoam") is None
+
+    def test_promote_rejects_non_success_manifest_status(
+        self, store: BaselineStore
+    ) -> None:
+        """manifest.status != 'success' is rejected even if metrics say pass
+        (symmetric with the gate's candidate-side check)."""
+        write_run(store.runs_root, "run_odd", status="timeout", overall_status="pass")
+        with pytest.raises(ValueError, match="only 'success' runs"):
+            store.promote("run_odd", engineer="Zhuanz")
+
+    def test_promote_rejects_failed_metrics_on_success_run(
+        self, store: BaselineStore
+    ) -> None:
+        write_run(store.runs_root, "run_qfail", status="success", overall_status="fail")
+        with pytest.raises(ValueError, match="only 'pass' runs"):
+            store.promote("run_qfail", engineer="Zhuanz")
+
+    def test_promote_rejects_run_with_no_qoi_errors(self, store: BaselineStore) -> None:
+        """Tamper witness 5: an empty-QoI run can never anchor a baseline —
+        it would make every future candidate PASS vacuously."""
+        write_run(
+            store.runs_root,
+            "run_empty",
+            qoi_relative_errors={},
+            qoi_absolute_errors={},
+        )
+        with pytest.raises(ValueError, match="no QoI errors"):
+            store.promote("run_empty", engineer="Zhuanz")
+        assert store.get("naca0012", "openfoam") is None
+
+    def test_promote_accepts_absolute_only_run(self, store: BaselineStore) -> None:
+        """A zero-reference-only run (relative empty, absolute non-empty) is
+        promotable and its absolute errors are anchored."""
+        write_run(
+            store.runs_root,
+            "run_abs",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.001},
+        )
+        entry = store.promote("run_abs", engineer="Zhuanz")
+        assert entry.qoi_absolute_errors == {"delta_p": 0.001}
+
+    def test_promote_copies_absolute_errors(self, store: BaselineStore) -> None:
+        write_run(
+            store.runs_root,
+            "run_both",
+            qoi_relative_errors={"cd": 0.02},
+            qoi_absolute_errors={"delta_p": 0.001},
+        )
+        entry = store.promote("run_both", engineer="Zhuanz")
+        assert entry.qoi_relative_errors == {"cd": 0.02}
+        assert entry.qoi_absolute_errors == {"delta_p": 0.001}
 
     def test_promote_rejects_incomplete_run(self, store: BaselineStore) -> None:
         write_run(store.runs_root, "run_inc", overall_status="incomplete")
@@ -280,6 +341,303 @@ class TestTamperWitnesses:
         verdict = evaluate("run_perfect", store)
         assert verdict.verdict == "NO_BASELINE"
         assert verdict.verdict != "PASS"
+
+
+def _inject_candidate_metrics(
+    monkeypatch: pytest.MonkeyPatch, run_id: str, metrics: MetricsResult
+) -> None:
+    """Patch BaselineStore.read_run to return in-memory metrics for one run.
+
+    The schema forbids non-finite floats on disk, so non-finite candidate
+    errors are injected via model_construct (bypassing validation) to prove
+    the gate's own comparison is fail-closed even if a non-finite value ever
+    reaches it.
+    """
+    real_read = BaselineStore.read_run
+
+    def fake_read(self: BaselineStore, rid: str) -> tuple[RunManifest, MetricsResult]:
+        manifest, real_metrics = real_read(self, rid)
+        if rid == run_id:
+            return manifest, metrics
+        return manifest, real_metrics
+
+    monkeypatch.setattr(BaselineStore, "read_run", fake_read)
+
+
+class TestNonFiniteFailClosed:
+    """Tamper witness 4: NaN/Inf candidate errors never PASS."""
+
+    def _promote_base(self, store: BaselineStore) -> None:
+        write_run(store.runs_root, "run_base", qoi_relative_errors={"cd": 0.02})
+        store.promote("run_base", engineer="Zhuanz")
+
+    def _nonfinite_metrics(self, value: float) -> MetricsResult:
+        return MetricsResult.model_construct(
+            qoi_relative_errors={"cd": value},
+            qoi_pass=True,
+            overall_status="pass",
+            notes=[],
+            qoi_computed_values=None,
+            ungated_qoi=[],
+            budget_exceeded=False,
+            qoi_absolute_errors={},
+            qoi_failed=[],
+        )
+
+    def test_nan_candidate_error_is_regression(
+        self, store: BaselineStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._promote_base(store)
+        write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        _inject_candidate_metrics(
+            monkeypatch, "run_new", self._nonfinite_metrics(float("nan"))
+        )
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "REGRESSION"
+        assert verdict.verdict != "PASS"
+        assert any("non-finite error never passes" in r for r in verdict.reasons)
+
+    def test_infinity_candidate_error_is_regression(
+        self, store: BaselineStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Control: Infinity is caught by the same finiteness guard."""
+        self._promote_base(store)
+        write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        _inject_candidate_metrics(
+            monkeypatch, "run_new", self._nonfinite_metrics(float("inf"))
+        )
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "REGRESSION"
+        assert any("non-finite error never passes" in r for r in verdict.reasons)
+
+    def test_finite_regression_control_group(self, store: BaselineStore) -> None:
+        """Control: a plainly worse finite error still yields REGRESSION."""
+        self._promote_base(store)
+        write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.5})
+        assert evaluate("run_new", store).verdict == "REGRESSION"
+
+    def test_nan_in_candidate_metrics_file_is_invalid_run(
+        self, store: BaselineStore
+    ) -> None:
+        """A literal NaN token on disk is rejected by the schema -> INVALID_RUN
+        (not a crash, and never PASS)."""
+        self._promote_base(store)
+        run_dir = write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+        payload["qoi_relative_errors"]["cd"] = float("nan")
+        (run_dir / "metrics.json").write_text(
+            json.dumps(payload, allow_nan=True), encoding="utf-8"
+        )
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "INVALID_RUN"
+        assert verdict.verdict != "PASS"
+
+    def test_gate_channel_nonfinite_baseline_error_bites(self) -> None:
+        """Unit-level: a non-finite *baseline* error also never passes."""
+        deltas: dict[str, float] = {}
+        reasons: list[str] = []
+        regressed = _gate_channel(
+            "relative",
+            {"cd": float("nan")},
+            {"cd": 0.0},
+            lambda base_err: 0.005,
+            "run_x",
+            deltas,
+            reasons,
+        )
+        assert regressed is True
+        assert any("non-finite error never passes" in r for r in reasons)
+        assert deltas == {}
+
+
+class TestAbsoluteChannel:
+    """Zero-reference QoIs are gated via the absolute-error channel."""
+
+    def _promote_abs_base(self, store: BaselineStore) -> None:
+        write_run(
+            store.runs_root,
+            "run_base",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.001},
+        )
+        store.promote("run_base", engineer="Zhuanz")
+
+    def test_pass_within_absolute_band(self, store: BaselineStore) -> None:
+        self._promote_abs_base(store)
+        # band = margin.absolute = 0.005 -> threshold 0.006.
+        write_run(
+            store.runs_root,
+            "run_new",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.0055},
+        )
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "PASS"
+        assert verdict.deltas["delta_p (abs)"] == pytest.approx(0.0045)
+
+    def test_regression_beyond_absolute_band(self, store: BaselineStore) -> None:
+        self._promote_abs_base(store)
+        write_run(
+            store.runs_root,
+            "run_new",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.0061},
+        )
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "REGRESSION"
+        assert any("delta_p" in r and "absolute" in r for r in verdict.reasons)
+
+    def test_missing_absolute_qoi_in_candidate_is_regression(
+        self, store: BaselineStore
+    ) -> None:
+        """Fail-closed: dropping an anchored zero-reference QoI never passes."""
+        self._promote_abs_base(store)
+        write_run(
+            store.runs_root,
+            "run_new",
+            qoi_relative_errors={},
+            qoi_absolute_errors={},
+        )
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "REGRESSION"
+        assert any("delta_p" in r and "missing" in r for r in verdict.reasons)
+
+    def test_tampered_anchored_absolute_error_in_baselines_json(
+        self, store: BaselineStore
+    ) -> None:
+        """Editing anchored qoi_absolute_errors in baselines.json bites."""
+        self._promote_abs_base(store)
+        write_run(
+            store.runs_root,
+            "run_new",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.001},
+        )
+        data = json.loads(store.path.read_text(encoding="utf-8"))
+        key = baseline_key("naca0012", "openfoam")
+        data["baselines"][key]["qoi_absolute_errors"]["delta_p"] = 99.0
+        store.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "TAMPERED"
+        assert any("qoi_absolute_errors" in r for r in verdict.reasons)
+
+    def test_legacy_entry_without_absolute_anchor_still_gates(
+        self, store: BaselineStore
+    ) -> None:
+        """A pre-field baseline entry (no qoi_absolute_errors key) loads with
+        the default {} and the gate still protects the absolute channel via
+        the hash-anchored re-read file (no TAMPERED false positive)."""
+        self._promote_abs_base(store)
+        data = json.loads(store.path.read_text(encoding="utf-8"))
+        key = baseline_key("naca0012", "openfoam")
+        del data["baselines"][key]["qoi_absolute_errors"]
+        store.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        # Within band -> PASS (legacy entry is not flagged as tampered).
+        write_run(
+            store.runs_root,
+            "run_ok",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.002},
+        )
+        assert evaluate("run_ok", store).verdict == "PASS"
+
+        # Beyond band -> REGRESSION (protection comes from the re-read file).
+        write_run(
+            store.runs_root,
+            "run_bad",
+            qoi_relative_errors={},
+            qoi_absolute_errors={"delta_p": 0.5},
+        )
+        assert evaluate("run_bad", store).verdict == "REGRESSION"
+
+    def test_legacy_entry_json_roundtrip(self) -> None:
+        """Old BaselineEntry JSON without qoi_absolute_errors still parses."""
+        from cfdb.regression import BaselineEntry
+
+        entry = BaselineEntry.model_validate(
+            {
+                "case_id": "c",
+                "solver": "s",
+                "run_id": "r",
+                "promoted_by": "Zhuanz",
+                "promoted_at": "2026-01-01T00:00:00+00:00",
+                "qoi_relative_errors": {"cd": 0.02},
+                "metrics_sha256": "0" * 64,
+            }
+        )
+        assert entry.qoi_absolute_errors == {}
+
+
+class TestCandidateRobustness:
+    """Tamper witness 6: broken candidate artifacts -> INVALID_RUN, no crash."""
+
+    def _promote_base(self, store: BaselineStore) -> None:
+        write_run(store.runs_root, "run_base", qoi_relative_errors={"cd": 0.02})
+        store.promote("run_base", engineer="Zhuanz")
+
+    def test_truncated_candidate_metrics_is_invalid_run(
+        self, store: BaselineStore
+    ) -> None:
+        self._promote_base(store)
+        run_dir = write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        raw = (run_dir / "metrics.json").read_text(encoding="utf-8")
+        (run_dir / "metrics.json").write_text(raw[: len(raw) // 2], encoding="utf-8")
+        verdict = evaluate("run_new", store)
+        assert verdict.verdict == "INVALID_RUN"
+        assert any("unreadable or invalid" in r for r in verdict.reasons)
+
+    def test_garbage_candidate_manifest_is_invalid_run(
+        self, store: BaselineStore
+    ) -> None:
+        self._promote_base(store)
+        run_dir = write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        (run_dir / "manifest.json").write_text("{not json at all", encoding="utf-8")
+        assert evaluate("run_new", store).verdict == "INVALID_RUN"
+
+    def test_schema_invalid_candidate_metrics_is_invalid_run(
+        self, store: BaselineStore
+    ) -> None:
+        """Valid JSON that violates the schema (extra field) -> INVALID_RUN."""
+        self._promote_base(store)
+        run_dir = write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+        payload["forged_verdict"] = "PASS"
+        (run_dir / "metrics.json").write_text(json.dumps(payload), encoding="utf-8")
+        assert evaluate("run_new", store).verdict == "INVALID_RUN"
+
+
+class TestCorruptBaselinesFile:
+    """Tamper witness 7: corrupted baselines.json raises the dedicated
+    exception instead of silently degrading into NO_BASELINE."""
+
+    def test_evaluate_raises_dedicated_error(self, store: BaselineStore) -> None:
+        write_run(store.runs_root, "run_base", qoi_relative_errors={"cd": 0.02})
+        store.promote("run_base", engineer="Zhuanz")
+        write_run(store.runs_root, "run_new", qoi_relative_errors={"cd": 0.02})
+        store.path.write_text("{truncated garbage", encoding="utf-8")
+        with pytest.raises(BaselineFileError, match="corrupt or unreadable"):
+            evaluate("run_new", store)
+
+    def test_load_raises_dedicated_error(self, store: BaselineStore) -> None:
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("\x00\x01 not json", encoding="utf-8")
+        with pytest.raises(BaselineFileError):
+            store.load()
+
+    def test_promote_raises_dedicated_error(self, store: BaselineStore) -> None:
+        write_run(store.runs_root, "run_base", qoi_relative_errors={"cd": 0.02})
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store.path.write_text("[]", encoding="utf-8")
+        with pytest.raises(BaselineFileError):
+            store.promote("run_base", engineer="Zhuanz")
+
+    def test_missing_file_still_returns_empty_document(
+        self, store: BaselineStore
+    ) -> None:
+        """Control: absence (not corruption) keeps the empty-document path."""
+        assert store.load().baselines == {}
 
 
 class TestBaselineFileSchema:

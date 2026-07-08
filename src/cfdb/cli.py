@@ -1,4 +1,13 @@
-"""CLI entry point: 4 commands via Typer."""
+"""Typer CLI entry point for the cfdb platform.
+
+Command surface (grown well beyond the original 4 commands):
+
+- Core pipeline: ``list-cases`` / ``validate-case`` / ``run`` / ``report``
+- Data & aggregation: ``data`` (DVC wrapper) / ``compare`` / ``report-sweep``
+  / ``serve``
+- Trust platform (v4): ``provenance`` / ``trust`` / ``failures`` /
+  ``baseline`` / ``gate`` / ``agent-eval`` / ``showcase``
+"""
 
 from __future__ import annotations
 
@@ -1021,7 +1030,12 @@ def failures_ingest_cmd(
     runs_dir: _RunsDirOption = Path("runs"),
     library: _FailureLibraryOption = Path("failures/library.json"),
 ) -> None:
-    """Scan runs and ingest failures into the append-only library."""
+    """Scan runs and ingest failures into the append-only library.
+
+    Exit codes: 0 = clean scan; 1 = one or more runs could not be ingested
+    (missing runs directory, missing/corrupt manifest.json). Partial results
+    are still persisted and summarized before the non-zero exit.
+    """
     from cfdb.failures import FailureLibrary
 
     lib = FailureLibrary(library)
@@ -1029,11 +1043,19 @@ def failures_ingest_cmd(
     typer.echo(
         f"Scanned {summary.scanned} run(s): {summary.new_records} new failure(s), "
         f"{summary.updated_records} recurrence(s), {summary.passed} verified pass, "
+        f"{summary.dry_run_skipped} dry-run skipped (executed nothing, verified nothing), "
         f"{summary.already_ingested} already ingested."
     )
     for error in summary.errors:
-        typer.echo(f"[WARN] {error}", err=True)
+        typer.echo(f"[FAIL] {error}", err=True)
     typer.echo(f"Library: {library}")
+    if len(summary.errors) > 0:
+        typer.echo(
+            f"[FAIL] {len(summary.errors)} error(s) during ingest — "
+            "partial results above were persisted (exit 1).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
 
 @failures_app.command("list")
@@ -1163,11 +1185,18 @@ def gate_cmd(
     """Evaluate a run against its promoted baseline (P4-D regression gate).
 
     Exit codes: 0=PASS, 1=REGRESSION/INVALID_RUN, 2=NO_BASELINE, 3=TAMPERED.
+    A corrupt/unreadable baselines.json also exits 3 (fail-closed: a broken
+    anchor store must never degrade into NO_BASELINE or a crash).
     """
     from cfdb.regression import BaselineStore, evaluate
+    from cfdb.regression.baseline import BaselineFileError
 
     store = BaselineStore(baselines, runs_dir)
-    verdict = evaluate(run_id, store)
+    try:
+        verdict = evaluate(run_id, store)
+    except BaselineFileError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=_GATE_EXIT_CODES["TAMPERED"]) from e
 
     typer.echo(f"Gate verdict for run '{run_id}': {verdict.verdict}")
     for qoi, delta in sorted(verdict.deltas.items()):
@@ -1180,11 +1209,39 @@ def gate_cmd(
 @agent_eval_app.command("init")
 def agent_eval_init_cmd(
     case: Annotated[str, typer.Option("--case", "-c", help="Case ID to freeze.")],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Re-anchor an existing contract (changes the ruler; prints a "
+            "loud warning with the old and new ruler ids).",
+        ),
+    ] = False,
     cases_dir: _CasesDirOption = Path("cases"),
     agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
 ) -> None:
-    """Create the frozen scoring contract for a case (hashes the ruler now)."""
+    """Create the frozen scoring contract for a case (hashes the ruler now).
+
+    An existing contract is never silently overwritten: re-anchoring the
+    ruler requires --force and is announced loudly (old -> new ruler id),
+    because scores taken with different rulers are not comparable.
+    """
+    import hashlib
+
     from cfdb.agentbench import init_contract, save_contract
+
+    contract_path = agentbench_dir / case / "contract.json"
+    old_ruler_id: str | None = None
+    if contract_path.exists():
+        if force is False:
+            typer.echo(
+                f"[FAIL] Scoring contract already exists at {contract_path}: "
+                "refusing to overwrite the frozen ruler. "
+                "Pass --force to re-anchor deliberately.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        old_ruler_id = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
 
     registry = CaseRegistry(cases_dir)
     try:
@@ -1193,9 +1250,23 @@ def agent_eval_init_cmd(
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    contract_path = agentbench_dir / case / "contract.json"
-    save_contract(contract, contract_path)
+    save_contract(contract, contract_path, force=force)
+    new_ruler_id = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
+    if old_ruler_id is not None:
+        typer.echo("!" * 64, err=True)
+        typer.echo(
+            f"[WARNING] RULER RE-ANCHORED for '{case}': "
+            f"#{old_ruler_id} -> #{new_ruler_id}",
+            err=True,
+        )
+        typer.echo(
+            "[WARNING] Scores in the existing ledger were measured with the "
+            "old ruler and are NOT comparable to new scores.",
+            err=True,
+        )
+        typer.echo("!" * 64, err=True)
     typer.echo(f"[OK] Scoring contract for '{case}': {contract_path}")
+    typer.echo(f"  Ruler id: #{new_ruler_id}")
     typer.echo(f"  Frozen items: {len(contract.frozen)}")
     typer.echo(f"  Weights: {contract.weights}")
     typer.echo(f"  Validity gates: {', '.join(contract.validity_gates)}")
@@ -1214,13 +1285,46 @@ def agent_eval_score_cmd(
     """Score an agent submission against the frozen contract.
 
     Exit code 3 means the frozen ruler drifted; scoring was refused.
+    A missing submission directory or an unparsable qoi.json exits 1
+    WITHOUT writing to the ledger: the ledger records scoring events on
+    real submissions (including valid submissions that fail gates), never
+    void inputs that could not be read at all.
     """
+    import json
+
     from cfdb.agentbench import (
         EXIT_FROZEN_DRIFT,
         FrozenDriftError,
         load_contract,
         score_submission,
     )
+
+    # Void-input pre-gate: nothing below this block may touch the ledger
+    # unless the submission is at least structurally readable.
+    if not submission.is_dir():
+        typer.echo(
+            f"[FAIL] Submission directory not found: {submission} "
+            "(void input — nothing written to the ledger).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    qoi_path = submission / "qoi.json"
+    try:
+        parsed_qoi = json.loads(qoi_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        typer.echo(
+            f"[FAIL] Cannot parse {qoi_path}: {e} "
+            "(void input — nothing written to the ledger).",
+            err=True,
+        )
+        raise typer.Exit(code=1) from e
+    if not isinstance(parsed_qoi, dict):
+        typer.echo(
+            f"[FAIL] {qoi_path} must contain a JSON object "
+            "(void input — nothing written to the ledger).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     contract_path = agentbench_dir / case / "contract.json"
     if not contract_path.exists():

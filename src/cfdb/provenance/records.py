@@ -31,7 +31,13 @@ FileHashStatus = Literal["ok", "drift", "missing", "unanchored"]
 - ok: file exists and its sha256 matches the anchored value.
 - drift: file exists but its sha256 differs from the anchored value.
 - missing: file is anchored or declared in case.yaml but absent on disk.
-- unanchored: file is declared in case.yaml but has no anchored sha256.
+- unanchored: file has no anchored sha256 -- either declared in case.yaml
+  without an anchor, or present under the case's ``reference/`` directory
+  without being anchored or declared.
+
+The REAL honesty level requires every file in the audit scope to be "ok";
+any other status downgrades experimental/dns cases to DECLARED-NOT-VERIFIED
+(see :func:`cfdb.provenance.audit.audit_case`).
 """
 
 
@@ -113,6 +119,10 @@ def derive_honesty(reference_type: str | None, citation: str | None) -> HonestyL
     Fail-closed: experimental/dns data without a non-empty citation is not
     verifiable and grades as DECLARED-NOT-VERIFIED; unknown reference types
     also grade as DECLARED-NOT-VERIFIED.
+
+    Note: a REAL result here is a necessary but not sufficient condition.
+    :func:`cfdb.provenance.audit.audit_case` further requires every reference
+    file to be anchored and hash-verified ("ok") before the REAL badge holds.
 
     Args:
         reference_type: ReferenceSpec.type value, or None if the case has no

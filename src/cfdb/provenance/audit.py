@@ -8,6 +8,15 @@ Fail-closed rules enforced here:
   (never a crash) and honesty downgraded to DECLARED-NOT-VERIFIED.
 - Unreadable/invalid case.yaml or provenance.yaml -> record emitted with
   DECLARED-NOT-VERIFIED instead of silently skipping the case.
+- REAL anchoring gate: REAL (experimental/dns) additionally requires every
+  reference file in scope -- anchored hashes, case.yaml-declared files, and
+  any file found under the case's ``reference/`` directory -- to verify as
+  ``ok``. Any ``unanchored``/``missing``/``drift`` entry downgrades to
+  DECLARED-NOT-VERIFIED. Non-REAL levels (ANALYTIC/MANUFACTURED/...) are not
+  affected by unanchored files.
+- Directory-level scan: files present under ``reference/`` but neither
+  anchored nor declared are reported as ``unanchored`` (defends against
+  swapping data files without updating the declaration).
 """
 
 from __future__ import annotations
@@ -126,6 +135,55 @@ def _check_files(
     return computed, status, notes, downgrade
 
 
+REFERENCE_DIRNAME = "reference"
+
+
+def _scan_stray_reference_files(
+    case_dir: Path,
+    known: set[str],
+) -> tuple[dict[str, str], dict[str, FileHashStatus], list[str]]:
+    """Report files under ``reference/`` that are neither anchored nor declared.
+
+    Defends against "swap the data, keep the declaration": a file placed in
+    the case's ``reference/`` directory without an anchor is reported as
+    ``unanchored`` so the REAL anchoring gate bites.
+
+    Dotfiles (OS metadata such as ``.DS_Store``) are skipped: they cannot be
+    consumed as reference data without being declared in case.yaml, where the
+    declared-file check already catches them.
+
+    Args:
+        case_dir: Case directory used as the resolution base.
+        known: Relative paths already covered by anchors or case.yaml
+            declarations (i.e. already present in file_status).
+
+    Returns:
+        (computed_hashes, file_status, notes) for the stray files only.
+    """
+    computed: dict[str, str] = {}
+    status: dict[str, FileHashStatus] = {}
+    notes: list[str] = []
+
+    ref_dir = case_dir / REFERENCE_DIRNAME
+    if not ref_dir.is_dir():
+        return computed, status, notes
+
+    for target in sorted(ref_dir.rglob("*")):
+        if not target.is_file() or target.name.startswith("."):
+            continue
+        rel = target.relative_to(case_dir).as_posix()
+        if rel in known:
+            continue
+        computed[rel] = sha256_file(target)
+        status[rel] = "unanchored"
+        notes.append(
+            f"undeclared file present in {REFERENCE_DIRNAME}/: {rel} "
+            f"(not anchored in {PROVENANCE_FILENAME}, not declared in case.yaml)"
+        )
+
+    return computed, status, notes
+
+
 def audit_case(case_dir: Path) -> ProvenanceRecord:
     """Audit provenance for a single case directory.
 
@@ -167,12 +225,31 @@ def audit_case(case_dir: Path) -> ProvenanceRecord:
     )
     notes.extend(check_notes)
 
+    stray_hashes, stray_status, stray_notes = _scan_stray_reference_files(
+        case_dir, set(file_status)
+    )
+    computed.update(stray_hashes)
+    file_status.update(stray_status)
+    notes.extend(stray_notes)
+
     honesty = derive_honesty(reference_type, citation)
     if invalid_spec or decl_errors:
         honesty = "DECLARED-NOT-VERIFIED"
     if downgrade and honesty != "DECLARED-NOT-VERIFIED":
         notes.append(f"honesty downgraded from {honesty} to DECLARED-NOT-VERIFIED")
         honesty = "DECLARED-NOT-VERIFIED"
+    # REAL anchoring gate (P1 fix): REAL additionally requires every reference
+    # file in scope (anchored + declared + found under reference/) to verify
+    # as "ok". Unanchored files never carry a REAL badge; non-REAL levels are
+    # unaffected by this gate.
+    if honesty == "REAL":
+        not_ok = sorted(rel for rel, st in file_status.items() if st != "ok")
+        if not_ok:
+            notes.append(
+                "honesty downgraded from REAL to DECLARED-NOT-VERIFIED: "
+                f"reference files not fully anchored/verified: {', '.join(not_ok)}"
+            )
+            honesty = "DECLARED-NOT-VERIFIED"
 
     if reference_type is None:
         ref_type_str = "invalid" if invalid_spec else "none"

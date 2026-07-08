@@ -29,6 +29,15 @@ from cfdb.utils import utc_now_iso
 logger = logging.getLogger(__name__)
 
 
+class BaselineFileError(RuntimeError):
+    """baselines.json itself is corrupt, unreadable, or fails validation.
+
+    Raised by :meth:`BaselineStore.load` so callers can fail closed with a
+    dedicated exit path (the CLI maps this to exit code 3, same as TAMPERED)
+    instead of crashing with an undifferentiated parse error.
+    """
+
+
 def sha256_of_file(path: Path) -> str:
     """Compute the SHA-256 hex digest of a file's bytes.
 
@@ -91,6 +100,11 @@ class BaselineEntry(BaseModel):
     qoi_relative_errors: dict[str, float] = Field(default_factory=dict)
     """Per-QoI relative errors copied from the run's metrics.json at promote time."""
 
+    qoi_absolute_errors: dict[str, float] = Field(default_factory=dict)
+    """Per-QoI absolute errors (zero-reference channel) copied from the run's
+    metrics.json at promote time. Defaults to empty so baselines promoted
+    before this field existed remain readable (legacy entries)."""
+
     metrics_sha256: str = ""
     """SHA-256 of the promoted run's metrics.json file (tamper anchor)."""
 
@@ -149,10 +163,25 @@ class BaselineStore:
 
         Returns:
             Parsed BaselineFile (empty defaults when the file does not exist).
+
+        Raises:
+            BaselineFileError: If baselines.json exists but cannot be read or
+                does not validate (fail-closed: a corrupt anchor store must
+                never degrade into "no baselines").
         """
         if not self._path.exists():
             return BaselineFile()
-        return BaselineFile.model_validate_json(self._path.read_text(encoding="utf-8"))
+        try:
+            # ValueError covers pydantic ValidationError, json.JSONDecodeError
+            # and UnicodeDecodeError (all ValueError subclasses).
+            return BaselineFile.model_validate_json(
+                self._path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise BaselineFileError(
+                f"baselines file {self._path} is corrupt or unreadable "
+                f"(fail-closed): {exc}"
+            ) from exc
 
     def save(self, data: BaselineFile) -> None:
         """Persist the baseline file (creates parent directories).
@@ -218,6 +247,12 @@ class BaselineStore:
           - The run's metrics.json is re-read from disk; only
             ``overall_status == "pass"`` is promotable. A failed or
             incomplete run can never become a baseline.
+          - The run's manifest.json is re-read from disk; only
+            ``status == "success"`` is promotable (symmetric with the gate's
+            candidate-side check).
+          - The run must anchor at least one QoI error (relative or
+            absolute). A run with no measurable quantities cannot become a
+            baseline: it would make every future candidate PASS vacuously.
 
         Args:
             run_id: Run to promote.
@@ -227,8 +262,10 @@ class BaselineStore:
             The stored BaselineEntry.
 
         Raises:
-            ValueError: If engineer is empty or the run is not a passing run.
+            ValueError: If engineer is empty, the run is not a passing
+                successful run, or the run anchors no QoI errors at all.
             FileNotFoundError: If the run directory lacks manifest/metrics.
+            BaselineFileError: If the existing baselines.json is corrupt.
         """
         engineer_name = engineer.strip()
         if len(engineer_name) == 0:
@@ -240,6 +277,18 @@ class BaselineStore:
                 f"run '{run_id}' has overall_status="
                 f"'{metrics.overall_status}'; only 'pass' runs can be promoted"
             )
+        if manifest.status != "success":
+            raise ValueError(
+                f"run '{run_id}' has status='{manifest.status}'; "
+                "only 'success' runs can be promoted"
+            )
+        has_relative = len(metrics.qoi_relative_errors) > 0
+        has_absolute = len(metrics.qoi_absolute_errors) > 0
+        if (has_relative is False) and (has_absolute is False):
+            raise ValueError(
+                f"run '{run_id}' has no QoI errors (relative or absolute) to "
+                "anchor; a run with nothing measurable cannot become a baseline"
+            )
 
         metrics_path = self.run_metrics_path(run_id)
         entry = BaselineEntry(
@@ -250,6 +299,7 @@ class BaselineStore:
             promoted_at=utc_now_iso(),
             qoi_values=dict(metrics.qoi_computed_values or {}),
             qoi_relative_errors=dict(metrics.qoi_relative_errors),
+            qoi_absolute_errors=dict(metrics.qoi_absolute_errors),
             metrics_sha256=sha256_of_file(metrics_path),
         )
 

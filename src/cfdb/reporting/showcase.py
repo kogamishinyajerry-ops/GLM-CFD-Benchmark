@@ -63,6 +63,23 @@ HONESTY_FOOTER = (
 )
 """Fixed honesty-boundary statement rendered in the page footer."""
 
+VERIFICATION_BOUNDARY = (
+    "验证边界（verification boundary）：agent-eval 分数只度量与冻结参考的一致性，"
+    "不证明提交真的产自一次 CFD 计算（submission authenticity 不在验证范围内）；"
+    "wall_time_sec 为提交方自报值，默认不进排名权重；冻结契约与 baseline 锚"
+    "假设仓库写边界在 cfdb 之外被强制（有仓库写权限者可重锚，建议 out-of-band "
+    "记录 ruler_id / baseline sha）；ledger.jsonl / library.json 完整性为"
+    "进程级 append-only 纪律，非密码学哈希链。"
+)
+"""Fixed verification-boundary statement rendered in the page footer
+(mirrors the README "Verification boundary" section)."""
+
+NO_CANDIDATE_COPY = (
+    "尚无 baseline 之外的候选 run（需 status==success、非 dry-run、非 baseline "
+    "自身）——门未评估，绝不渲染 run 对自身的必绿 PASS"
+)
+"""Honest empty-state copy for a baseline with no independent candidate run."""
+
 _HONESTY_BADGE_CLASS: dict[str, str] = {
     "REAL": "h-real",
     "ANALYTIC": "h-mid",
@@ -256,11 +273,20 @@ def _collect_regression(repo_root: Path) -> dict[str, Any]:
             "verdict_class": "",
             "reasons": [],
         }
+        # Honest candidate selection: the gate is only meaningful against a
+        # run other than the baseline itself. A run-vs-itself comparison is
+        # PASS by construction and must never be rendered. Only executed,
+        # successful runs qualify (status == "success" excludes dry_run,
+        # failed and timeout runs).
         candidates = [
-            m for m in repo.list_runs(case_id=entry.case_id) if m.solver == entry.solver
+            m
+            for m in repo.list_runs(case_id=entry.case_id)
+            if m.solver == entry.solver
+            and m.run_id != entry.run_id
+            and m.status == "success"
         ]
         if len(candidates) == 0:
-            row["reasons"] = ["no candidate run for this (case, solver) — gate not evaluated"]
+            row["reasons"] = [NO_CANDIDATE_COPY]
         else:
             candidate_id = candidates[0].run_id  # list_runs is newest-first
             row["candidate_run"] = candidate_id
@@ -308,7 +334,8 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
             "frozen_status": None,
             "status_class": "",
             "drifted": [],
-            "n_submissions": 0,
+            "n_events": 0,
+            "n_unique_submissions": 0,
             "n_valid": 0,
             "best_score": None,
             "error": None,
@@ -341,7 +368,10 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
         except ValueError as exc:
             row["ledger_error"] = str(exc)
             entries = []
-        row["n_submissions"] = len(entries)
+        # Scoring events != unique submissions: re-scoring the same
+        # submission appends a new ledger line but is still one submission.
+        row["n_events"] = len(entries)
+        row["n_unique_submissions"] = len({e.submission_id for e in entries})
         row["n_valid"] = sum(1 for e in entries if e.valid is True)
         best = ranked(entries)
         row["best_score"] = best[0].score if len(best) > 0 else None
@@ -378,6 +408,7 @@ def render_showcase(repo_root: Path, out: Path) -> Path:
         "agentbench": _collect_agentbench(repo_root),
         "empty": EMPTY_STATE,
         "footer": HONESTY_FOOTER,
+        "boundary": VERIFICATION_BOUNDARY,
     }
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)

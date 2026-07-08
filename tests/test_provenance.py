@@ -2,7 +2,11 @@
 
 Includes the mandatory tamper witnesses:
 - flip one byte in an anchored reference file -> audit MUST downgrade;
-- remove the citation from an experimental case -> MUST grade DNV.
+- remove the citation from an experimental case -> MUST grade DNV;
+- omit file_hashes from an experimental+citation case -> MUST grade DNV
+  (unanchored REAL bypass, closed by the REAL anchoring gate);
+- drop an unanchored file into reference/ -> the REAL badge MUST drop
+  (directory-level scan against "swap the data, keep the declaration").
 """
 
 from __future__ import annotations
@@ -224,6 +228,102 @@ def test_tamper_witness_shipped_naca0012_anchor_bites(tmp_path: Path) -> None:
     assert record.file_status["reference/ladson1988.csv"] == "drift"
 
 
+def test_tamper_witness_omitted_file_hashes_is_dnv(tmp_path: Path) -> None:
+    """experimental + citation but NO file_hashes anchor -> MUST grade DNV.
+
+    Closes the unanchored REAL bypass: a citation alone must never carry the
+    REAL badge while declared reference files are unanchored.
+    """
+    case_dir = make_case(
+        tmp_path,
+        "case_no_anchor",
+        reference_type="experimental",
+        reference_files={"cp_curve": "reference/data.csv"},
+        file_contents={"reference/data.csv": "x,cp\n0.0,1.0\n"},
+        provenance={"citation": LADSON_CITATION},  # file_hashes omitted
+    )
+    record = audit_case(case_dir)
+    assert record.honesty == "DECLARED-NOT-VERIFIED"
+    assert record.file_status == {"reference/data.csv": "unanchored"}
+    assert any("not fully anchored" in n for n in record.notes)
+
+
+def test_tamper_witness_no_provenance_yaml_at_all_is_dnv(tmp_path: Path) -> None:
+    """experimental with declared files and no provenance.yaml -> MUST be DNV."""
+    case_dir = make_case(
+        tmp_path,
+        "case_no_prov",
+        reference_type="experimental",
+        reference_files={"cp_curve": "reference/data.csv"},
+        file_contents={"reference/data.csv": "x,cp\n0.0,1.0\n"},
+        provenance=None,
+    )
+    record = audit_case(case_dir)
+    assert record.honesty == "DECLARED-NOT-VERIFIED"
+    assert record.file_status == {"reference/data.csv": "unanchored"}
+
+
+def test_tamper_witness_stray_reference_file_downgrades(tmp_path: Path) -> None:
+    """Dropping an undeclared file into reference/ MUST drop the REAL badge.
+
+    Defends against "swap the data, keep the declaration": the directory-level
+    scan must see files that exist outside the declared/anchored set.
+    """
+    case_dir = anchored_experimental_case(tmp_path)
+    assert audit_case(case_dir).honesty == "REAL"  # pre-tamper baseline
+
+    (case_dir / "reference" / "sneaky_new_data.csv").write_text(
+        "x,cp\n0.0,9.9\n", encoding="utf-8"
+    )
+
+    record = audit_case(case_dir)
+    assert record.honesty == "DECLARED-NOT-VERIFIED"
+    assert record.file_status["reference/sneaky_new_data.csv"] == "unanchored"
+    assert record.file_status["reference/data.csv"] == "ok"
+    assert any("undeclared file present in reference/" in n for n in record.notes)
+
+
+def test_tamper_witness_stray_nested_reference_file_downgrades(tmp_path: Path) -> None:
+    """The reference/ scan is recursive: nested stray files also bite."""
+    case_dir = anchored_experimental_case(tmp_path)
+    assert audit_case(case_dir).honesty == "REAL"  # pre-tamper baseline
+
+    nested = case_dir / "reference" / "sub" / "extra.csv"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("x,cp\n0.0,9.9\n", encoding="utf-8")
+
+    record = audit_case(case_dir)
+    assert record.honesty == "DECLARED-NOT-VERIFIED"
+    assert record.file_status["reference/sub/extra.csv"] == "unanchored"
+
+
+def test_stray_dotfile_in_reference_does_not_downgrade(tmp_path: Path) -> None:
+    """OS metadata dotfiles (.DS_Store) are not reference data and are skipped."""
+    case_dir = anchored_experimental_case(tmp_path)
+    (case_dir / "reference" / ".DS_Store").write_bytes(b"\x00\x01")
+    record = audit_case(case_dir)
+    assert record.honesty == "REAL"
+    assert record.file_status == {"reference/data.csv": "ok"}
+
+
+def test_stray_reference_file_keeps_non_real_levels(tmp_path: Path) -> None:
+    """The REAL anchoring gate must not affect non-REAL honesty levels."""
+    case_dir = make_case(
+        tmp_path,
+        "case_analytic_stray",
+        category="verification",
+        reference_type="analytical",
+        reference_files={"blasius": "reference/blasius.csv"},
+        file_contents={
+            "reference/blasius.csv": "x,cf\n0.1,0.005\n",
+            "reference/stray.csv": "x,cf\n0.2,0.004\n",
+        },
+    )
+    record = audit_case(case_dir)
+    assert record.honesty == "ANALYTIC"
+    assert record.file_status["reference/stray.csv"] == "unanchored"
+
+
 # ============================================================================
 # Fail-closed on missing/invalid data (report, never crash)
 # ============================================================================
@@ -315,6 +415,14 @@ def test_real_naca_series_is_real_with_honest_transcription_flag() -> None:
         assert all(status == "ok" for status in record.file_status.values()), (
             f"{case_id}: {record.file_status}"
         )
+
+
+def test_real_lid_driven_cavity_stays_real() -> None:
+    """Shipped fully-anchored dns case must keep REAL under the anchoring gate."""
+    records = {r.case_id: r for r in audit_all(REAL_CASES_DIR)}
+    record = records["lid_driven_cavity"]
+    assert record.honesty == "REAL", record.notes
+    assert record.file_status == {"reference/ghia1982_centerline.csv": "ok"}
 
 
 def test_real_flat_plate_su2_is_analytic() -> None:

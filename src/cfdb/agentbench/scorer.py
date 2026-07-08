@@ -13,13 +13,19 @@ Scoring pipeline (fail-closed at every step):
 
 The only submission-supplied number consumed as-is is ``wall_time_sec`` from
 ``manifest.json`` (wall time is not recomputable after the fact); it feeds
-the budget gate and the efficiency weight, and its absence fails closed.
+the ``within_budget`` gate only, its absence fails closed, and it is marked
+``self_reported`` in every ledger record. By default it carries no scoring
+weight — weighting a self-reported value must be an explicit, warned choice.
+
+Non-finite numbers (NaN/inf) are rejected everywhere: a submission with a
+non-finite expected QoI fails ``qoi_complete``, and a score is never NaN/inf.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,6 +38,18 @@ logger = logging.getLogger(__name__)
 
 QOI_FILENAME = "qoi.json"
 MANIFEST_FILENAME = "manifest.json"
+
+
+class WallTimeRecord(BaseModel):
+    """Wall time as recorded in the ledger, explicitly marked self-reported."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value_sec: float | None = None
+    """Self-reported wall time in seconds; None when unavailable."""
+
+    self_reported: bool = True
+    """Always True: wall time comes from the submission, never recomputed."""
 
 
 class SubmissionScore(BaseModel):
@@ -60,6 +78,9 @@ class SubmissionScore(BaseModel):
 
     notes: list[str] = Field(default_factory=list)
     """Human-readable audit notes (ignored fields, gate failures, ...)."""
+
+    wall_time: WallTimeRecord | None = None
+    """Self-reported wall time record (None for pre-existing ledger lines)."""
 
 
 def _load_json_dict(path: Path) -> dict[str, object] | None:
@@ -102,7 +123,14 @@ def _load_submission_qoi(submission_dir: Path, notes: list[str]) -> dict[str, fl
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             notes.append(f"non-numeric QoI '{key}' in {QOI_FILENAME} ignored")
             continue
-        values[key] = float(value)
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            notes.append(
+                f"non-finite QoI '{key}' in {QOI_FILENAME} rejected "
+                "(fail-closed: treated as missing)"
+            )
+            continue
+        values[key] = numeric
     return values
 
 
@@ -127,7 +155,11 @@ def _load_wall_time(submission_dir: Path) -> float | None:
         candidate = timing.get("wall_time_sec")
     if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
         return None
-    return float(candidate)
+    wall_time = float(candidate)
+    if not math.isfinite(wall_time):
+        logger.warning("non-finite wall_time_sec in %s rejected", MANIFEST_FILENAME)
+        return None
+    return wall_time
 
 
 def _load_reference_qoi(case: CaseSpec, case_dir: Path) -> dict[str, float]:
@@ -143,18 +175,36 @@ def _load_reference_qoi(case: CaseSpec, case_dir: Path) -> dict[str, float]:
     if case.reference is None:
         return {}
     if case.reference.qoi_values is not None:
-        return dict(case.reference.qoi_values)
+        return _finite_only(dict(case.reference.qoi_values), case.id)
     for key in ("qoi", "qoi_values"):
         if key in case.reference.files:
             raw = _load_json_dict(case_dir / case.reference.files[key])
             if raw is None:
                 return {}
             try:
-                return {k: float(v) for k, v in raw.items()}  # type: ignore[arg-type]
+                values = {k: float(v) for k, v in raw.items()}  # type: ignore[arg-type]
             except (TypeError, ValueError) as e:
                 logger.warning("invalid reference QoI file for %s: %s", case.id, e)
                 return {}
+            return _finite_only(values, case.id)
     return {}
+
+
+def _finite_only(values: dict[str, float], case_id: str) -> dict[str, float]:
+    """Drop non-finite reference values (a NaN reference can never be a ruler).
+
+    Args:
+        values: Raw reference QoI values.
+        case_id: Case id, for logging.
+
+    Returns:
+        Only the finite entries.
+    """
+    finite = {k: v for k, v in values.items() if math.isfinite(v)}
+    dropped = sorted(set(values) - set(finite))
+    if len(dropped) > 0:
+        logger.warning("non-finite reference QoI for %s dropped: %s", case_id, dropped)
+    return finite
 
 
 def _recompute_qoi_error(
@@ -190,11 +240,19 @@ def _recompute_qoi_error(
             continue
         ref_val = reference[name]
         diff = abs(computed[name] - ref_val)
-        terms.append(diff if ref_val == 0 else diff / abs(ref_val))
+        term = diff if ref_val == 0 else diff / abs(ref_val)
+        if not math.isfinite(term):
+            notes.append(f"qoi_error: non-finite error term for '{name}' skipped (fail-closed)")
+            continue
+        terms.append(term)
     if len(terms) == 0:
         notes.append("qoi_error: no recomputable QoI (fail-closed: metric unavailable)")
         return None
-    return sum(terms) / len(terms)
+    mean_error = sum(terms) / len(terms)
+    if not math.isfinite(mean_error):
+        notes.append("qoi_error: non-finite aggregate (fail-closed: metric unavailable)")
+        return None
+    return mean_error
 
 
 def _evaluate_gates(
@@ -290,6 +348,10 @@ def score_submission(
             "scoring metrics are recomputed, never trusted"
         )
 
+    if "wall_time_sec" in contract.weights:
+        notes.append("wall_time_sec is self-reported (weighted by explicit contract choice)")
+        logger.warning("wall_time_sec is self-reported: it is weighted in this contract")
+
     gates = _evaluate_gates(contract, case, computed, wall_time, notes)
     valid = all(gates[g] is True for g in contract.validity_gates)
 
@@ -312,7 +374,14 @@ def score_submission(
             )
         else:
             breakdown = {m: w * metric_values[m] for m, w in contract.weights.items()}
-            score = sum(breakdown.values())
+            candidate = sum(breakdown.values())
+            if math.isfinite(candidate) and all(
+                math.isfinite(v) for v in breakdown.values()
+            ):
+                score = candidate
+            else:
+                notes.append("non-finite score (fail-closed: score=None)")
+                breakdown = {}
     else:
         notes.append("submission invalid: no score assigned (score=None)")
 
@@ -324,6 +393,7 @@ def score_submission(
         gates=gates,
         scored_at=datetime.now(timezone.utc).isoformat(),
         notes=notes,
+        wall_time=WallTimeRecord(value_sec=wall_time),
     )
     if ledger_path is not None:
         append_ledger(ledger_path, result)
@@ -370,18 +440,56 @@ def read_ledger(ledger_path: Path) -> list[SubmissionScore]:
     return entries
 
 
+def _is_rankable(entry: SubmissionScore) -> bool:
+    """Structurally re-verify one ledger entry before it may rank.
+
+    A ledger line is data, not authority: beyond ``valid is True`` and a
+    present score, the score must be finite, every recorded gate must have
+    passed, every breakdown term must be finite, and the score must equal
+    the sum of its own breakdown. A forged score field that does not follow
+    from the recorded breakdown never ranks.
+
+    Args:
+        entry: Ledger entry.
+
+    Returns:
+        True only if the entry is internally consistent and rankable.
+    """
+    if entry.valid is not True:
+        return False
+    if entry.score is None or not math.isfinite(entry.score):
+        return False
+    if any(passed is not True for passed in entry.gates.values()):
+        return False
+    if any(not math.isfinite(v) for v in entry.breakdown.values()):
+        return False
+    recomputed = sum(entry.breakdown.values())
+    tolerance = 1e-9 * max(1.0, abs(entry.score))
+    if abs(entry.score - recomputed) > tolerance:
+        logger.warning(
+            "ledger entry '%s' score %.17g does not match its breakdown sum "
+            "%.17g: excluded from ranking",
+            entry.submission_id,
+            entry.score,
+            recomputed,
+        )
+        return False
+    return True
+
+
 def ranked(entries: list[SubmissionScore]) -> list[SubmissionScore]:
     """Return only rankable entries, best score first.
 
-    A submission ranks only if ``valid is True`` **and** it carries a real
-    score — invalid samples never enter the ranking, even if a ledger line
-    was forged to carry a score.
+    A submission ranks only if ``valid is True`` **and** it carries a real,
+    finite score that is consistent with its own recorded gates and
+    breakdown (see :func:`_is_rankable`) — invalid samples and forged or
+    non-finite score fields never enter the ranking.
 
     Args:
         entries: Ledger entries.
 
     Returns:
-        Valid, scored entries sorted by score descending.
+        Valid, consistent, scored entries sorted by score descending.
     """
-    rankable = [e for e in entries if e.valid is True and e.score is not None]
+    rankable = [e for e in entries if _is_rankable(e) is True]
     return sorted(rankable, key=lambda e: e.score or 0.0, reverse=True)

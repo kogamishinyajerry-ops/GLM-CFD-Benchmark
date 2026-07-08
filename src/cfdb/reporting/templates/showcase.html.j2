@@ -61,7 +61,7 @@ td.mono,th.num{font-family:var(--mono);font-size:13px}
 .guard{color:var(--clay);font-style:italic}
 .ruler{color:var(--clay);font-weight:600}
 footer{border-top:1px solid #d8ccb6;margin-top:56px;padding-top:18px;padding-bottom:44px}
-footer p{font-size:13px;color:#6f675c;margin:0}
+footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
 </style>
 </head>
 <body>
@@ -198,11 +198,13 @@ footer p{font-size:13px;color:#6f675c;margin:0}
 <section id="agentbench">
   <h2><span class="secno">⑥</span>agent-eval 账本摘要</h2>
   <p class="lede">尺子编号 = contract.json 文件 sha256 前 8 位；冻结物渲染时重哈希——DRIFTED
-    即改尺子，打分被拒（exit 3）；作废提交 score = None，绝不编分。</p>
+    即改尺子，打分被拒（exit 3）；作废提交 score = None，绝不编分。
+    账本（ledger.jsonl）为进程级 append-only 纪律，无密码学哈希链；
+    打分事件数 ≠ 唯一 submission 数——同一 submission 重复打分只算一个唯一提交。</p>
   {% if agentbench.contracts %}
   <table>
     <thead><tr><th>Case</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th>
-      <th>提交</th><th>valid</th><th>best score</th><th>备注</th></tr></thead>
+      <th>打分事件</th><th>唯一 submission</th><th>valid</th><th>best score</th><th>备注</th></tr></thead>
     <tbody>
     {% for c in agentbench.contracts %}
     <tr>
@@ -210,7 +212,8 @@ footer p{font-size:13px;color:#6f675c;margin:0}
       <td class="mono ruler">#{{ c.ruler_id }}</td>
       <td class="mono">{% if c.frozen_total is not none %}{{ c.frozen_total }}{% else %}—{% endif %}</td>
       <td>{% if c.frozen_status %}<span class="badge {{ c.status_class }}" data-frozen="{{ c.frozen_status }}">{{ c.frozen_status }}</span>{% else %}—{% endif %}</td>
-      <td class="mono">{{ c.n_submissions }}</td>
+      <td class="mono" data-events="{{ c.n_events }}">{{ c.n_events }}</td>
+      <td class="mono" data-unique="{{ c.n_unique_submissions }}">{{ c.n_unique_submissions }}</td>
       <td class="mono">{{ c.n_valid }}</td>
       <td class="mono">{% if c.best_score is not none %}{{ "%.6g"|format(c.best_score) }}{% else %}—{% endif %}</td>
       <td class="notes">
@@ -231,6 +234,7 @@ footer p{font-size:13px;color:#6f675c;margin:0}
 
 <footer>
   <p>{{ footer }}</p>
+  <p>{{ boundary }}</p>
 </footer>
 
 </body>

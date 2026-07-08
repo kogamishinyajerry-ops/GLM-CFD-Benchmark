@@ -1,0 +1,14 @@
+# Provenance declaration for lid_driven_cavity (see src/cfdb/provenance/).
+# honesty is NEVER declared here: it is derived mechanically by the audit.
+citation: >-
+  Ghia, U., Ghia, K. N., Shin, C. T., "High-Re Solutions for Incompressible
+  Flow Using the Navier-Stokes Equations and a Multigrid Method",
+  J. Comput. Phys. 48, pp. 387-411, 1982 (Table I, Re=100 column)
+source_url: https://doi.org/10.1016/0021-9991(82)90058-4
+retrieved: null
+transcription_verified: false
+file_hashes:
+  reference/ghia1982_centerline.csv: e0910951fdead12384e8a96b058b5dad8d21db0a0ef4c3ffb59d47f1b3a1d220
+notes:
+  - "Values spot-checked against the published Table I Re=100 column (e.g. u=0.84123 at y/H=0.9766) on 2026-07-08; full-table cross-check pending."
+  - "Inline qoi centerline_umax=0.665 is interpolated from this CSV at y/H=0.95 (probe-line top); the pre-v4 value 0.371 was untraceable and removed."

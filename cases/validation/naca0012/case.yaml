@@ -79,6 +79,10 @@ metrics:
   qoi_relative_tolerance:
     cl: 0.001
     cd: 0.10
+  # P4-G: cl reference is exactly 0 (symmetric airfoil, alpha=0), so the
+  # relative tolerance above can never fire; gate cl with |computed - 0|.
+  qoi_absolute_tolerance:
+    cl: 0.01
   curve_l2_tolerance:
     cp_distribution: 0.05
 budget:

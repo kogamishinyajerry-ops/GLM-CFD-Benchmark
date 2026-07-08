@@ -1,0 +1,14 @@
+# Provenance declaration for naca0012_a5 (see src/cfdb/provenance/).
+# honesty is NEVER declared here: it is derived mechanically by the audit.
+citation: >-
+  Ladson, C. L., "Effects of Independent Variation of Mach and Reynolds
+  Numbers on the Low-Speed Aerodynamic Characteristics of the NACA 0012
+  Airfoil Section", NASA TM-4074, 1988
+source_url: https://ntrs.nasa.gov/citations/19880019495
+retrieved: null
+transcription_verified: false
+file_hashes:
+  reference/ladson1988_a5.csv: c61534df8fe1dac204ae399bd6ca60290eae67260266fc7825ee963bdcbf9d8e
+notes:
+  - "Transcribed values not yet cross-checked against the original TM-4074 tables."
+  - "Retrieval date of the original transcription unknown; sha256 anchored 2026-07-08."

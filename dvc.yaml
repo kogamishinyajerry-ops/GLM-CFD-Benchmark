@@ -8,8 +8,10 @@
 
 stages:
   generate_naca0012_geometry:
+    # wdir defaults to the directory containing this dvc.yaml (repo root).
+    # The script writes outputs next to itself (Path(__file__).parent /
+    # "geometry"), so cmd/deps/outs are all repo-root relative.
     cmd: python cases/validation/naca0012/gen_geometry.py
-    wdir: ..
     deps:
       - cases/validation/naca0012/gen_geometry.py
     outs:

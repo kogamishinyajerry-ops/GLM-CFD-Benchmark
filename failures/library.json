@@ -1,0 +1,74 @@
+{
+  "records": [
+    {
+      "fingerprint": "5031155f85bb1186",
+      "case_id": "lid_driven_cavity",
+      "solver": "openfoam",
+      "mode": "TOLERANCE_EXCEEDED",
+      "signature": "qoi=centerline_umax",
+      "first_seen": "20260708T111730Z_lid_driven_cavity_openfoam_657da738",
+      "last_seen": "20260708T111730Z_lid_driven_cavity_openfoam_657da738",
+      "count": 1,
+      "evidence": [
+        "20260708T111730Z_lid_driven_cavity_openfoam_657da738/manifest.json",
+        "20260708T111730Z_lid_driven_cavity_openfoam_657da738/metrics.json"
+      ],
+      "guard": "probe parser must read EVERY vector per line (finditer, not search) — pinned by tests/test_ldc_real_path.py"
+    },
+    {
+      "fingerprint": "515a3bcd81409a5d",
+      "case_id": "naca0012_a5",
+      "solver": "openfoam",
+      "mode": "TOLERANCE_EXCEEDED",
+      "signature": "qoi=cd,cl",
+      "first_seen": "20260708T111911Z_naca0012_a5_openfoam_da1d3f9f",
+      "last_seen": "20260708T111911Z_naca0012_a5_openfoam_da1d3f9f",
+      "count": 1,
+      "evidence": [
+        "20260708T111911Z_naca0012_a5_openfoam_da1d3f9f/manifest.json",
+        "20260708T111911Z_naca0012_a5_openfoam_da1d3f9f/metrics.json"
+      ],
+      "guard": "10.8k-cell mesh under-resolves Re=6e6 boundary layer; run a y+/GCI mesh study before any validation claim"
+    },
+    {
+      "fingerprint": "5bd225ab03567350",
+      "case_id": "lid_driven_cavity",
+      "solver": "openfoam",
+      "mode": "MESH_FAILURE",
+      "signature": "step=block_mesh exit=1",
+      "first_seen": "20260708T111006Z_lid_driven_cavity_openfoam_316c0317",
+      "last_seen": "20260708T111006Z_lid_driven_cavity_openfoam_316c0317",
+      "count": 1,
+      "evidence": [
+        "20260708T111006Z_lid_driven_cavity_openfoam_316c0317/manifest.json",
+        "20260708T111006Z_lid_driven_cavity_openfoam_316c0317/metrics.json"
+      ],
+      "guard": "prepare() must stage the case blockMeshDict into system/ (v2312 location) — pinned by tests/test_ldc_real_path.py"
+    },
+    {
+      "fingerprint": "f79ec7a5cba5fd2f",
+      "case_id": "lid_driven_cavity",
+      "solver": "openfoam",
+      "mode": "SETUP_ERROR",
+      "signature": "step=solve exit=1",
+      "first_seen": "20260708T111224Z_lid_driven_cavity_openfoam_6d6483df",
+      "last_seen": "20260708T111650Z_lid_driven_cavity_openfoam_509e7fde",
+      "count": 2,
+      "evidence": [
+        "20260708T111224Z_lid_driven_cavity_openfoam_6d6483df/manifest.json",
+        "20260708T111224Z_lid_driven_cavity_openfoam_6d6483df/metrics.json",
+        "20260708T111650Z_lid_driven_cavity_openfoam_509e7fde/manifest.json",
+        "20260708T111650Z_lid_driven_cavity_openfoam_509e7fde/metrics.json"
+      ],
+      "guard": "LDC 0/U,0/p need full FoamFile headers + boundaryField; fvSolution needs pFinal — pinned by tests/test_ldc_real_path.py"
+    }
+  ],
+  "ingested_run_ids": [
+    "20260708T111006Z_lid_driven_cavity_openfoam_316c0317",
+    "20260708T111224Z_lid_driven_cavity_openfoam_6d6483df",
+    "20260708T111650Z_lid_driven_cavity_openfoam_509e7fde",
+    "20260708T111730Z_lid_driven_cavity_openfoam_657da738",
+    "20260708T111832Z_lid_driven_cavity_openfoam_bb28984e",
+    "20260708T111911Z_naca0012_a5_openfoam_da1d3f9f"
+  ]
+}

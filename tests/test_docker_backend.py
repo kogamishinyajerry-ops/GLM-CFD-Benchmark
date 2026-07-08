@@ -11,7 +11,7 @@ marked with @pytest.mark.real_docker (deselected in CI by default).
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 import pytest
@@ -391,6 +391,30 @@ class TestExecutionBaseProtocol:
         assert isinstance(b, ExecutionBackend)
 
 
+class _FakeWindowsPath(PureWindowsPath):
+    """Windows-semantics path usable on any host OS in these tests.
+
+    ``Path("D:/...")`` is *relative* on POSIX, so ``resolve()`` would prepend
+    the real cwd and the tests would only exercise Windows semantics when run
+    on Windows. ``PureWindowsPath`` gives faithful Windows behavior
+    (``as_posix()`` -> ``D:/...``, ``str()`` -> ``D:\\...``) on every
+    platform; the backend only calls ``resolve()`` on the cwd, which we make
+    a no-op since the fake path is already absolute.
+    """
+
+    def resolve(self, strict: bool = False) -> _FakeWindowsPath:
+        """Return self: the fake Windows path is already absolute."""
+        return self
+
+    def write_text(self, *args: object, **kwargs: object) -> int:
+        """Discard writes: the fake Windows dir does not exist on this host.
+
+        ``execute()`` persists stdout/stderr logs into cwd; that filesystem
+        I/O is irrelevant to the path-rewrite assertions under test.
+        """
+        return 0
+
+
 class TestWindowsPathCompatibility:
     """Tests for Windows host path handling (bind-mount to fixed container path).
 
@@ -407,8 +431,8 @@ class TestWindowsPathCompatibility:
     def test_docker_workdir_uses_container_path(self) -> None:
         """--workdir should be /work, not the host path."""
         b = DockerBackend(image="test/img")
-        # Use a path that mimics a Windows absolute path (POSIX-form).
-        cwd = Path("D:/GLM-CFD-Benchmark/runs/naca0012/case")
+        # Windows absolute path with true Windows semantics on any host OS.
+        cwd = _FakeWindowsPath("D:/GLM-CFD-Benchmark/runs/naca0012/case")
         cmd = b._build_command(["blockMesh"], cwd=cwd, env=None)
         workdir_idx = cmd.index("--workdir")
         assert cmd[workdir_idx + 1] == "/work"
@@ -430,10 +454,13 @@ class TestWindowsPathCompatibility:
     def test_rewrite_cmd_paths_posix_form(self) -> None:
         """blockMesh -case D:/host/case should become blockMesh -case /work."""
         b = DockerBackend(image="test/img")
-        cwd = Path("D:/host/case")
+        cwd = _FakeWindowsPath("D:/host/case")
         original = ["blockMesh", "-case", "D:/host/case/0"]
         rewritten = b._rewrite_cmd_paths(original, cwd)
         assert rewritten == ["blockMesh", "-case", "/work/0"]
+        # Tamper witness: an unrelated host path must NOT be rewritten.
+        untouched = b._rewrite_cmd_paths(["ls", "D:/other/case"], cwd)
+        assert untouched == ["ls", "D:/other/case"]
 
     def test_rewrite_cmd_paths_native_backslash_form(self) -> None:
         """Native backslash host path (str(path)) is also rewritten.
@@ -499,7 +526,7 @@ class TestWindowsPathCompatibility:
     def test_execute_path_rewrite_windows_style(self) -> None:
         """A Windows-style host path in the command is rewritten to /work."""
         b = DockerBackend(image="test/img", pull_policy="never")
-        cwd = Path("D:/proj/runs/case")
+        cwd = _FakeWindowsPath("D:/proj/runs/case")
         with patch("cfdb.execution.docker.subprocess.run") as mock_run:
             mock_run.side_effect = [
                 subprocess.CompletedProcess(

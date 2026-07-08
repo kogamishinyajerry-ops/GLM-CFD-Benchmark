@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLM-CFD-Benchmark · 可信度平台 Showcase</title>
+<style>
+:root{
+  --paper:#F6F2EA; --panel:#EFE9DD; --ink:#2B2620; --clay:#C15F3C;
+  --evidence:#3D7A50; --amber:#A8722C; --risk:#B3362A;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:Georgia,"Times New Roman","Songti SC",serif;line-height:1.65;font-size:16px}
+header.hero,main,footer{max-width:1100px;margin:0 auto;padding:0 28px}
+header.hero{padding-top:52px;padding-bottom:8px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--clay);margin:0 0 14px}
+h1{font-size:32px;line-height:1.3;margin:0 0 12px;font-weight:700}
+h1 .accent{color:var(--clay)}
+.thesis{font-size:17px;max-width:56em;margin:0 0 10px}
+.meta{font-family:var(--mono);font-size:12px;color:#6f675c;margin:0}
+section{margin:44px 0}
+h2{font-size:21px;margin:0 0 4px;border-bottom:2px solid var(--clay);
+  padding-bottom:8px;font-weight:700}
+h2 .secno{color:var(--clay);font-family:var(--mono);font-size:17px;margin-right:8px}
+h3{font-size:15px;margin:0 0 6px}
+.lede{font-size:14px;color:#6f675c;margin:8px 0 16px}
+.mono{font-family:var(--mono);font-size:13px}
+.dim{color:#8a8073}
+.risk{color:var(--risk)}
+table{border-collapse:collapse;width:100%;margin:14px 0;background:var(--panel);
+  font-size:14px}
+th,td{border:1px solid #ddd3c2;padding:8px 12px;text-align:left;vertical-align:top}
+th{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+  color:#6f675c;background:#e9e2d2;font-weight:600}
+td.mono,th.num{font-family:var(--mono);font-size:13px}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;
+  letter-spacing:.04em;padding:2px 9px;border-radius:3px;border:1px solid;white-space:nowrap}
+.h-real{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.h-mid{color:var(--ink);border-color:#b0a692;background:rgba(43,38,32,.05)}
+.h-warn{color:var(--amber);border-color:var(--amber);background:rgba(168,114,44,.09)}
+.h-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.v-pass{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.v-warn{color:var(--amber);border-color:var(--amber);background:rgba(168,114,44,.09)}
+.v-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.empty{background:var(--panel);border:1px dashed #c9bda6;border-radius:4px;
+  padding:18px 20px;color:#6f675c;font-size:15px;margin:14px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px;
+  margin:14px 0}
+.card{background:var(--panel);border:1px solid #ddd3c2;border-radius:4px;padding:16px}
+.card .radar svg{width:100%;height:auto}
+.notes{font-size:12.5px;color:#6f675c;margin:6px 0 0;padding-left:18px}
+.notes div{margin:2px 0}
+.bucket{background:var(--panel);border:1px solid #ddd3c2;border-radius:4px;
+  padding:14px 16px;margin:14px 0}
+.bucket h3 .mode{color:var(--risk);font-family:var(--mono);font-size:14px}
+.bucket h3 .count{color:var(--clay);font-family:var(--mono);font-size:14px;margin-left:8px}
+.bucket table{margin:8px 0 0;background:transparent}
+.guard{color:var(--clay);font-style:italic}
+.ruler{color:var(--clay);font-weight:600}
+footer{border-top:1px solid #d8ccb6;margin-top:56px;padding-top:18px;padding-bottom:44px}
+footer p{font-size:13px;color:#6f675c;margin:0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <p class="kicker">GLM-CFD-Benchmark · Trust Platform · cfdb v{{ version }}</p>
+  <h1>benchmark 不是排行榜，<span class="accent">是课题组自己的裁判所</span></h1>
+  <p class="thesis">真值集（truth set，出处分级、逐文件 sha256 可核）＋ 失败模式库（failure
+    library，教训资产化、只增不删）＋ 冻结尺子（frozen scorer，改尺子即拒评）——三样在本仓
+    是一等公民，让平台能给 AI agent 的 CFD 产出打分。</p>
+  <p class="meta">generated {{ generated_at }} · 数据源 {{ repo_root }}</p>
+</header>
+
+<main>
+
+<section id="provenance">
+  <h2><span class="secno">②</span>真值集出处（provenance audit 实况）</h2>
+  <p class="lede">honesty 等级由 reference 类型 + 引文机械派生，不许手填；文件哈希渲染时重算，
+    漂移即降级 DECLARED-NOT-VERIFIED。</p>
+  {% if provenance.records %}
+  <table>
+    <thead><tr><th>Case</th><th>类型</th><th>出处等级</th><th>引文</th>
+      <th>文件校验</th><th>备注</th></tr></thead>
+    <tbody>
+    {% for r in provenance.records %}
+    <tr>
+      <td class="mono">{{ r.case_id }}</td>
+      <td class="mono">{{ r.reference_type }}</td>
+      <td><span class="badge {{ r.badge_class }}" data-honesty="{{ r.honesty }}">{{ r.honesty }}</span></td>
+      <td>{% if r.citation %}{{ r.citation }}{% if r.retrieved %}
+        <span class="dim mono">(retrieved {{ r.retrieved }})</span>{% endif %}
+        {% else %}<span class="dim">无引文</span>{% endif %}</td>
+      <td class="mono{% if r.files_bad %} risk{% endif %}">ok {{ r.files_ok }} · drift {{ r.files_drift }} · missing {{ r.files_missing }} · unanchored {{ r.files_unanchored }}</td>
+      <td class="notes">
+        {% for n in r.notes %}<div>{{ n }}</div>{% endfor %}
+        {% if not r.transcription_verified %}<div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">{{ empty.provenance }}</p>
+  {% endif %}
+</section>
+
+<section id="trust">
+  <h2><span class="secno">③</span>TrustProfile 五维画像</h2>
+  <p class="lede">画像 ≠ 判决：五维雷达 + honesty 顶栏，刻意无聚合总分；score = None 的维度
+    画虚线缺口标「insufficient data」，绝不画成 0。</p>
+  {% if trust.profiles %}
+  <div class="cards">
+    {% for p in trust.profiles %}
+    <article class="card">
+      <h3 class="mono">{{ p.case_id }} / {{ p.solver }}</h3>
+      <p class="mono dim">n_runs = {{ p.n_runs }} ·
+        <span class="badge {{ p.badge_class }}" data-honesty-banner="{{ p.honesty }}">{{ p.honesty }}</span></p>
+      <div class="radar">{{ p.svg | safe }}</div>
+      {% if p.notes %}<ul class="notes">{% for n in p.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">{{ empty.trust }}</p>
+  {% endif %}
+  {% for s in trust.skipped %}<p class="dim mono">{{ s }}</p>{% endfor %}
+</section>
+
+<section id="failures">
+  <h2><span class="secno">④</span>失败模式库</h2>
+  <p class="lede">库 append-only、fingerprint 去重计数——同一失败重复出现 count++，教训是资产，
+    只增不删。</p>
+  {% if failures.error %}
+  <p class="empty risk">{{ failures.error }}（fail-closed：坏库如实报告，不静默跳过）</p>
+  {% elif failures.buckets %}
+  <p class="mono dim">共 {{ failures.total }} 次失败 · {{ failures.buckets|length }} 类 mode</p>
+  {% for b in failures.buckets %}
+  <div class="bucket">
+    <h3><span class="mode">{{ b.mode }}</span><span class="count">×{{ b.count }}</span></h3>
+    <table>
+      <thead><tr><th>fingerprint</th><th>case / solver</th><th>signature</th>
+        <th>count</th><th>last seen</th><th>护栏注记</th></tr></thead>
+      <tbody>
+      {% for rec in b.records %}
+      <tr>
+        <td class="mono">{{ rec.fingerprint }}</td>
+        <td class="mono">{{ rec.case_id }} / {{ rec.solver }}</td>
+        <td class="mono">{{ rec.signature }}</td>
+        <td class="mono">{{ rec.count }}</td>
+        <td class="mono">{{ rec.last_seen }}</td>
+        <td>{% if rec.guard %}<span class="guard">{{ rec.guard }}</span>{% else %}<span class="dim">尚无护栏注记</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="empty">{{ empty.failures }}</p>
+  {% endif %}
+</section>
+
+<section id="regression">
+  <h2><span class="secno">⑤</span>回归门状态</h2>
+  <p class="lede">判决渲染时重算：重读候选 run、重哈希 baseline 锚定文件——缺 baseline 是
+    NO_BASELINE 不是 PASS，锚定漂移是 TAMPERED。</p>
+  {% if regression.error %}
+  <p class="empty risk">{{ regression.error }}（fail-closed：坏文件如实报告，不静默跳过）</p>
+  {% elif regression.rows %}
+  <p class="mono dim">baseline 数 {{ regression.rows|length }} · 容忍带
+    absolute={{ regression.margin.absolute }} / relative={{ regression.margin.relative }}
+    （公开可调，配置于 baselines.json 顶层）</p>
+  <table>
+    <thead><tr><th>Case / Solver</th><th>Baseline run</th><th>人签</th>
+      <th>最近候选 run</th><th>Gate 判决</th><th>依据</th></tr></thead>
+    <tbody>
+    {% for r in regression.rows %}
+    <tr>
+      <td class="mono">{{ r.case_id }} / {{ r.solver }}</td>
+      <td class="mono">{{ r.baseline_run }}</td>
+      <td>{{ r.promoted_by }}<br><span class="dim mono">{{ r.promoted_at }}</span></td>
+      <td class="mono">{{ r.candidate_run or "—" }}</td>
+      <td>{% if r.verdict %}<span class="badge {{ r.verdict_class }}" data-verdict="{{ r.verdict }}">{{ r.verdict }}</span>{% else %}<span class="badge v-warn" data-verdict="NOT-EVALUATED">未评估</span>{% endif %}</td>
+      <td class="notes">{% for reason in r.reasons %}<div>{{ reason }}</div>{% endfor %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">{{ empty.regression }}</p>
+  {% endif %}
+</section>
+
+<section id="agentbench">
+  <h2><span class="secno">⑥</span>agent-eval 账本摘要</h2>
+  <p class="lede">尺子编号 = contract.json 文件 sha256 前 8 位；冻结物渲染时重哈希——DRIFTED
+    即改尺子，打分被拒（exit 3）；作废提交 score = None，绝不编分。</p>
+  {% if agentbench.contracts %}
+  <table>
+    <thead><tr><th>Case</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th>
+      <th>提交</th><th>valid</th><th>best score</th><th>备注</th></tr></thead>
+    <tbody>
+    {% for c in agentbench.contracts %}
+    <tr>
+      <td class="mono">{{ c.case_id or c.dir_name }}</td>
+      <td class="mono ruler">#{{ c.ruler_id }}</td>
+      <td class="mono">{% if c.frozen_total is not none %}{{ c.frozen_total }}{% else %}—{% endif %}</td>
+      <td>{% if c.frozen_status %}<span class="badge {{ c.status_class }}" data-frozen="{{ c.frozen_status }}">{{ c.frozen_status }}</span>{% else %}—{% endif %}</td>
+      <td class="mono">{{ c.n_submissions }}</td>
+      <td class="mono">{{ c.n_valid }}</td>
+      <td class="mono">{% if c.best_score is not none %}{{ "%.6g"|format(c.best_score) }}{% else %}—{% endif %}</td>
+      <td class="notes">
+        {% if c.error %}<div class="risk">{{ c.error }}</div>{% endif %}
+        {% if c.ledger_error %}<div class="risk">{{ c.ledger_error }}</div>{% endif %}
+        {% for d in c.drifted %}<div class="risk">drift: {{ d }}</div>{% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">{{ empty.agentbench }}</p>
+  {% endif %}
+</section>
+
+</main>
+
+<footer>
+  <p>{{ footer }}</p>
+</footer>
+
+</body>
+</html>

@@ -212,6 +212,15 @@ class OpenFOAMAdapter:
             self._prepare_naca(case, case_dir_out, context, case_dir)
         else:
             self._prepare_ldc(case_dir_out, context)
+            # Stage the case-provided blockMeshDict (LDC ships it under
+            # constant/polyMesh/, the historical OpenFOAM location) into
+            # system/ where modern blockMesh (v2312+) looks for it. Without
+            # this the block_mesh step fails FATAL on real runs.
+            src_bmd = case_dir / "constant" / "polyMesh" / "blockMeshDict"
+            if src_bmd.exists():
+                (case_dir_out / "system" / "blockMeshDict").write_text(
+                    src_bmd.read_text(encoding="utf-8"), encoding="utf-8"
+                )
 
         logger.debug("OpenFOAM case structure prepared at %s", case_dir_out)
 
@@ -242,17 +251,36 @@ class OpenFOAMAdapter:
             self._render_template("turbulenceProperties.j2", context), encoding="utf-8"
         )
 
-        # Write placeholder initial fields 0/U and 0/p (original LDC values)
+        # Write complete initial fields 0/U and 0/p. The previous placeholder
+        # fields lacked the FoamFile 'class'/'object' entries and the
+        # boundaryField block, so icoFoam failed FATAL on any real run
+        # ("Entry 'class' not found in dictionary"). Patch names match the
+        # LDC blockMeshDict shipped with the case (movingWall / fixedWalls /
+        # frontAndBack); lid velocity is 1 m/s so probe values are directly
+        # comparable with Ghia's u/U_lid normalisation.
         (case_dir_out / "0" / "U").write_text(
-            "FoamFile\n{\n    version 2.0;\n    format ascii;\n}\n"
-            "dimensions [0 1 -1 0 0 0 0];\n"
-            "internalField uniform (0 0 0);\n",
+            "FoamFile\n{\n    version     2.0;\n    format      ascii;\n"
+            "    class       volVectorField;\n    object      U;\n}\n"
+            "dimensions      [0 1 -1 0 0 0 0];\n"
+            "internalField   uniform (0 0 0);\n"
+            "boundaryField\n{\n"
+            "    movingWall\n    {\n        type            fixedValue;\n"
+            "        value           uniform (1 0 0);\n    }\n"
+            "    fixedWalls\n    {\n        type            noSlip;\n    }\n"
+            "    frontAndBack\n    {\n        type            empty;\n    }\n"
+            "}\n",
             encoding="utf-8",
         )
         (case_dir_out / "0" / "p").write_text(
-            "FoamFile\n{\n    version 2.0;\n    format ascii;\n}\n"
-            "dimensions [0 2 -2 0 0 0 0];\n"
-            "internalField uniform 0;\n",
+            "FoamFile\n{\n    version     2.0;\n    format      ascii;\n"
+            "    class       volScalarField;\n    object      p;\n}\n"
+            "dimensions      [0 2 -2 0 0 0 0];\n"
+            "internalField   uniform 0;\n"
+            "boundaryField\n{\n"
+            "    movingWall\n    {\n        type            zeroGradient;\n    }\n"
+            "    fixedWalls\n    {\n        type            zeroGradient;\n    }\n"
+            "    frontAndBack\n    {\n        type            empty;\n    }\n"
+            "}\n",
             encoding="utf-8",
         )
 

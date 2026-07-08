@@ -25,12 +25,24 @@ solvers
         smoother        GaussSeidel;
     }
 
+    pFinal
+    {
+        $p;
+        relTol          0;
+    }
+
     U
     {
         solver          smoothSolver;
         smoother        symGaussSeidel;
         tolerance       1e-05;
         relTol          0.1;
+    }
+
+    UFinal
+    {
+        $U;
+        relTol          0;
     }
 }
 

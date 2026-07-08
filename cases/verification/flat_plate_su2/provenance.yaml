@@ -1,0 +1,15 @@
+# Provenance declaration for flat_plate_su2 (see src/cfdb/provenance/).
+# honesty is NEVER declared here: it is derived mechanically by the audit.
+citation: >-
+  Blasius, H., "Grenzschichten in Fluessigkeiten mit kleiner Reibung",
+  Zeitschrift fuer Mathematik und Physik, Vol. 56, 1908 (laminar flat-plate
+  boundary layer, Cf = 0.664 / sqrt(Re_x))
+source_url: null
+retrieved: null
+transcription_verified: false
+file_hashes:
+  reference/blasius_cf.csv: e3bea9428932d3f052273e187bae4feb243c6d4380a92cd60b154b1301d03f40
+notes:
+  - "blasius_cf.csv matches Cf = 0.664/sqrt(Re_x) with Re_L = 2.0e5 (max rel err
+    0.36%, 3-sig-fig rounding), which is inconsistent with case.yaml Re = 1.0e6;
+    discrepancy unresolved, so transcription_verified stays false."

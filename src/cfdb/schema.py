@@ -186,6 +186,15 @@ class MetricSpec(BaseModel):
     curve_l2_tolerance: dict[str, float] | None = None
     """Per-curve L2 norm tolerance (optional)."""
 
+    # === P4-G: absolute tolerance for zero-reference QoIs ===
+    qoi_absolute_tolerance: dict[str, float] = Field(default_factory=dict)
+    """Per-QoI absolute error tolerance for zero-reference QoIs.
+
+    When a reference value is exactly 0, relative error is undefined.
+    If the QoI is listed here, the gate checks |computed - reference|
+    against this absolute tolerance instead of silently skipping the QoI.
+    Example: {'cl': 0.01} for a symmetric airfoil at alpha=0."""
+
 
 class BudgetSpec(BaseModel):
     """Resource budget specification."""
@@ -384,3 +393,16 @@ class MetricsResult(BaseModel):
 
     Populated by MetricsEngine.compute() from artifacts.qoi_values.
     None for dry_run / failed runs / old data (backward compatible)."""
+
+    # === P4-G: honesty-hardening fields (defaults keep old data readable) ===
+    ungated_qoi: list[str] = Field(default_factory=list)
+    """QoIs declared in outputs.qoi whose error was computed but for which
+    no tolerance is configured. They do NOT affect pass/fail (backward
+    compatible), but reporting layers must disclose that these numbers
+    are not constrained by any gate."""
+
+    budget_exceeded: bool = False
+    """True when check_budget() reported at least one budget violation.
+
+    Budget overruns keep warning semantics (they never flip pass/fail),
+    but showcase/trust efficiency dimensions consume this flag."""

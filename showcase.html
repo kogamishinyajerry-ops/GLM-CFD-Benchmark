@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLM-CFD-Benchmark · 可信度平台 Showcase</title>
+<style>
+:root{
+  --paper:#F6F2EA; --panel:#EFE9DD; --ink:#2B2620; --clay:#C15F3C;
+  --evidence:#3D7A50; --amber:#A8722C; --risk:#B3362A;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:Georgia,"Times New Roman","Songti SC",serif;line-height:1.65;font-size:16px}
+header.hero,main,footer{max-width:1100px;margin:0 auto;padding:0 28px}
+header.hero{padding-top:52px;padding-bottom:8px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--clay);margin:0 0 14px}
+h1{font-size:32px;line-height:1.3;margin:0 0 12px;font-weight:700}
+h1 .accent{color:var(--clay)}
+.thesis{font-size:17px;max-width:56em;margin:0 0 10px}
+.meta{font-family:var(--mono);font-size:12px;color:#6f675c;margin:0}
+section{margin:44px 0}
+h2{font-size:21px;margin:0 0 4px;border-bottom:2px solid var(--clay);
+  padding-bottom:8px;font-weight:700}
+h2 .secno{color:var(--clay);font-family:var(--mono);font-size:17px;margin-right:8px}
+h3{font-size:15px;margin:0 0 6px}
+.lede{font-size:14px;color:#6f675c;margin:8px 0 16px}
+.mono{font-family:var(--mono);font-size:13px}
+.dim{color:#8a8073}
+.risk{color:var(--risk)}
+table{border-collapse:collapse;width:100%;margin:14px 0;background:var(--panel);
+  font-size:14px}
+th,td{border:1px solid #ddd3c2;padding:8px 12px;text-align:left;vertical-align:top}
+th{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+  color:#6f675c;background:#e9e2d2;font-weight:600}
+td.mono,th.num{font-family:var(--mono);font-size:13px}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;
+  letter-spacing:.04em;padding:2px 9px;border-radius:3px;border:1px solid;white-space:nowrap}
+.h-real{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.h-mid{color:var(--ink);border-color:#b0a692;background:rgba(43,38,32,.05)}
+.h-warn{color:var(--amber);border-color:var(--amber);background:rgba(168,114,44,.09)}
+.h-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.v-pass{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.v-warn{color:var(--amber);border-color:var(--amber);background:rgba(168,114,44,.09)}
+.v-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.empty{background:var(--panel);border:1px dashed #c9bda6;border-radius:4px;
+  padding:18px 20px;color:#6f675c;font-size:15px;margin:14px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px;
+  margin:14px 0}
+.card{background:var(--panel);border:1px solid #ddd3c2;border-radius:4px;padding:16px}
+.card .radar svg{width:100%;height:auto}
+.notes{font-size:12.5px;color:#6f675c;margin:6px 0 0;padding-left:18px}
+.notes div{margin:2px 0}
+.bucket{background:var(--panel);border:1px solid #ddd3c2;border-radius:4px;
+  padding:14px 16px;margin:14px 0}
+.bucket h3 .mode{color:var(--risk);font-family:var(--mono);font-size:14px}
+.bucket h3 .count{color:var(--clay);font-family:var(--mono);font-size:14px;margin-left:8px}
+.bucket table{margin:8px 0 0;background:transparent}
+.guard{color:var(--clay);font-style:italic}
+.ruler{color:var(--clay);font-weight:600}
+footer{border-top:1px solid #d8ccb6;margin-top:56px;padding-top:18px;padding-bottom:44px}
+footer p{font-size:13px;color:#6f675c;margin:0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <p class="kicker">GLM-CFD-Benchmark · Trust Platform · cfdb v0.1.0</p>
+  <h1>benchmark 不是排行榜，<span class="accent">是课题组自己的裁判所</span></h1>
+  <p class="thesis">真值集（truth set，出处分级、逐文件 sha256 可核）＋ 失败模式库（failure
+    library，教训资产化、只增不删）＋ 冻结尺子（frozen scorer，改尺子即拒评）——三样在本仓
+    是一等公民，让平台能给 AI agent 的 CFD 产出打分。</p>
+  <p class="meta">generated 2026-07-08T11:54:27+00:00 · 数据源 .</p>
+</header>
+
+<main>
+
+<section id="provenance">
+  <h2><span class="secno">②</span>真值集出处（provenance audit 实况）</h2>
+  <p class="lede">honesty 等级由 reference 类型 + 引文机械派生，不许手填；文件哈希渲染时重算，
+    漂移即降级 DECLARED-NOT-VERIFIED。</p>
+  
+  <table>
+    <thead><tr><th>Case</th><th>类型</th><th>出处等级</th><th>引文</th>
+      <th>文件校验</th><th>备注</th></tr></thead>
+    <tbody>
+    
+    <tr>
+      <td class="mono">flat_plate_su2</td>
+      <td class="mono">analytical</td>
+      <td><span class="badge h-mid" data-honesty="ANALYTIC">ANALYTIC</span></td>
+      <td>Blasius, H., &#34;Grenzschichten in Fluessigkeiten mit kleiner Reibung&#34;, Zeitschrift fuer Mathematik und Physik, Vol. 56, 1908 (laminar flat-plate boundary layer, Cf = 0.664 / sqrt(Re_x))
+        </td>
+      <td class="mono">ok 1 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        <div>blasius_cf.csv matches Cf = 0.664/sqrt(Re_x) with Re_L = 2.0e5 (max rel err 0.36%, 3-sig-fig rounding), which is inconsistent with case.yaml Re = 1.0e6; discrepancy unresolved, so transcription_verified stays false.</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">lid_driven_cavity</td>
+      <td class="mono">dns</td>
+      <td><span class="badge h-real" data-honesty="REAL">REAL</span></td>
+      <td>Ghia, U., Ghia, K. N., Shin, C. T., &#34;High-Re Solutions for Incompressible Flow Using the Navier-Stokes Equations and a Multigrid Method&#34;, J. Comput. Phys. 48, pp. 387-411, 1982 (Table I, Re=100 column)
+        </td>
+      <td class="mono">ok 1 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        <div>Values spot-checked against the published Table I Re=100 column (e.g. u=0.84123 at y/H=0.9766) on 2026-07-08; full-table cross-check pending.</div><div>Inline qoi centerline_umax=0.665 is interpolated from this CSV at y/H=0.95 (probe-line top); the pre-v4 value 0.371 was untraceable and removed.</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">mock_failure</td>
+      <td class="mono">analytical</td>
+      <td><span class="badge h-mid" data-honesty="ANALYTIC">ANALYTIC</span></td>
+      <td><span class="dim">无引文</span></td>
+      <td class="mono">ok 0 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">mock_missing_qoi</td>
+      <td class="mono">analytical</td>
+      <td><span class="badge h-mid" data-honesty="ANALYTIC">ANALYTIC</span></td>
+      <td><span class="dim">无引文</span></td>
+      <td class="mono">ok 0 · drift 0 · missing 0 · unanchored 1</td>
+      <td class="notes">
+        <div>reference file not anchored in provenance.yaml: reference/qoi.json</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">mock_missing_reference</td>
+      <td class="mono">analytical</td>
+      <td><span class="badge h-risk" data-honesty="DECLARED-NOT-VERIFIED">DECLARED-NOT-VERIFIED</span></td>
+      <td><span class="dim">无引文</span></td>
+      <td class="mono risk">ok 0 · drift 0 · missing 1 · unanchored 0</td>
+      <td class="notes">
+        <div>reference file missing: reference/nonexistent.json</div><div>honesty downgraded from ANALYTIC to DECLARED-NOT-VERIFIED</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">mock_success</td>
+      <td class="mono">analytical</td>
+      <td><span class="badge h-mid" data-honesty="ANALYTIC">ANALYTIC</span></td>
+      <td><span class="dim">无引文</span></td>
+      <td class="mono">ok 0 · drift 0 · missing 0 · unanchored 1</td>
+      <td class="notes">
+        <div>reference file not anchored in provenance.yaml: reference/qoi.json</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">naca0012_a0</td>
+      <td class="mono">experimental</td>
+      <td><span class="badge h-real" data-honesty="REAL">REAL</span></td>
+      <td>Ladson, C. L., &#34;Effects of Independent Variation of Mach and Reynolds Numbers on the Low-Speed Aerodynamic Characteristics of the NACA 0012 Airfoil Section&#34;, NASA TM-4074, 1988
+        </td>
+      <td class="mono">ok 2 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        <div>Transcribed values not yet cross-checked against the original TM-4074 tables.</div><div>Retrieval date of the original transcription unknown; sha256 anchored 2026-07-08.</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">naca0012_a10</td>
+      <td class="mono">experimental</td>
+      <td><span class="badge h-real" data-honesty="REAL">REAL</span></td>
+      <td>Ladson, C. L., &#34;Effects of Independent Variation of Mach and Reynolds Numbers on the Low-Speed Aerodynamic Characteristics of the NACA 0012 Airfoil Section&#34;, NASA TM-4074, 1988
+        </td>
+      <td class="mono">ok 1 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        <div>Transcribed values not yet cross-checked against the original TM-4074 tables.</div><div>Retrieval date of the original transcription unknown; sha256 anchored 2026-07-08.</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">naca0012_a15</td>
+      <td class="mono">experimental</td>
+      <td><span class="badge h-real" data-honesty="REAL">REAL</span></td>
+      <td>Ladson, C. L., &#34;Effects of Independent Variation of Mach and Reynolds Numbers on the Low-Speed Aerodynamic Characteristics of the NACA 0012 Airfoil Section&#34;, NASA TM-4074, 1988
+        </td>
+      <td class="mono">ok 1 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        <div>Transcribed values not yet cross-checked against the original TM-4074 tables.</div><div>Retrieval date of the original transcription unknown; sha256 anchored 2026-07-08.</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    <tr>
+      <td class="mono">naca0012_a5</td>
+      <td class="mono">experimental</td>
+      <td><span class="badge h-real" data-honesty="REAL">REAL</span></td>
+      <td>Ladson, C. L., &#34;Effects of Independent Variation of Mach and Reynolds Numbers on the Low-Speed Aerodynamic Characteristics of the NACA 0012 Airfoil Section&#34;, NASA TM-4074, 1988
+        </td>
+      <td class="mono">ok 1 · drift 0 · missing 0 · unanchored 0</td>
+      <td class="notes">
+        <div>Transcribed values not yet cross-checked against the original TM-4074 tables.</div><div>Retrieval date of the original transcription unknown; sha256 anchored 2026-07-08.</div>
+        <div class="dim">transcription_verified: false（转录未与原表核对，如实标注）</div>
+      </td>
+    </tr>
+    
+    </tbody>
+  </table>
+  
+</section>
+
+<section id="trust">
+  <h2><span class="secno">③</span>TrustProfile 五维画像</h2>
+  <p class="lede">画像 ≠ 判决：五维雷达 + honesty 顶栏，刻意无聚合总分；score = None 的维度
+    画虚线缺口标「insufficient data」，绝不画成 0。</p>
+  
+  <div class="cards">
+    
+    <article class="card">
+      <h3 class="mono">lid_driven_cavity / openfoam</h3>
+      <p class="mono dim">n_runs = 5 ·
+        <span class="badge h-real" data-honesty-banner="REAL">REAL</span></p>
+      <div class="radar"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 620" font-family="sans-serif">
+<rect width="680" height="620" fill="white"/>
+<text x="340" y="32" text-anchor="middle" font-size="20" fill="#333333">Trust Profile — lid_driven_cavity / openfoam</text>
+<rect x="210" y="44" width="260" height="26" rx="4" fill="#009E73" fill-opacity="0.15" stroke="#009E73"/>
+<text x="340" y="62" text-anchor="middle" font-size="14" fill="#009E73">honesty: REAL</text>
+<polygon points="340.0,295.0 382.8,326.1 366.5,376.4 313.5,376.4 297.2,326.1" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="292.0" font-size="10" fill="#bbbbbb">0.25</text>
+<polygon points="340.0,250.0 425.6,312.2 392.9,412.8 287.1,412.8 254.4,312.2" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="247.0" font-size="10" fill="#bbbbbb">0.5</text>
+<polygon points="340.0,205.0 468.4,298.3 419.4,449.2 260.6,449.2 211.6,298.3" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="202.0" font-size="10" fill="#bbbbbb">0.75</text>
+<polygon points="340.0,160.0 511.2,284.4 445.8,485.6 234.2,485.6 168.8,284.4" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="157.0" font-size="10" fill="#bbbbbb">1</text>
+<line x1="340.0" y1="340.0" x2="340.0" y2="160.0" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="511.2" y2="284.4" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="445.8" y2="485.6" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="234.2" y2="485.6" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="168.8" y2="284.4" stroke="#bbbbbb"/>
+<polygon points="340.0,340.0 408.5,317.8 445.2,484.8 304.7,388.5 340.0,340.0" fill="#0072B2" fill-opacity="0.15" stroke="#0072B2" stroke-width="2"/>
+<text x="340.0" y="120.4" text-anchor="middle" font-size="14" fill="#333333">accuracy</text>
+<circle cx="340.0" cy="340.0" r="4" fill="#0072B2"/>
+<text x="340.0" y="136.4" text-anchor="middle" font-size="12" fill="#0072B2">0.00</text>
+<text x="548.9" y="272.1" text-anchor="start" font-size="14" fill="#333333">robustness</text>
+<circle cx="408.5" cy="317.8" r="4" fill="#0072B2"/>
+<text x="548.9" y="288.1" text-anchor="start" font-size="12" fill="#0072B2">0.40</text>
+<text x="469.1" y="517.7" text-anchor="start" font-size="14" fill="#333333">efficiency</text>
+<circle cx="445.2" cy="484.8" r="4" fill="#0072B2"/>
+<text x="469.1" y="533.7" text-anchor="start" font-size="12" fill="#0072B2">0.99</text>
+<text x="210.9" y="517.7" text-anchor="end" font-size="14" fill="#333333">completeness</text>
+<circle cx="304.7" cy="388.5" r="4" fill="#0072B2"/>
+<text x="210.9" y="533.7" text-anchor="end" font-size="12" fill="#0072B2">0.33</text>
+<text x="131.1" y="272.1" text-anchor="end" font-size="14" fill="#333333">reproducibility</text>
+<circle cx="340.0" cy="340.0" r="4" fill="#0072B2"/>
+<text x="131.1" y="288.1" text-anchor="end" font-size="12" fill="#0072B2">0.00</text>
+<text x="340" y="592" text-anchor="middle" font-size="12" fill="#333333">n_runs = 5</text>
+<text x="340" y="610" text-anchor="middle" font-size="11" fill="#bbbbbb">five dimensions, no aggregate score (by design)</text>
+</svg></div>
+      
+    </article>
+    
+    <article class="card">
+      <h3 class="mono">naca0012_a5 / openfoam</h3>
+      <p class="mono dim">n_runs = 1 ·
+        <span class="badge h-real" data-honesty-banner="REAL">REAL</span></p>
+      <div class="radar"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 620" font-family="sans-serif">
+<rect width="680" height="620" fill="white"/>
+<text x="340" y="32" text-anchor="middle" font-size="20" fill="#333333">Trust Profile — naca0012_a5 / openfoam</text>
+<rect x="210" y="44" width="260" height="26" rx="4" fill="#009E73" fill-opacity="0.15" stroke="#009E73"/>
+<text x="340" y="62" text-anchor="middle" font-size="14" fill="#009E73">honesty: REAL</text>
+<polygon points="340.0,295.0 382.8,326.1 366.5,376.4 313.5,376.4 297.2,326.1" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="292.0" font-size="10" fill="#bbbbbb">0.25</text>
+<polygon points="340.0,250.0 425.6,312.2 392.9,412.8 287.1,412.8 254.4,312.2" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="247.0" font-size="10" fill="#bbbbbb">0.5</text>
+<polygon points="340.0,205.0 468.4,298.3 419.4,449.2 260.6,449.2 211.6,298.3" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="202.0" font-size="10" fill="#bbbbbb">0.75</text>
+<polygon points="340.0,160.0 511.2,284.4 445.8,485.6 234.2,485.6 168.8,284.4" fill="none" stroke="#dddddd"/>
+<text x="346.0" y="157.0" font-size="10" fill="#bbbbbb">1</text>
+<line x1="340.0" y1="340.0" x2="340.0" y2="160.0" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="511.2" y2="284.4" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="445.8" y2="485.6" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="234.2" y2="485.6" stroke="#bbbbbb"/>
+<line x1="340.0" y1="340.0" x2="168.8" y2="284.4" stroke="#D55E00" stroke-dasharray="6 4"/>
+<line x1="340.0" y1="340.0" x2="511.2" y2="284.4" stroke="#0072B2" stroke-width="2"/>
+<line x1="511.2" y1="284.4" x2="401.2" y2="424.2" stroke="#0072B2" stroke-width="2"/>
+<line x1="401.2" y1="424.2" x2="304.7" y2="388.5" stroke="#0072B2" stroke-width="2"/>
+<text x="340.0" y="120.4" text-anchor="middle" font-size="14" fill="#333333">accuracy</text>
+<circle cx="340.0" cy="340.0" r="4" fill="#0072B2"/>
+<text x="340.0" y="136.4" text-anchor="middle" font-size="12" fill="#0072B2">0.00</text>
+<text x="548.9" y="272.1" text-anchor="start" font-size="14" fill="#333333">robustness</text>
+<circle cx="511.2" cy="284.4" r="4" fill="#0072B2"/>
+<text x="548.9" y="288.1" text-anchor="start" font-size="12" fill="#0072B2">1.00</text>
+<text x="469.1" y="517.7" text-anchor="start" font-size="14" fill="#333333">efficiency</text>
+<circle cx="401.2" cy="424.2" r="4" fill="#0072B2"/>
+<text x="469.1" y="533.7" text-anchor="start" font-size="12" fill="#0072B2">0.58</text>
+<text x="210.9" y="517.7" text-anchor="end" font-size="14" fill="#333333">completeness</text>
+<circle cx="304.7" cy="388.5" r="4" fill="#0072B2"/>
+<text x="210.9" y="533.7" text-anchor="end" font-size="12" fill="#0072B2">0.33</text>
+<text x="131.1" y="272.1" text-anchor="end" font-size="14" fill="#333333">reproducibility</text>
+<text x="131.1" y="288.1" text-anchor="end" font-size="12" font-style="italic" fill="#D55E00">insufficient data</text>
+<text x="340" y="592" text-anchor="middle" font-size="12" fill="#333333">n_runs = 1</text>
+<text x="340" y="610" text-anchor="middle" font-size="11" fill="#bbbbbb">five dimensions, no aggregate score (by design)</text>
+</svg></div>
+      
+    </article>
+    
+  </div>
+  
+  
+</section>
+
+<section id="failures">
+  <h2><span class="secno">④</span>失败模式库</h2>
+  <p class="lede">库 append-only、fingerprint 去重计数——同一失败重复出现 count++，教训是资产，
+    只增不删。</p>
+  
+  <p class="mono dim">共 5 次失败 · 3 类 mode</p>
+  
+  <div class="bucket">
+    <h3><span class="mode">MESH_FAILURE</span><span class="count">×1</span></h3>
+    <table>
+      <thead><tr><th>fingerprint</th><th>case / solver</th><th>signature</th>
+        <th>count</th><th>last seen</th><th>护栏注记</th></tr></thead>
+      <tbody>
+      
+      <tr>
+        <td class="mono">5bd225ab03567350</td>
+        <td class="mono">lid_driven_cavity / openfoam</td>
+        <td class="mono">step=block_mesh exit=1</td>
+        <td class="mono">1</td>
+        <td class="mono">20260708T111006Z_lid_driven_cavity_openfoam_316c0317</td>
+        <td><span class="guard">prepare() must stage the case blockMeshDict into system/ (v2312 location) — pinned by tests/test_ldc_real_path.py</span></td>
+      </tr>
+      
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="bucket">
+    <h3><span class="mode">TOLERANCE_EXCEEDED</span><span class="count">×2</span></h3>
+    <table>
+      <thead><tr><th>fingerprint</th><th>case / solver</th><th>signature</th>
+        <th>count</th><th>last seen</th><th>护栏注记</th></tr></thead>
+      <tbody>
+      
+      <tr>
+        <td class="mono">5031155f85bb1186</td>
+        <td class="mono">lid_driven_cavity / openfoam</td>
+        <td class="mono">qoi=centerline_umax</td>
+        <td class="mono">1</td>
+        <td class="mono">20260708T111730Z_lid_driven_cavity_openfoam_657da738</td>
+        <td><span class="guard">probe parser must read EVERY vector per line (finditer, not search) — pinned by tests/test_ldc_real_path.py</span></td>
+      </tr>
+      
+      <tr>
+        <td class="mono">515a3bcd81409a5d</td>
+        <td class="mono">naca0012_a5 / openfoam</td>
+        <td class="mono">qoi=cd,cl</td>
+        <td class="mono">1</td>
+        <td class="mono">20260708T111911Z_naca0012_a5_openfoam_da1d3f9f</td>
+        <td><span class="guard">10.8k-cell mesh under-resolves Re=6e6 boundary layer; run a y+/GCI mesh study before any validation claim</span></td>
+      </tr>
+      
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="bucket">
+    <h3><span class="mode">SETUP_ERROR</span><span class="count">×2</span></h3>
+    <table>
+      <thead><tr><th>fingerprint</th><th>case / solver</th><th>signature</th>
+        <th>count</th><th>last seen</th><th>护栏注记</th></tr></thead>
+      <tbody>
+      
+      <tr>
+        <td class="mono">f79ec7a5cba5fd2f</td>
+        <td class="mono">lid_driven_cavity / openfoam</td>
+        <td class="mono">step=solve exit=1</td>
+        <td class="mono">2</td>
+        <td class="mono">20260708T111650Z_lid_driven_cavity_openfoam_509e7fde</td>
+        <td><span class="guard">LDC 0/U,0/p need full FoamFile headers + boundaryField; fvSolution needs pFinal — pinned by tests/test_ldc_real_path.py</span></td>
+      </tr>
+      
+      </tbody>
+    </table>
+  </div>
+  
+  
+</section>
+
+<section id="regression">
+  <h2><span class="secno">⑤</span>回归门状态</h2>
+  <p class="lede">判决渲染时重算：重读候选 run、重哈希 baseline 锚定文件——缺 baseline 是
+    NO_BASELINE 不是 PASS，锚定漂移是 TAMPERED。</p>
+  
+  <p class="mono dim">baseline 数 1 · 容忍带
+    absolute=0.005 / relative=0.1
+    （公开可调，配置于 baselines.json 顶层）</p>
+  <table>
+    <thead><tr><th>Case / Solver</th><th>Baseline run</th><th>人签</th>
+      <th>最近候选 run</th><th>Gate 判决</th><th>依据</th></tr></thead>
+    <tbody>
+    
+    <tr>
+      <td class="mono">lid_driven_cavity / openfoam</td>
+      <td class="mono">20260708T111832Z_lid_driven_cavity_openfoam_bb28984e</td>
+      <td>Jerry<br><span class="dim mono">2026-07-08T11:53:19.217807+00:00</span></td>
+      <td class="mono">20260708T111832Z_lid_driven_cavity_openfoam_bb28984e</td>
+      <td><span class="badge v-pass" data-verdict="PASS">PASS</span></td>
+      <td class="notes"><div>all 1 baseline QoI(s) within tolerance band (absolute=0.005, relative=0.1)</div></td>
+    </tr>
+    
+    </tbody>
+  </table>
+  
+</section>
+
+<section id="agentbench">
+  <h2><span class="secno">⑥</span>agent-eval 账本摘要</h2>
+  <p class="lede">尺子编号 = contract.json 文件 sha256 前 8 位；冻结物渲染时重哈希——DRIFTED
+    即改尺子，打分被拒（exit 3）；作废提交 score = None，绝不编分。</p>
+  
+  <table>
+    <thead><tr><th>Case</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th>
+      <th>提交</th><th>valid</th><th>best score</th><th>备注</th></tr></thead>
+    <tbody>
+    
+    <tr>
+      <td class="mono">lid_driven_cavity</td>
+      <td class="mono ruler">#7e37311d</td>
+      <td class="mono">4</td>
+      <td><span class="badge v-pass" data-frozen="INTACT">INTACT</span></td>
+      <td class="mono">2</td>
+      <td class="mono">2</td>
+      <td class="mono">-0.020714</td>
+      <td class="notes">
+        
+        
+        
+      </td>
+    </tr>
+    
+    </tbody>
+  </table>
+  
+</section>
+
+</main>
+
+<footer>
+  <p>诚实边界：本页所有数字取自本仓真实产物文件（cases/ · runs/ · failures/ · baselines/ · agentbench/），渲染时重读/重算，绝不接受自报值；SURROGATE / MOCK 级出处如实标注，绝不冒充 REAL 验证；无数据版块如实留白。</p>
+</footer>
+
+</body>
+</html>

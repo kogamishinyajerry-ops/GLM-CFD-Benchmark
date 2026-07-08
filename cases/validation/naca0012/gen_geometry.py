@@ -93,7 +93,7 @@ def write_selig_format(x: np.ndarray, y: np.ndarray, path: Path, name: str = "NA
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [name]
-    for xi, yi in zip(x, y):
+    for xi, yi in zip(x, y, strict=True):
         lines.append(f"{xi:.6f} {yi:.6f}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -197,6 +197,6 @@ if __name__ == "__main__":
     # Run as: python -m cfdb.cases.naca0012.gen_geometry  OR  python gen_geometry.py
     out = Path(__file__).parent / "geometry"
     dat, stl = generate_naca0012(out)
-    print(f"Generated NACA0012 geometry:")
+    print("Generated NACA0012 geometry:")
     print(f"  Selig .dat: {dat}")
     print(f"  STL       : {stl}")

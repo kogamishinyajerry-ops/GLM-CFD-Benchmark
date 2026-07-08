@@ -71,8 +71,13 @@ class MetricsEngine:
         # 3. Get computed QoI values
         computed_qoi = artifacts.qoi_values or {}
 
-        # 4. Compute relative errors for expected QoIs
+        # 4. Compute relative errors for expected QoIs.
+        # P4-G hole 1: a reference value of exactly 0 makes relative error
+        # undefined. Instead of silently skipping the QoI, gate it with a
+        # configured absolute tolerance, or fail-closed to 'incomplete'.
+        absolute_tolerances = case.metrics.qoi_absolute_tolerance
         errors: dict[str, float] = {}
+        absolute_gate_failed = False
         for qoi_name in case.outputs.qoi:
             if qoi_name not in computed_qoi:
                 notes.append(f"missing computed QoI: {qoi_name}")
@@ -82,25 +87,52 @@ class MetricsEngine:
                 continue
             ref_val = reference_qoi[qoi_name]
             if ref_val == 0:
-                notes.append(
-                    f"reference value for '{qoi_name}' is 0, "
-                    "cannot compute relative error"
-                )
+                if qoi_name in absolute_tolerances:
+                    abs_err = abs(computed_qoi[qoi_name] - ref_val)
+                    abs_tol = absolute_tolerances[qoi_name]
+                    if abs_err > abs_tol:
+                        absolute_gate_failed = True
+                        notes.append(
+                            f"zero-reference QoI '{qoi_name}' failed absolute "
+                            f"tolerance: |computed - ref| = {abs_err:.6g} > "
+                            f"{abs_tol:.6g}"
+                        )
+                    else:
+                        notes.append(
+                            f"zero-reference QoI '{qoi_name}' passed absolute "
+                            f"tolerance: |computed - ref| = {abs_err:.6g} <= "
+                            f"{abs_tol:.6g}"
+                        )
+                else:
+                    notes.append(
+                        "missing absolute tolerance for zero-reference "
+                        f"QoI '{qoi_name}'"
+                    )
                 continue
             errors[qoi_name] = abs(computed_qoi[qoi_name] - ref_val) / abs(ref_val)
 
         # 5. Determine pass/fail
         tolerances = case.metrics.qoi_relative_tolerance
         missing_notes = [n for n in notes if n.startswith("missing")]
-        qoi_pass = len(missing_notes) == 0
+        qoi_pass = len(missing_notes) == 0 and not absolute_gate_failed
         for qoi_name, err in errors.items():
             if qoi_name in tolerances and err > tolerances[qoi_name]:
                 qoi_pass = False
 
-        # 6. Budget check
+        # P4-G hole 2: QoIs with a computed error but no configured tolerance
+        # do not participate in the gate. Keep that (backward compatible) but
+        # disclose them so reporting layers can show they are unconstrained.
+        ungated_qoi = [name for name in errors if name not in tolerances]
+        for qoi_name in ungated_qoi:
+            notes.append(
+                f"ungated QoI '{qoi_name}': error computed but no tolerance "
+                "configured; value does not affect pass/fail"
+            )
+
+        # 6. Budget check (P4-G hole 3: expose overrun as a structured flag;
+        # warning semantics are kept — the flag never flips pass/fail)
         if timing is not None:
             budget_notes = check_budget(timing, case.budget)
-            notes.extend(budget_notes)
         else:
             now = datetime.now(timezone.utc)
             timing_for_budget = TimingSpec(
@@ -108,7 +140,9 @@ class MetricsEngine:
                 start_time=now,
                 end_time=now,
             )
-            notes.extend(check_budget(timing_for_budget, case.budget))
+            budget_notes = check_budget(timing_for_budget, case.budget)
+        notes.extend(budget_notes)
+        budget_exceeded = len(budget_notes) > 0
 
         # 7. Determine overall_status
         if qoi_pass:
@@ -132,6 +166,8 @@ class MetricsEngine:
             overall_status=status,
             notes=notes,
             qoi_computed_values=qoi_computed if qoi_computed else None,
+            ungated_qoi=ungated_qoi,
+            budget_exceeded=budget_exceeded,
         )
 
     def _get_reference_qoi(

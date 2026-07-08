@@ -95,8 +95,12 @@ def extract_openfoam_centerline_umax(
         stripped = line.lstrip()
         if not stripped or stripped.startswith("#"):
             continue
-        match = vector_pattern.search(line)
-        if match:
+        # A probes data line carries ONE vector PER PROBE:
+        #   time  (Ux0 Uy0 Uz0)  (Ux1 Uy1 Uz1) ...
+        # re.search would only ever read probe 0 (a real-run bug caught by
+        # the first live LDC validation: umax came back as the bottom-wall
+        # probe value). Iterate over every vector on the line.
+        for match in vector_pattern.finditer(line):
             ux = float(match.group(1))
             uy = float(match.group(2))
             uz = float(match.group(3))

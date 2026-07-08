@@ -868,5 +868,456 @@ def _copy_tree(src: Path, dst: Path) -> None:
             target.write_bytes(item.read_bytes())
 
 
+# ============================================================================
+# P4 (Architecture v4.0): trust-platform commands
+# ============================================================================
+
+failures_app = typer.Typer(
+    name="failures",
+    help="Failure mode library: ingest, list, annotate (P4-C).",
+    no_args_is_help=True,
+)
+app.add_typer(failures_app, name="failures")
+
+baseline_app = typer.Typer(
+    name="baseline",
+    help="Baseline governance: list, human-signed promote (P4-D).",
+    no_args_is_help=True,
+)
+app.add_typer(baseline_app, name="baseline")
+
+agent_eval_app = typer.Typer(
+    name="agent-eval",
+    help="Frozen-ruler agent submission scoring (P4-E).",
+    no_args_is_help=True,
+)
+app.add_typer(agent_eval_app, name="agent-eval")
+
+_CasesDirOption = Annotated[
+    Path,
+    typer.Option("--cases-dir", help="Directory containing case categories."),
+]
+_RunsDirOption = Annotated[
+    Path,
+    typer.Option("--runs-dir", help="Directory containing run outputs."),
+]
+_BaselinesOption = Annotated[
+    Path,
+    typer.Option("--baselines", help="Path to baselines.json."),
+]
+_FailureLibraryOption = Annotated[
+    Path,
+    typer.Option("--library", help="Path to the failure library JSON file."),
+]
+_AgentbenchDirOption = Annotated[
+    Path,
+    typer.Option("--agentbench-dir", help="Directory holding contracts and ledgers."),
+]
+
+_GATE_EXIT_CODES: dict[str, int] = {
+    "PASS": 0,
+    "REGRESSION": 1,
+    "INVALID_RUN": 1,
+    "NO_BASELINE": 2,
+    "TAMPERED": 3,
+}
+
+
+@app.command("provenance")
+def provenance_cmd(
+    cases_dir: _CasesDirOption = Path("cases"),
+) -> None:
+    """Audit reference-data provenance for all cases (P4-A)."""
+    from cfdb.provenance import ProvenanceRecord, audit_all
+
+    records = audit_all(cases_dir)
+    if not records:
+        typer.echo(f"No cases found under {cases_dir}.")
+        return
+
+    def hash_state(record: ProvenanceRecord) -> str:
+        """Summarize per-file hash verification into one table cell."""
+        if not record.file_status:
+            return "no-files"
+        bad = sorted(s for s in record.file_status.values() if s != "ok")
+        if not bad:
+            return "ok"
+        counts: dict[str, int] = {}
+        for status in bad:
+            counts[status] = counts.get(status, 0) + 1
+        return ",".join(f"{k}:{v}" for k, v in sorted(counts.items()))
+
+    typer.echo(f"{'ID':<25} {'Type':<13} {'Honesty':<23} {'Hashes':<14} Citation")
+    typer.echo("-" * 100)
+    for record in records:
+        citation = record.citation or "-"
+        typer.echo(
+            f"{record.case_id:<25} {record.reference_type:<13} "
+            f"{record.honesty:<23} {hash_state(record):<14} {citation}"
+        )
+    typer.echo(f"\nTotal: {len(records)} case(s)")
+
+
+@app.command("trust")
+def trust_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Case ID to profile.")],
+    solver: Annotated[str, typer.Option("--solver", "-s", help="Solver name to profile.")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print the profile as JSON instead of a table."),
+    ] = False,
+    svg: Annotated[
+        Path | None,
+        typer.Option("--svg", help="Also write the five-axis radar SVG to this path."),
+    ] = None,
+    cases_dir: _CasesDirOption = Path("cases"),
+    runs_dir: _RunsDirOption = Path("runs"),
+) -> None:
+    """Build the TrustProfile for one (case, solver) pair (P4-B)."""
+    from cfdb.provenance import audit_case
+    from cfdb.trust import DIMENSION_NAMES, build_profile
+    from cfdb.trust.radar_svg import render as render_radar
+
+    registry = CaseRegistry(cases_dir)
+    try:
+        spec = registry.load(case)
+        case_dir = registry.get_case_dir(case)
+    except KeyError as e:
+        typer.echo(f"[FAIL] Unknown case '{case}': {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # Honesty banner is composed here from the provenance audit (the trust
+    # module deliberately does not import provenance).
+    honesty = audit_case(case_dir).honesty
+    repo = JsonManifestRepository(runs_dir)
+    profile = build_profile(spec, solver, repo, honesty=honesty)
+
+    if svg is not None:
+        svg.parent.mkdir(parents=True, exist_ok=True)
+        svg.write_text(render_radar(profile), encoding="utf-8")
+
+    if json_output:
+        typer.echo(profile.model_dump_json(indent=2))
+        return
+
+    typer.echo(f"Trust Profile — {profile.case_id} / {profile.solver}")
+    typer.echo(f"Honesty: {profile.honesty}")
+    typer.echo(f"Runs:    {profile.n_runs}")
+    typer.echo("-" * 72)
+    for name in DIMENSION_NAMES:
+        dim = profile.dimension(name)
+        shown = f"{dim.score:.3f}" if dim.score is not None else "n/a (insufficient data)"
+        typer.echo(f"{name:<17} {shown}")
+        for line in dim.evidence:
+            typer.echo(f"                  - {line}")
+    for note in profile.notes:
+        typer.echo(f"note: {note}")
+    if svg is not None:
+        typer.echo(f"[OK] Radar SVG: {svg}")
+
+
+@failures_app.command("ingest")
+def failures_ingest_cmd(
+    runs_dir: _RunsDirOption = Path("runs"),
+    library: _FailureLibraryOption = Path("failures/library.json"),
+) -> None:
+    """Scan runs and ingest failures into the append-only library."""
+    from cfdb.failures import FailureLibrary
+
+    lib = FailureLibrary(library)
+    summary = lib.ingest(runs_dir)
+    typer.echo(
+        f"Scanned {summary.scanned} run(s): {summary.new_records} new failure(s), "
+        f"{summary.updated_records} recurrence(s), {summary.passed} verified pass, "
+        f"{summary.already_ingested} already ingested."
+    )
+    for error in summary.errors:
+        typer.echo(f"[WARN] {error}", err=True)
+    typer.echo(f"Library: {library}")
+
+
+@failures_app.command("list")
+def failures_list_cmd(
+    mode: Annotated[
+        str | None,
+        typer.Option("--mode", help="Filter by failure mode (e.g. MESH_FAILURE)."),
+    ] = None,
+    library: _FailureLibraryOption = Path("failures/library.json"),
+) -> None:
+    """List failure records, optionally filtered by mode."""
+    from typing import cast
+
+    from cfdb.failures import FAILURE_MODES, FailureLibrary, FailureMode
+
+    if mode is not None and mode not in FAILURE_MODES:
+        typer.echo(
+            f"[FAIL] Unknown mode '{mode}'. Valid modes: {', '.join(FAILURE_MODES)}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    lib = FailureLibrary(library)
+    records = lib.records(mode=cast("FailureMode | None", mode))
+    if not records:
+        typer.echo("Failure library is empty (no matching records).")
+        return
+
+    typer.echo(f"{'Fingerprint':<18} {'Case':<20} {'Solver':<10} {'Mode':<19} {'Count':<6} Guard")
+    typer.echo("-" * 100)
+    for record in records:
+        guard = record.guard or "-"
+        typer.echo(
+            f"{record.fingerprint:<18} {record.case_id:<20} {record.solver:<10} "
+            f"{record.mode:<19} {record.count:<6} {guard}"
+        )
+        typer.echo(f"{'':<18} signature: {record.signature}  last_seen: {record.last_seen}")
+    typer.echo(f"\nTotal: {len(records)} record(s)")
+
+
+@failures_app.command("annotate")
+def failures_annotate_cmd(
+    fingerprint: Annotated[str, typer.Argument(help="Fingerprint of the record to annotate.")],
+    guard: Annotated[
+        str,
+        typer.Option("--guard", help="Human-written guard note (how to prevent this failure)."),
+    ],
+    library: _FailureLibraryOption = Path("failures/library.json"),
+) -> None:
+    """Attach a human-written guard note to a failure record."""
+    from cfdb.failures import FailureLibrary
+
+    lib = FailureLibrary(library)
+    try:
+        record = lib.annotate(fingerprint, guard)
+    except (KeyError, ValueError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"[OK] Guard noted for {record.fingerprint} ({record.case_id}/{record.solver}):")
+    typer.echo(f"  {record.guard}")
+
+
+@baseline_app.command("list")
+def baseline_list_cmd(
+    baselines: _BaselinesOption = Path("baselines/baselines.json"),
+    runs_dir: _RunsDirOption = Path("runs"),
+) -> None:
+    """List promoted baselines and the public regression margin."""
+    from cfdb.regression import BaselineStore
+
+    store = BaselineStore(baselines, runs_dir)
+    data = store.load()
+    margin = data.regression_margin
+    typer.echo(
+        f"Regression margin: absolute={margin.absolute}, relative={margin.relative}"
+    )
+    if not data.baselines:
+        typer.echo("No baselines promoted yet.")
+        return
+
+    typer.echo(f"{'Case':<22} {'Solver':<10} {'Run ID':<38} {'Promoted by':<14} Promoted at")
+    typer.echo("-" * 110)
+    for key in sorted(data.baselines):
+        entry = data.baselines[key]
+        typer.echo(
+            f"{entry.case_id:<22} {entry.solver:<10} {entry.run_id:<38} "
+            f"{entry.promoted_by:<14} {entry.promoted_at}"
+        )
+    typer.echo(f"\nTotal: {len(data.baselines)} baseline(s)")
+
+
+@baseline_app.command("promote")
+def baseline_promote_cmd(
+    run_id: Annotated[str, typer.Argument(help="Run ID to promote as baseline.")],
+    engineer: Annotated[
+        str,
+        typer.Option(
+            "--engineer",
+            help="Name of the engineer signing the promotion (required, no default).",
+        ),
+    ],
+    baselines: _BaselinesOption = Path("baselines/baselines.json"),
+    runs_dir: _RunsDirOption = Path("runs"),
+) -> None:
+    """Promote a passing run to baseline (human-signed, fail-closed)."""
+    from cfdb.regression import BaselineStore
+
+    store = BaselineStore(baselines, runs_dir)
+    try:
+        entry = store.promote(run_id, engineer)
+    except (ValueError, FileNotFoundError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(
+        f"[OK] Promoted run '{entry.run_id}' as baseline for "
+        f"{entry.case_id}/{entry.solver} (by {entry.promoted_by})."
+    )
+    typer.echo(f"  metrics_sha256: {entry.metrics_sha256}")
+
+
+@app.command("gate")
+def gate_cmd(
+    run_id: Annotated[str, typer.Argument(help="Candidate run ID to gate.")],
+    baselines: _BaselinesOption = Path("baselines/baselines.json"),
+    runs_dir: _RunsDirOption = Path("runs"),
+) -> None:
+    """Evaluate a run against its promoted baseline (P4-D regression gate).
+
+    Exit codes: 0=PASS, 1=REGRESSION/INVALID_RUN, 2=NO_BASELINE, 3=TAMPERED.
+    """
+    from cfdb.regression import BaselineStore, evaluate
+
+    store = BaselineStore(baselines, runs_dir)
+    verdict = evaluate(run_id, store)
+
+    typer.echo(f"Gate verdict for run '{run_id}': {verdict.verdict}")
+    for qoi, delta in sorted(verdict.deltas.items()):
+        typer.echo(f"  delta[{qoi}] = {delta:+.6g}")
+    for reason in verdict.reasons:
+        typer.echo(f"  {reason}")
+    raise typer.Exit(code=_GATE_EXIT_CODES[verdict.verdict])
+
+
+@agent_eval_app.command("init")
+def agent_eval_init_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Case ID to freeze.")],
+    cases_dir: _CasesDirOption = Path("cases"),
+    agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
+) -> None:
+    """Create the frozen scoring contract for a case (hashes the ruler now)."""
+    from cfdb.agentbench import init_contract, save_contract
+
+    registry = CaseRegistry(cases_dir)
+    try:
+        contract = init_contract(case, registry)
+    except (KeyError, FileNotFoundError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    contract_path = agentbench_dir / case / "contract.json"
+    save_contract(contract, contract_path)
+    typer.echo(f"[OK] Scoring contract for '{case}': {contract_path}")
+    typer.echo(f"  Frozen items: {len(contract.frozen)}")
+    typer.echo(f"  Weights: {contract.weights}")
+    typer.echo(f"  Validity gates: {', '.join(contract.validity_gates)}")
+
+
+@agent_eval_app.command("score")
+def agent_eval_score_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Case ID to score against.")],
+    submission: Annotated[
+        Path,
+        typer.Option("--submission", help="Submission directory holding qoi.json."),
+    ],
+    cases_dir: _CasesDirOption = Path("cases"),
+    agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
+) -> None:
+    """Score an agent submission against the frozen contract.
+
+    Exit code 3 means the frozen ruler drifted; scoring was refused.
+    """
+    from cfdb.agentbench import (
+        EXIT_FROZEN_DRIFT,
+        FrozenDriftError,
+        load_contract,
+        score_submission,
+    )
+
+    contract_path = agentbench_dir / case / "contract.json"
+    if not contract_path.exists():
+        typer.echo(
+            f"[FAIL] No contract at {contract_path} — run 'cfdb agent-eval init -c {case}' first.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    registry = CaseRegistry(cases_dir)
+    try:
+        contract = load_contract(contract_path)
+        spec = registry.load(case)
+        case_dir = registry.get_case_dir(case)
+    except (KeyError, ValueError, FileNotFoundError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    ledger_path = agentbench_dir / case / "ledger.jsonl"
+    try:
+        result = score_submission(contract, spec, case_dir, submission, ledger_path=ledger_path)
+    except FrozenDriftError as e:
+        typer.echo("[FAIL] Frozen ruler drifted — scoring refused (exit 3):", err=True)
+        for key in e.drifted:
+            typer.echo(f"  drifted: {key}", err=True)
+        raise typer.Exit(code=EXIT_FROZEN_DRIFT) from e
+    except ValueError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    shown_score = f"{result.score:.6g}" if result.score is not None else "None (not rankable)"
+    typer.echo(f"Submission: {result.submission_id}")
+    typer.echo(f"Valid:      {result.valid}")
+    typer.echo(f"Score:      {shown_score}")
+    for gate, ok in result.gates.items():
+        typer.echo(f"  gate {gate}: {'pass' if ok is True else 'FAIL'}")
+    for metric, contribution in result.breakdown.items():
+        typer.echo(f"  breakdown {metric}: {contribution:.6g}")
+    for note in result.notes:
+        typer.echo(f"  note: {note}")
+    typer.echo(f"[OK] Appended to ledger: {ledger_path}")
+
+
+@agent_eval_app.command("ledger")
+def agent_eval_ledger_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Case ID whose ledger to show.")],
+    agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
+) -> None:
+    """Print the append-only scoring ledger for a case."""
+    from cfdb.agentbench import read_ledger
+
+    ledger_path = agentbench_dir / case / "ledger.jsonl"
+    try:
+        entries = read_ledger(ledger_path)
+    except ValueError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    if not entries:
+        typer.echo(f"Ledger is empty (no submissions scored for '{case}').")
+        return
+
+    typer.echo(f"{'Submission':<28} {'Valid':<7} {'Score':<14} Scored at")
+    typer.echo("-" * 84)
+    for entry in entries:
+        shown = f"{entry.score:.6g}" if entry.score is not None else "-"
+        typer.echo(
+            f"{entry.submission_id:<28} {str(entry.valid):<7} {shown:<14} {entry.scored_at}"
+        )
+    typer.echo(f"\nTotal: {len(entries)} submission(s)")
+
+
+@app.command("showcase")
+def showcase_cmd(
+    out: Annotated[
+        Path,
+        typer.Option("--out", help="Output path for the self-contained showcase HTML."),
+    ] = Path("showcase.html"),
+    repo_root: Annotated[
+        Path,
+        typer.Option(
+            "--repo-root",
+            help="Repository root containing cases/, runs/, failures/, "
+            "baselines/ and agentbench/.",
+        ),
+    ] = Path("."),
+) -> None:
+    """Render the single-file trust-platform showcase HTML (P4-F)."""
+    from cfdb.reporting.showcase import render_showcase
+
+    try:
+        written = render_showcase(repo_root, out)
+    except ValueError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"[OK] Showcase: {written}")
+
+
 if __name__ == "__main__":
     app()

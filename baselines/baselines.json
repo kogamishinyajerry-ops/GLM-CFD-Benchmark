@@ -1,0 +1,22 @@
+{
+  "regression_margin": {
+    "absolute": 0.005,
+    "relative": 0.1
+  },
+  "baselines": {
+    "lid_driven_cavity::openfoam": {
+      "case_id": "lid_driven_cavity",
+      "solver": "openfoam",
+      "run_id": "20260708T111832Z_lid_driven_cavity_openfoam_bb28984e",
+      "promoted_by": "Jerry",
+      "promoted_at": "2026-07-08T11:53:19.217807+00:00",
+      "qoi_values": {
+        "centerline_umax": 0.6765178707453633
+      },
+      "qoi_relative_errors": {
+        "centerline_umax": 0.017320106384004896
+      },
+      "metrics_sha256": "7944f3051a7c4d7ceaa1f625408b7f2f9fed26d8baad6ffcf9da635364b7a96a"
+    }
+  }
+}

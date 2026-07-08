@@ -271,6 +271,11 @@ class BaselineStore:
         if len(engineer_name) == 0:
             raise ValueError("promotion requires a non-empty engineer name (--engineer)")
 
+        # Verify the anchor store is readable BEFORE anything else: a corrupt
+        # baselines.json must surface as BaselineFileError (fail-closed,
+        # CLI exit 3), not be masked by run-lookup errors (Codex R1 P2).
+        data = self.load()
+
         manifest, metrics = self.read_run(run_id)
         if metrics.overall_status != "pass":
             raise ValueError(
@@ -303,7 +308,7 @@ class BaselineStore:
             metrics_sha256=sha256_of_file(metrics_path),
         )
 
-        data = self.load()
+        # store already loaded above (fail-closed early check)
         data.baselines[baseline_key(manifest.case_id, manifest.solver)] = entry
         self.save(data)
         logger.info(

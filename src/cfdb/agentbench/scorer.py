@@ -82,6 +82,12 @@ class SubmissionScore(BaseModel):
     wall_time: WallTimeRecord | None = None
     """Self-reported wall time record (None for pre-existing ledger lines)."""
 
+    ruler_id: str | None = None
+    """First 8 hex chars of the contract.json sha256 that produced this
+    score. Rows from an older (re-anchored) ruler are excluded from
+    like-with-like ranking; None marks legacy rows of unknown lineage,
+    which never rank once a ruler filter is applied (fail-closed)."""
+
 
 def _load_json_dict(path: Path) -> dict[str, object] | None:
     """Load a JSON file expected to contain an object.
@@ -310,6 +316,7 @@ def score_submission(
     case_dir: Path,
     submission_dir: Path,
     ledger_path: Path | None = None,
+    ruler_id: str | None = None,
 ) -> SubmissionScore:
     """Score one agent submission against a frozen contract.
 
@@ -394,6 +401,7 @@ def score_submission(
         scored_at=datetime.now(timezone.utc).isoformat(),
         notes=notes,
         wall_time=WallTimeRecord(value_sec=wall_time),
+        ruler_id=ruler_id,
     )
     if ledger_path is not None:
         append_ledger(ledger_path, result)
@@ -477,7 +485,10 @@ def _is_rankable(entry: SubmissionScore) -> bool:
     return True
 
 
-def ranked(entries: list[SubmissionScore]) -> list[SubmissionScore]:
+def ranked(
+    entries: list[SubmissionScore],
+    ruler_id: str | None = None,
+) -> list[SubmissionScore]:
     """Return only rankable entries, best score first.
 
     A submission ranks only if ``valid is True`` **and** it carries a real,
@@ -487,9 +498,15 @@ def ranked(entries: list[SubmissionScore]) -> list[SubmissionScore]:
 
     Args:
         entries: Ledger entries.
+        ruler_id: When given, only entries scored under this exact ruler
+            rank — rows from an older (re-anchored) contract, and legacy
+            rows with unknown lineage (``ruler_id is None``), are excluded
+            so the leaderboard always compares like with like.
 
     Returns:
         Valid, consistent, scored entries sorted by score descending.
     """
     rankable = [e for e in entries if _is_rankable(e) is True]
+    if ruler_id is not None:
+        rankable = [e for e in rankable if e.ruler_id == ruler_id]
     return sorted(rankable, key=lambda e: e.score or 0.0, reverse=True)

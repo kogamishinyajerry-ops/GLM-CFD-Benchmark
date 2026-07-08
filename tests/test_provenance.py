@@ -451,3 +451,28 @@ def test_record_rejects_invalid_honesty_literal() -> None:
         ProvenanceRecord.model_validate(
             {"case_id": "c", "reference_type": "none", "honesty": "TOTALLY_LEGIT"}
         )
+
+
+def test_unreadable_stray_file_downgrades_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R1 P3 pin: a stray reference/ file that cannot be read must
+    yield a fail-closed downgraded record, never crash audit_case()."""
+    case_dir = anchored_experimental_case(tmp_path)
+    stray = case_dir / "reference" / "stray.bin"
+    stray.write_bytes(b"x")
+
+    import cfdb.provenance.audit as audit_mod
+
+    real_sha = audit_mod.sha256_file
+
+    def flaky_sha(path: Path) -> str:
+        if path.name == "stray.bin":
+            raise OSError("permission denied (simulated)")
+        return real_sha(path)
+
+    monkeypatch.setattr(audit_mod, "sha256_file", flaky_sha)
+    record = audit_mod.audit_case(case_dir)
+    assert record.honesty == "DECLARED-NOT-VERIFIED"
+    assert record.file_status["reference/stray.bin"] == "unreadable"
+    assert any("could not be read" in n for n in record.notes)

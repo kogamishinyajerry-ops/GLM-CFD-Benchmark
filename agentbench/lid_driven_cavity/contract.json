@@ -4,12 +4,11 @@
   "frozen": {
     "case.yaml": "9d3004725c242d799c5f9ad7d0582c94f16cfe68d03abea22713951e6ad9b9ed",
     "reference/ghia1982_centerline.csv": "e0910951fdead12384e8a96b058b5dad8d21db0a0ef4c3ffb59d47f1b3a1d220",
-    "__weights__": "a0866757377066ed9ef27a6e83b46c5f9410633416895171a3aba84aeadcea4d",
+    "__weights__": "8126f570b7b068d917a534fa06679059ccd303da6e5f297c9bcbef278db36cb5",
     "__validity_gates__": "7503fa9b41d4111273ae43d63328b95b393d0f9587ee6bbcef6ad4d25015adff"
   },
   "weights": {
-    "qoi_error": -1.0,
-    "wall_time_sec": -0.001
+    "qoi_error": -1.0
   },
   "validity_gates": [
     "qoi_complete",

@@ -373,7 +373,12 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
         row["n_events"] = len(entries)
         row["n_unique_submissions"] = len({e.submission_id for e in entries})
         row["n_valid"] = sum(1 for e in entries if e.valid is True)
-        best = ranked(entries)
+        # Like-with-like only: rows scored under an older/unknown ruler
+        # never drive best_score (Codex R1 P2 — stale-ruler leaderboard).
+        best = ranked(entries, ruler_id=row["ruler_id"])
+        row["n_stale_ruler"] = sum(
+            1 for e in entries if e.ruler_id != row["ruler_id"]
+        )
         row["best_score"] = best[0].score if len(best) > 0 else None
         contracts.append(row)
     return {"contracts": contracts}

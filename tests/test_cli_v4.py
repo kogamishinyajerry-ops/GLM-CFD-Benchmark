@@ -561,7 +561,7 @@ class TestAgentEvalCommands:
         )
         assert result.exit_code == 0
         assert "sub1" in result.output
-        assert "Total: 1 submission(s)" in result.output
+        assert "Total: 1 scoring event(s)" in result.output
 
     def test_score_frozen_drift_exit_3(
         self, runner: CliRunner, tmp_cases: Path, tmp_path: Path
@@ -763,3 +763,34 @@ class TestShowcaseCommand:
         html = out_path.read_text(encoding="utf-8").lower()
         assert "html" in html
         assert CASE_ID in html
+
+
+class TestCodexR1FailClosedSeams:
+    """Codex R1 pins: corrupt anchor store must fail closed (exit 3) in
+    EVERY baseline command, not just gate."""
+
+    def test_baseline_list_corrupt_store_exits_3(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        bad = tmp_path / "baselines.json"
+        bad.write_text("{ this is not json", encoding="utf-8")
+        result = runner.invoke(
+            app, ["baseline", "list", "--baselines", str(bad), "--runs-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 3
+
+    def test_baseline_promote_corrupt_store_exits_3(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        bad = tmp_path / "baselines.json"
+        bad.write_text("{ this is not json", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "baseline", "promote", "someid",
+                "--engineer", "Jerry",
+                "--baselines", str(bad),
+                "--runs-dir", str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 3

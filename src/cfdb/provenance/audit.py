@@ -174,12 +174,21 @@ def _scan_stray_reference_files(
         rel = target.relative_to(case_dir).as_posix()
         if rel in known:
             continue
-        computed[rel] = sha256_file(target)
-        status[rel] = "unanchored"
-        notes.append(
-            f"undeclared file present in {REFERENCE_DIRNAME}/: {rel} "
-            f"(not anchored in {PROVENANCE_FILENAME}, not declared in case.yaml)"
-        )
+        # Never raise (module contract): an unreadable stray file is itself
+        # a fail-closed downgrade condition, not a crash.
+        try:
+            computed[rel] = sha256_file(target)
+            status[rel] = "unanchored"
+            notes.append(
+                f"undeclared file present in {REFERENCE_DIRNAME}/: {rel} "
+                f"(not anchored in {PROVENANCE_FILENAME}, not declared in case.yaml)"
+            )
+        except OSError as exc:
+            status[rel] = "unreadable"
+            notes.append(
+                f"stray file in {REFERENCE_DIRNAME}/ could not be read: "
+                f"{rel} ({exc}) — treated as unverifiable (fail-closed)"
+            )
 
     return computed, status, notes
 

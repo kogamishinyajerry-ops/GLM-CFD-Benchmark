@@ -25,7 +25,7 @@ HonestyLevel = Literal[
 ]
 """Honesty grading of a case's reference data (see Architecture v4.0 §0/§2)."""
 
-FileHashStatus = Literal["ok", "drift", "missing", "unanchored"]
+FileHashStatus = Literal["ok", "drift", "missing", "unanchored", "unreadable"]
 """Per-file sha256 verification outcome.
 
 - ok: file exists and its sha256 matches the anchored value.

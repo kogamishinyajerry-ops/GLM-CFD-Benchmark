@@ -524,3 +524,31 @@ class TestLedger:
         ledger.write_text('{"not": "a score"}\n', encoding="utf-8")
         with pytest.raises(ValueError, match="corrupt ledger line 1"):
             read_ledger(ledger)
+
+
+class TestRulerLineage:
+    """Codex R1 P2 pin: stale-ruler ledger rows never rank under a new ruler."""
+
+    def _row(self, sub: str, score: float, ruler: str | None) -> SubmissionScore:
+        return SubmissionScore(
+            submission_id=sub,
+            valid=True,
+            score=score,
+            breakdown={"qoi_error": score},
+            gates={"qoi_complete": True},
+            scored_at="2026-07-08T00:00:00+00:00",
+            ruler_id=ruler,
+        )
+
+    def test_ranked_filters_to_current_ruler(self) -> None:
+        entries = [
+            self._row("old-best", 999.0, "deadbeef"),   # old ruler, huge score
+            self._row("legacy", 500.0, None),           # unknown lineage
+            self._row("current", -0.02, "cafe0123"),
+        ]
+        top = ranked(entries, ruler_id="cafe0123")
+        assert [e.submission_id for e in top] == ["current"]
+
+    def test_ranked_without_filter_keeps_old_behavior(self) -> None:
+        entries = [self._row("a", 1.0, None), self._row("b", 2.0, "x")]
+        assert len(ranked(entries)) == 2

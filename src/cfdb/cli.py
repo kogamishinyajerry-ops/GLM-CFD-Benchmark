@@ -1125,9 +1125,14 @@ def baseline_list_cmd(
 ) -> None:
     """List promoted baselines and the public regression margin."""
     from cfdb.regression import BaselineStore
+    from cfdb.regression.baseline import BaselineFileError
 
     store = BaselineStore(baselines, runs_dir)
-    data = store.load()
+    try:
+        data = store.load()
+    except BaselineFileError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=3) from e
     margin = data.regression_margin
     typer.echo(
         f"Regression margin: absolute={margin.absolute}, relative={margin.relative}"
@@ -1162,10 +1167,14 @@ def baseline_promote_cmd(
 ) -> None:
     """Promote a passing run to baseline (human-signed, fail-closed)."""
     from cfdb.regression import BaselineStore
+    from cfdb.regression.baseline import BaselineFileError
 
     store = BaselineStore(baselines, runs_dir)
     try:
         entry = store.promote(run_id, engineer)
+    except BaselineFileError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=3) from e
     except (ValueError, FileNotFoundError) as e:
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
@@ -1343,9 +1352,19 @@ def agent_eval_score_cmd(
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
 
+    import hashlib
+
     ledger_path = agentbench_dir / case / "ledger.jsonl"
+    current_ruler = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
     try:
-        result = score_submission(contract, spec, case_dir, submission, ledger_path=ledger_path)
+        result = score_submission(
+            contract,
+            spec,
+            case_dir,
+            submission,
+            ledger_path=ledger_path,
+            ruler_id=current_ruler,
+        )
     except FrozenDriftError as e:
         typer.echo("[FAIL] Frozen ruler drifted — scoring refused (exit 3):", err=True)
         for key in e.drifted:
@@ -1365,6 +1384,7 @@ def agent_eval_score_cmd(
         typer.echo(f"  breakdown {metric}: {contribution:.6g}")
     for note in result.notes:
         typer.echo(f"  note: {note}")
+    typer.echo(f"  ruler: #{current_ruler}")
     typer.echo(f"[OK] Appended to ledger: {ledger_path}")
 
 
@@ -1387,14 +1407,32 @@ def agent_eval_ledger_cmd(
         typer.echo(f"Ledger is empty (no submissions scored for '{case}').")
         return
 
-    typer.echo(f"{'Submission':<28} {'Valid':<7} {'Score':<14} Scored at")
-    typer.echo("-" * 84)
+    import hashlib
+
+    contract_path = agentbench_dir / case / "contract.json"
+    current_ruler: str | None = None
+    if contract_path.exists():
+        current_ruler = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
+
+    typer.echo(f"{'Submission':<28} {'Valid':<7} {'Score':<14} {'Ruler':<10} Scored at")
+    typer.echo("-" * 96)
+    stale = 0
     for entry in entries:
         shown = f"{entry.score:.6g}" if entry.score is not None else "-"
+        lineage = f"#{entry.ruler_id}" if entry.ruler_id else "unknown"
+        if current_ruler is not None and entry.ruler_id != current_ruler:
+            lineage += "*"
+            stale += 1
         typer.echo(
-            f"{entry.submission_id:<28} {str(entry.valid):<7} {shown:<14} {entry.scored_at}"
+            f"{entry.submission_id:<28} {str(entry.valid):<7} {shown:<14} "
+            f"{lineage:<10} {entry.scored_at}"
         )
-    typer.echo(f"\nTotal: {len(entries)} submission(s)")
+    typer.echo(f"\nTotal: {len(entries)} scoring event(s)")
+    if stale > 0:
+        typer.echo(
+            f"  * {stale} row(s) were scored under a different/unknown ruler "
+            "and are excluded from ranking (like-with-like only)."
+        )
 
 
 @app.command("showcase")

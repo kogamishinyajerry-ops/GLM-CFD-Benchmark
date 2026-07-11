@@ -1,0 +1,27 @@
+id: balanced_brackets
+name: First Unbalanced Bracket Index
+category: verification
+domain: coding
+description: >-
+  Manufactured algorithm task: first_unbalanced_index() must be reimplemented
+  from an opens-vs-closes count comparison (buggy: ignores nesting order) to
+  a correct stack-based matcher. Mechanical correctness is judged purely by
+  hidden tests. See Architecture-v5.0-multi-domain.md §3.4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi:
+    - pass_rate
+reference:
+  type: manufactured
+  qoi_values:
+    pass_rate: 1.0
+metrics:
+  qoi_relative_tolerance:
+    pass_rate: 0.0
+budget:
+  max_runtime_sec: 60
+execution:
+  requires_sandbox: true
+  expected_test_count: 5

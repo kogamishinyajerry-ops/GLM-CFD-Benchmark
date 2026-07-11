@@ -1,0 +1,5 @@
+{
+  "total_employees": 5,
+  "by_department": {"Engineering": 2, "Marketing": 1, "Sales": 2},
+  "highest_paid_name": "Carol Nguyen"
+}

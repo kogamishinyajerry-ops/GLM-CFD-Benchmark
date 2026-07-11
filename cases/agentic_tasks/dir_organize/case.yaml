@@ -1,0 +1,21 @@
+id: dir_organize
+name: Agentic -- Reorganize Files by Extension
+category: verification
+domain: agentic
+description: >-
+  State-based agentic task (WorkArena/OSWorld/tau-bench style): reorganize
+  visible/messy/ into an output directory grouped into subdirectories by
+  lowercase file extension. Judged mechanically by reference/checker.py
+  (executed by the cfdb process, never by the submission) asserting exact
+  final-directory-tree state (subdirectory set, filename set, byte-identical
+  content). See Architecture-v5.0-multi-domain.md §4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi: []
+reference:
+  type: manufactured
+metrics: {}
+budget:
+  max_runtime_sec: 60

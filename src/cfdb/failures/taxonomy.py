@@ -1,4 +1,5 @@
-"""Failure mode taxonomy and classification rules (Architecture v4.0 §4).
+"""Failure mode taxonomy and classification rules (Architecture v4.0 §4,
+extended domain-agnostic in v5.0 §2.A4).
 
 Classification is purely mechanical: it derives a :data:`FailureMode` from a
 run's ``RunManifest`` + ``MetricsResult`` following a fixed priority chain.
@@ -6,6 +7,12 @@ No self-reported verdicts are accepted — a run only escapes classification
 (returns ``None``) when the manifest says ``success`` AND the recomputed
 metrics say ``pass``. A success run with missing/unreadable metrics is
 fail-closed classified as ``UNKNOWN`` (unverified is not a pass).
+
+v5.0 §2.A4 adds five domain-agnostic buckets (BUILD_FAILURE/TEST_FAILURE/
+WRONG_ANSWER/RESOURCE_EXCEEDED/CHECKER_ERROR, mapping competitive-judging
+CE/TestFail/WA/TLE·MLE/checker-runtime-failure semantics) on top of the
+original CFD-specific chain; see :func:`classify` for the merged priority
+order and the CFD-detector-order invariant.
 """
 
 from __future__ import annotations
@@ -28,6 +35,13 @@ FailureMode = Literal[
     "TOLERANCE_EXCEEDED",
     "SETUP_ERROR",
     "ENV_MISSING",
+    # === v5 §2.A4: domain-agnostic buckets (competitive-judging mapping:
+    # CE / TestFail / WA / TLE·MLE / trusted-checker-material runtime failure) ===
+    "BUILD_FAILURE",
+    "TEST_FAILURE",
+    "WRONG_ANSWER",
+    "RESOURCE_EXCEEDED",
+    "CHECKER_ERROR",
     "UNKNOWN",
 ]
 
@@ -40,6 +54,11 @@ FAILURE_MODES: tuple[FailureMode, ...] = (
     "TOLERANCE_EXCEEDED",
     "SETUP_ERROR",
     "ENV_MISSING",
+    "BUILD_FAILURE",
+    "TEST_FAILURE",
+    "WRONG_ANSWER",
+    "RESOURCE_EXCEEDED",
+    "CHECKER_ERROR",
     "UNKNOWN",
 )
 
@@ -61,6 +80,29 @@ _ENV_MISSING_PATTERNS: tuple[str, ...] = (
 )
 _MISSING_COMPUTED_PATTERN = "missing computed"
 _MISSING_REFERENCE_PATTERN = "missing reference"
+
+# === v5 §2.A4: domain-agnostic generic detectors ===
+# Step-name keywords (manifest.step_details), mirroring _failed_mesh_step's
+# style: substring match on a lowercased step name + nonzero exit code.
+_BUILD_STEP_KEYWORDS: tuple[str, ...] = ("build", "compile")
+_TEST_STEP_KEYWORDS: tuple[str, ...] = ("test",)
+
+# Notes keywords (metrics.notes), mirroring _matching_notes's style. Kept
+# deliberately narrow (compound phrases over bare words) for the same reason
+# _ENV_MISSING_PATTERNS is narrow: avoid coincidental substring collisions
+# with unrelated CFD note text.
+_WRONG_ANSWER_PATTERNS: tuple[str, ...] = ("wrong answer", "qoi mismatch")
+_RESOURCE_EXCEEDED_PATTERNS: tuple[str, ...] = (
+    "memory limit exceeded",
+    "out of memory",
+    "oom",
+    "rlimit",
+)
+_CHECKER_ERROR_PATTERNS: tuple[str, ...] = (
+    "checker error",
+    "checker crashed",
+    "invalid checker output",
+)
 
 
 def _failed_mesh_step(manifest: RunManifest) -> dict | None:
@@ -98,6 +140,30 @@ def _matching_notes(metrics: MetricsResult | None, pattern: str) -> list[str]:
     return sorted(note for note in metrics.notes if pattern in note.lower())
 
 
+def _failed_step_with_keyword(manifest: RunManifest, keywords: tuple[str, ...]) -> dict | None:
+    """Return the first step whose name matches a keyword and has a nonzero exit code.
+
+    Generalizes :func:`_failed_mesh_step` to arbitrary keyword sets (v5
+    §2.A4 generic detectors: build/compile, test). Same style: case-insensitive
+    substring match on the step name, first match wins.
+    """
+    for step in manifest.step_details or []:
+        name = str(step.get("name", "")).lower()
+        exit_code = step.get("exit_code")
+        if any(kw in name for kw in keywords) and isinstance(exit_code, int) and exit_code != 0:
+            return step
+    return None
+
+
+def _matching_notes_any(metrics: MetricsResult | None, patterns: tuple[str, ...]) -> list[str]:
+    """Return sorted metrics notes containing any of the given lowercase patterns."""
+    if metrics is None:
+        return []
+    return sorted(
+        note for note in metrics.notes if any(pattern in note.lower() for pattern in patterns)
+    )
+
+
 def _env_missing_text(manifest: RunManifest) -> bool:
     """Check whether the manifest error text signals a missing command/binary."""
     error = (manifest.error or "").lower()
@@ -105,11 +171,33 @@ def _env_missing_text(manifest: RunManifest) -> bool:
 
 
 def classify(manifest: RunManifest, metrics: MetricsResult | None) -> FailureMode | None:
-    """Classify a run into a failure mode following the §4 priority chain.
+    """Classify a run into a failure mode following the §4/§2.A4 priority chain.
 
-    Priority: TIMEOUT > MESH_FAILURE > DIVERGENCE > MISSING_ARTIFACT >
+    Priority: TIMEOUT > CHECKER_ERROR > BUILD_FAILURE > TEST_FAILURE >
+    MESH_FAILURE > DIVERGENCE > MISSING_ARTIFACT > MISSING_REFERENCE >
+    TOLERANCE_EXCEEDED > WRONG_ANSWER > RESOURCE_EXCEEDED > ENV_MISSING >
+    SETUP_ERROR > UNKNOWN.
+
+    v5 §2.A4 generic (domain-agnostic) detectors are inserted around the
+    CFD-specific chain without moving any CFD detector or changing their
+    relative order (MESH_FAILURE > DIVERGENCE > MISSING_ARTIFACT >
     MISSING_REFERENCE > TOLERANCE_EXCEEDED > ENV_MISSING > SETUP_ERROR >
-    UNKNOWN.
+    UNKNOWN is untouched):
+
+    - BUILD_FAILURE / TEST_FAILURE read ``manifest.step_details`` step names
+      (build/compile, test keywords), mirroring :func:`_failed_mesh_step`'s
+      style, and are checked before MESH_FAILURE.
+    - CHECKER_ERROR reads ``metrics.notes`` for judge-material runtime
+      failure keywords and is checked right after TIMEOUT — a broken
+      checker invalidates every downstream signal, so it must win before
+      anything else is inspected.
+    - WRONG_ANSWER reads ``metrics.notes`` for wrong-answer keywords but is
+      checked *after* TOLERANCE_EXCEEDED, so a genuine numeric-tolerance
+      failure always wins when both signals are present (conservative: a
+      coincidental notes keyword never overrides an established tolerance
+      verdict — "拿不准宁可落既有 TOLERANCE_EXCEEDED").
+    - RESOURCE_EXCEEDED reads ``metrics.notes`` for memory/rlimit keywords
+      and is checked after WRONG_ANSWER, before ENV_MISSING.
 
     Args:
         manifest: The run manifest (execution-side truth).
@@ -132,6 +220,12 @@ def classify(manifest: RunManifest, metrics: MetricsResult | None) -> FailureMod
 
     if manifest.status == "timeout":
         return "TIMEOUT"
+    if _matching_notes_any(metrics, _CHECKER_ERROR_PATTERNS):
+        return "CHECKER_ERROR"
+    if _failed_step_with_keyword(manifest, _BUILD_STEP_KEYWORDS) is not None:
+        return "BUILD_FAILURE"
+    if _failed_step_with_keyword(manifest, _TEST_STEP_KEYWORDS) is not None:
+        return "TEST_FAILURE"
     if _failed_mesh_step(manifest) is not None:
         return "MESH_FAILURE"
     if _diverged_fields(manifest):
@@ -151,6 +245,10 @@ def classify(manifest: RunManifest, metrics: MetricsResult | None) -> FailureMod
         # fall through to UNKNOWN. Legacy metrics (empty qoi_failed) keep the
         # old qoi_relative_errors trigger.
         return "TOLERANCE_EXCEEDED"
+    if _matching_notes_any(metrics, _WRONG_ANSWER_PATTERNS):
+        return "WRONG_ANSWER"
+    if _matching_notes_any(metrics, _RESOURCE_EXCEEDED_PATTERNS):
+        return "RESOURCE_EXCEEDED"
     if _env_missing_text(manifest):
         return "ENV_MISSING"
     if manifest.status == "failed" or _failed_step(manifest) is not None:
@@ -177,6 +275,18 @@ def build_signature(
     """
     if mode == "TIMEOUT":
         return "status=timeout"
+    if mode == "CHECKER_ERROR":
+        return "; ".join(_matching_notes_any(metrics, _CHECKER_ERROR_PATTERNS))
+    if mode == "BUILD_FAILURE":
+        step = _failed_step_with_keyword(manifest, _BUILD_STEP_KEYWORDS)
+        if step is not None:
+            return f"step={step.get('name')} exit={step.get('exit_code')}"
+        return "step=<unknown-build-step>"
+    if mode == "TEST_FAILURE":
+        step = _failed_step_with_keyword(manifest, _TEST_STEP_KEYWORDS)
+        if step is not None:
+            return f"step={step.get('name')} exit={step.get('exit_code')}"
+        return "step=<unknown-test-step>"
     if mode == "MESH_FAILURE":
         step = _failed_mesh_step(manifest)
         if step is not None:
@@ -202,6 +312,10 @@ def build_signature(
         )
         qoi_names = sorted(metrics.qoi_relative_errors) if metrics is not None else []
         return f"qoi={','.join(qoi_names)}"
+    if mode == "WRONG_ANSWER":
+        return "; ".join(_matching_notes_any(metrics, _WRONG_ANSWER_PATTERNS))
+    if mode == "RESOURCE_EXCEEDED":
+        return "; ".join(_matching_notes_any(metrics, _RESOURCE_EXCEEDED_PATTERNS))
     if mode == "ENV_MISSING":
         return "error=command_not_found"
     if mode == "SETUP_ERROR":

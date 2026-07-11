@@ -1,0 +1,28 @@
+id: csv_field_splitter
+name: CSV Field Splitter (Quoted-Field Bug Fix)
+category: verification
+domain: coding
+description: >-
+  Manufactured bug-fix task: split_csv_line() naively splits on every comma
+  and must be fixed to respect RFC4180-style double-quoted fields
+  (including comma-inside-quotes and doubled-quote escaping). Mechanical
+  correctness is judged purely by hidden tests. See
+  Architecture-v5.0-multi-domain.md §3.4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi:
+    - pass_rate
+reference:
+  type: manufactured
+  qoi_values:
+    pass_rate: 1.0
+metrics:
+  qoi_relative_tolerance:
+    pass_rate: 0.0
+budget:
+  max_runtime_sec: 60
+execution:
+  requires_sandbox: true
+  expected_test_count: 5

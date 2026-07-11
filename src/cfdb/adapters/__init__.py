@@ -27,8 +27,9 @@ def get_adapter(
     Args:
         name: Adapter name (e.g. 'generic', 'openfoam', 'su2').
         dry_run: If True, adapter is constructed in dry_run mode.
-        backend: Execution backend to inject (P2-b). Only OpenFOAM/SU2 adapters
-            accept this; generic adapter ignores it (P0 backend-injection path).
+        backend: Execution backend to inject (P2-b; generic adapter joined in v5.0
+            A1 — previously silently ignored, causing `--backend docker` to appear
+            to take effect while still running unsandboxed on the host).
             If None, adapter defaults to LocalExecutionBackend.
 
     Returns:
@@ -40,10 +41,6 @@ def get_adapter(
     if name not in _ADAPTERS:
         raise KeyError(f"Unknown adapter: '{name}'. Available: {list(_ADAPTERS)}")
     cls = _ADAPTERS[name]
-    if name == "generic":
-        # GenericCommandAdapter does not take backend (P0 design — Runner uses backend directly)
-        return cls(dry_run=dry_run)  # type: ignore[call-arg]
-    # OpenFOAM / SU2 / future adapters accept backend injection (P2-b)
     return cls(dry_run=dry_run, backend=backend)  # type: ignore[call-arg]
 
 

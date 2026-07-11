@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cfdb.adapters.base import ArtifactManifest, RunResult
+from cfdb.metrics.curves import compute_curve_l2
 from cfdb.metrics.performance import check_budget
 from cfdb.schema import CaseSpec, MetricsResult, TimingSpec
 
@@ -20,6 +21,17 @@ class MetricsEngine:
 
     Orchestrates QoI relative error, curve L2 norm, and budget checks.
     Determines overall pass/fail/incomplete status.
+
+    v5.0 D1: curve L2 gating. Computed curve data comes from
+    ``artifacts.curves`` (adapter-collected, curve name -> [(x, y), ...] --
+    the same shape ``compute_curve_l2`` already consumes). Reference curve
+    data is loaded per curve name from ``case.reference.files[curve_name]``
+    (same file-per-key convention the QoI reference lookup uses), expecting
+    a JSON list of [x, y] pairs. A curve is gated (can fail the run) only
+    when both sides are present, its L2 is finite, and a tolerance is
+    configured in ``case.metrics.curve_l2_tolerance``; otherwise it is
+    disclosed via ``ungated_curves`` or a 'missing curve' note, never
+    silently dropped.
     """
 
     def compute(
@@ -155,6 +167,83 @@ class MetricsEngine:
                 "configured; value does not affect pass/fail"
             )
 
+        # 5b. Curve L2 norm judgment (v5.0 D1: wire the existing
+        # compute_curve_l2 helper into the pass/fail gate -- it was
+        # implemented in metrics/curves.py but never called). Mirrors the
+        # QoI gate shape: missing data (either side, or a shape mismatch
+        # compute_curve_l2 itself skips) -> note, tracked separately so it
+        # can drive 'incomplete'; non-finite L2 -> counted into the shared
+        # non_finite_count so a divergent curve is a hard 'fail' just like
+        # a divergent QoI; tolerance exceeded -> curves_failed; no
+        # configured tolerance -> ungated_curves disclosure, never gated.
+        #
+        # Gate is a no-op unless artifacts.curves is not None. Every
+        # shipped adapter (generic/openfoam/su2/starccm) sets curves=None
+        # unconditionally today (ArtifactManifest.curves docstring: "None
+        # in P0") -- there is no collection infrastructure yet, so None
+        # means "this run's pipeline never attempted curve collection",
+        # distinct from an adapter that ran and produced an empty dict.
+        # Without this guard, the shipped naca0012 case (which already
+        # declares outputs.curves + curve_l2_tolerance, dead-lettered
+        # since nothing ever consumed it) would regress from its QoI-only
+        # verdict to 'incomplete' the moment this gate went live, even
+        # though no adapter can deliver curve data yet. Once a real
+        # adapter starts setting artifacts.curves, gating activates
+        # automatically -- no further engine change needed.
+        curve_l2_errors: dict[str, float] = {}
+        curves_failed: list[str] = []
+        ungated_curves: list[str] = []
+        curve_missing_count = 0
+        curve_non_finite_count = 0
+        if case.outputs.curves and artifacts.curves is not None:
+            curve_tolerances = case.metrics.curve_l2_tolerance or {}
+            reference_curves = self._get_reference_curves(case, case_dir)
+            computed_curves = artifacts.curves or {}
+            raw_l2 = compute_curve_l2(reference_curves, computed_curves)
+            for curve_name in case.outputs.curves:
+                if curve_name not in computed_curves:
+                    curve_missing_count += 1
+                    notes.append(f"missing computed curve: {curve_name}")
+                    continue
+                if curve_name not in reference_curves:
+                    curve_missing_count += 1
+                    notes.append(f"missing reference curve: {curve_name}")
+                    continue
+                if curve_name not in raw_l2:
+                    # compute_curve_l2 itself skips length/shape mismatches.
+                    curve_missing_count += 1
+                    notes.append(
+                        f"curve '{curve_name}' skipped: reference/computed "
+                        "shape mismatch"
+                    )
+                    continue
+                l2 = raw_l2[curve_name]
+                if math.isfinite(l2) is False:
+                    curve_non_finite_count += 1
+                    non_finite_count += 1
+                    notes.append(f"non-finite curve L2 for '{curve_name}'")
+                    continue
+                curve_l2_errors[curve_name] = l2
+                if curve_name in curve_tolerances:
+                    tol = curve_tolerances[curve_name]
+                    if l2 > tol:
+                        curves_failed.append(curve_name)
+                        notes.append(
+                            f"curve '{curve_name}' failed L2 tolerance: "
+                            f"{l2:.6g} > {tol:.6g}"
+                        )
+                    else:
+                        notes.append(
+                            f"curve '{curve_name}' passed L2 tolerance: "
+                            f"{l2:.6g} <= {tol:.6g}"
+                        )
+                else:
+                    ungated_curves.append(curve_name)
+                    notes.append(
+                        f"ungated curve '{curve_name}': L2 computed but no "
+                        "tolerance configured; value does not affect pass/fail"
+                    )
+
         # 6. Budget check (P4-G hole 3: expose overrun as a structured flag;
         # warning semantics are kept — the flag never flips pass/fail)
         if timing is not None:
@@ -173,11 +262,23 @@ class MetricsEngine:
         # 7. Determine overall_status from explicit counters (never from
         # note-string parsing). Non-finite values dominate: a diverged
         # solution is a hard 'fail', not 'incomplete'.
-        if qoi_pass:
+        #
+        # v5.0 D1: curve_pass extends qoi_pass with the exact same shape
+        # (missing == 0, non_finite == 0, failed == []) so that when no
+        # curves are configured (curve_missing_count == 0, curves_failed
+        # == [], curve_non_finite_count == 0 for every existing case)
+        # curve_pass is trivially True and the branch below reduces
+        # byte-for-byte to the pre-v5.0 logic -- zero behavior change.
+        curve_pass = (
+            curve_missing_count == 0
+            and curve_non_finite_count == 0
+            and len(curves_failed) == 0
+        )
+        if qoi_pass and curve_pass:
             status = "pass"
         elif non_finite_count > 0:
             status = "fail"
-        elif missing_count > 0:
+        elif missing_count > 0 or curve_missing_count > 0:
             status = "incomplete"
         else:
             status = "fail"
@@ -201,6 +302,9 @@ class MetricsEngine:
             budget_exceeded=budget_exceeded,
             qoi_absolute_errors=absolute_errors,
             qoi_failed=sorted(failed_qoi),
+            curve_l2_errors=curve_l2_errors,
+            curves_failed=curves_failed,
+            ungated_curves=ungated_curves,
         )
 
     def _get_reference_qoi(
@@ -248,6 +352,65 @@ class MetricsEngine:
                     )
 
         return ref_qoi
+
+    def _get_reference_curves(
+        self,
+        case: CaseSpec,
+        case_dir: Path | None = None,
+    ) -> dict[str, list[tuple[float, float]]]:
+        """Load reference curve data for the case's declared curve outputs.
+
+        Each name in ``case.outputs.curves`` maps to a JSON reference file
+        via ``case.reference.files[curve_name]`` (same file-per-key
+        convention as the QoI reference lookup). Curves with no matching
+        key, or whose file fails to load/parse, are simply absent from the
+        returned dict -- the caller reports that as a missing-reference
+        note rather than raising (fail-closed, never crashes the run).
+
+        Args:
+            case: CaseSpec configuration.
+            case_dir: Optional case directory for resolving relative reference paths.
+
+        Returns:
+            Dict mapping curve name to a list of (x, y) points.
+        """
+        if case.reference is None or not case.reference.files:
+            return {}
+        result: dict[str, list[tuple[float, float]]] = {}
+        for curve_name in case.outputs.curves:
+            if curve_name not in case.reference.files:
+                continue
+            ref_rel = case.reference.files[curve_name]
+            ref_path = ref_rel if case_dir is None else case_dir / ref_rel
+            curve = self._load_reference_curve(ref_path)
+            if curve is not None:
+                result[curve_name] = curve
+        return result
+
+    def _load_reference_curve(self, path: Path) -> list[tuple[float, float]] | None:
+        """Load curve data (a JSON list of [x, y] pairs) from a reference file.
+
+        Args:
+            path: Path to the JSON file.
+
+        Returns:
+            List of (x, y) points, or None if the file is missing, unreadable,
+            or malformed (never raises -- callers treat None as 'not available').
+        """
+        try:
+            raw = path.read_text(encoding="utf-8")
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [(float(pt[0]), float(pt[1])) for pt in parsed]
+        except (
+            json.JSONDecodeError,
+            ValueError,
+            TypeError,
+            OSError,
+            IndexError,
+        ) as e:
+            logger.warning("failed to load reference curve from %s: %s", path, e)
+        return None
 
     def _load_reference_file(self, path: Path) -> dict[str, float]:
         """Load QoI values from a JSON reference file.

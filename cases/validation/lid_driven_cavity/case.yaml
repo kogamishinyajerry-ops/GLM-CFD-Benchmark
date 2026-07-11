@@ -45,6 +45,20 @@ reference:
     centerline: reference/ghia1982_centerline.csv
   qoi_values:
     centerline_umax: 0.665
+  # v5.0 Wave D2 pilot: held-out reference wires the agent-eval scoring path
+  # to a copy of the reference kept out of the public case surface. Lives
+  # under held_out/ (not reference/) so it stays out of the reference/
+  # directory the provenance audit's stray-file scan treats as the public
+  # declared-reference tree; it is still frozen and anchored, only via the
+  # agentbench scoring contract's held_out: key namespace, not provenance.yaml.
+  # As of this pilot the held-out value is deliberately the SAME as the
+  # public qoi_values above (copied from Ghia et al. 1982) — this proves the
+  # mechanism (frozen anchoring + scoring-time redirection), it does NOT yet
+  # add anti-copy value from an independently recomputed number. That residual
+  # (a genuinely independent held-out digitization/rerun) is explicitly not
+  # solved here; see Architecture v5.0 §5.2 and §8.
+  held_out_files:
+    qoi: held_out/qoi.json
 metrics:
   qoi_relative_tolerance:
     centerline_umax: 0.10

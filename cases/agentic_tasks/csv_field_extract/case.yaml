@@ -1,0 +1,21 @@
+id: csv_field_extract
+name: Agentic -- CSV Employee Roster Extraction
+category: verification
+domain: agentic
+description: >-
+  State-based agentic task (WorkArena/OSWorld/tau-bench style): read
+  visible/employees.csv and write submission_dir/summary.json with
+  aggregated fields. Judged mechanically by reference/checker.py (executed
+  by the cfdb process, never by the submission), not by the CFD-style
+  qoi/reference/metrics numeric pipeline. See
+  Architecture-v5.0-multi-domain.md §4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi: []
+reference:
+  type: manufactured
+metrics: {}
+budget:
+  max_runtime_sec: 60

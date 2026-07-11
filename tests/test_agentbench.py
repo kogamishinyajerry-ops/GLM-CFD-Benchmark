@@ -552,3 +552,134 @@ class TestRulerLineage:
     def test_ranked_without_filter_keeps_old_behavior(self) -> None:
         entries = [self._row("a", 1.0, None), self._row("b", 2.0, "x")]
         assert len(ranked(entries)) == 2
+
+
+HELD_OUT_REF_QOI = {"cl": 0.5, "cd": 0.02}
+"""Held-out value, deliberately DIFFERENT from the public REF_QOI (0.5/0.5,
+0.02/0.02 in the shared fixture) is not enough to prove the held-out path is
+actually used — each held-out test below uses a held-out value that
+disagrees with the public reference so a passing assertion can only be
+explained by scoring having read the held-out file."""
+
+
+def _write_held_out_case(cases_root: Path, *, held_out_qoi: dict[str, float]) -> Path:
+    """Variant of ``_write_case`` whose case.yaml declares held_out_files
+    (v5.0 Wave D2) pointing at a held-out qoi.json distinct from the public
+    reference/qoi.json."""
+    case_dir = cases_root / "validation" / CASE_ID
+    (case_dir / "reference" / "held_out").mkdir(parents=True)
+    spec = {
+        "id": CASE_ID,
+        "name": "Agentbench held-out test case",
+        "category": "validation",
+        "physics": {"flow": "rans", "turbulence": "rans_sa"},
+        "conditions": {"reynolds": 1.0e6},
+        "solvers": [{"name": "generic", "command": "true"}],
+        "outputs": {"qoi": ["cl", "cd"]},
+        "reference": {
+            "type": "experimental",
+            "files": {"qoi": "reference/qoi.json"},
+            "held_out_files": {"qoi": "reference/held_out/qoi.json"},
+        },
+        "metrics": {"qoi_relative_tolerance": {"cl": 0.2, "cd": 0.2}},
+        "budget": {"max_runtime_sec": 100},
+    }
+    (case_dir / "case.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
+    (case_dir / "reference" / "qoi.json").write_text(json.dumps(REF_QOI), encoding="utf-8")
+    (case_dir / "reference" / "held_out" / "qoi.json").write_text(
+        json.dumps(held_out_qoi), encoding="utf-8"
+    )
+    return case_dir
+
+
+class TestHeldOutReference:
+    """v5.0 Wave D2: scoring reads the held-out reference, not the public one."""
+
+    def test_contract_freezes_held_out_with_prefixed_key(self, tmp_path: Path) -> None:
+        cases_root = tmp_path / "cases"
+        case_dir = _write_held_out_case(cases_root, held_out_qoi=HELD_OUT_REF_QOI)
+        registry = CaseRegistry(cases_root)
+        contract = init_contract(CASE_ID, registry)
+        assert "held_out:reference/held_out/qoi.json" in contract.frozen
+        # The public reference file stays anchored under its own plain key too.
+        assert "reference/qoi.json" in contract.frozen
+        digest = contract.frozen["held_out:reference/held_out/qoi.json"]
+        assert len(digest) == 64
+        assert verify_frozen(contract, case_dir) == []
+
+    def test_scoring_reads_held_out_value_not_public(self, tmp_path: Path) -> None:
+        cases_root = tmp_path / "cases"
+        # Held-out reference disagrees with the public one: cl=0.9 vs 0.5.
+        held_out = {"cl": 0.9, "cd": 0.02}
+        case_dir = _write_held_out_case(cases_root, held_out_qoi=held_out)
+        registry = CaseRegistry(cases_root)
+        case = registry.load(CASE_ID)
+        contract = init_contract(CASE_ID, registry)
+        sub = _write_submission(tmp_path, qoi={"cl": 0.9, "cd": 0.02})
+        result = score_submission(contract, case, case_dir, sub)
+        # A perfect match against the held-out value -> qoi_error ~ 0, not the
+        # ~0.8 relative error it would be against the public reference (0.5).
+        assert result.breakdown["qoi_error"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_witness_held_out_byte_flip_refuses_scoring(self, tmp_path: Path) -> None:
+        cases_root = tmp_path / "cases"
+        case_dir = _write_held_out_case(cases_root, held_out_qoi=HELD_OUT_REF_QOI)
+        registry = CaseRegistry(cases_root)
+        case = registry.load(CASE_ID)
+        contract = init_contract(CASE_ID, registry)
+        # First prove the untampered ruler can still score.
+        sub = _write_submission(tmp_path, "sub_baseline", qoi={"cl": 0.5, "cd": 0.02})
+        ledger = tmp_path / "ledger.jsonl"
+        baseline = score_submission(contract, case, case_dir, sub, ledger)
+        assert baseline.valid is True
+
+        # Now flip one byte of the held-out file only (public reference untouched).
+        held_out_file = case_dir / "reference" / "held_out" / "qoi.json"
+        data = bytearray(held_out_file.read_bytes())
+        data[0] ^= 0xFF
+        held_out_file.write_bytes(bytes(data))
+
+        sub2 = _write_submission(tmp_path, "sub_after_tamper", qoi={"cl": 0.5, "cd": 0.02})
+        ledger_size_before = ledger.stat().st_size
+        with pytest.raises(FrozenDriftError) as excinfo:
+            score_submission(contract, case, case_dir, sub2, ledger)
+        assert "held_out:reference/held_out/qoi.json" in excinfo.value.drifted
+        # Nothing new was appended to the ledger for the refused attempt.
+        assert ledger.stat().st_size == ledger_size_before
+
+    def test_held_out_missing_key_falls_back_to_empty_fail_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """held_out_files declared but not under the 'qoi'/'qoi_values' key
+        names scorer.py understands -> no reference, fail-closed empty."""
+        cases_root = tmp_path / "cases"
+        case_dir = cases_root / "validation" / CASE_ID
+        (case_dir / "reference" / "held_out").mkdir(parents=True)
+        spec = {
+            "id": CASE_ID,
+            "name": "Held-out odd key",
+            "category": "validation",
+            "physics": {"flow": "rans", "turbulence": "rans_sa"},
+            "conditions": {"reynolds": 1.0e6},
+            "solvers": [{"name": "generic", "command": "true"}],
+            "outputs": {"qoi": ["cl", "cd"]},
+            "reference": {
+                "type": "experimental",
+                "files": {"qoi": "reference/qoi.json"},
+                "held_out_files": {"unexpected_key": "reference/held_out/qoi.json"},
+            },
+            "metrics": {"qoi_relative_tolerance": {"cl": 0.2, "cd": 0.2}},
+            "budget": {"max_runtime_sec": 100},
+        }
+        (case_dir / "case.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
+        (case_dir / "reference" / "qoi.json").write_text(json.dumps(REF_QOI), encoding="utf-8")
+        (case_dir / "reference" / "held_out" / "qoi.json").write_text(
+            json.dumps(HELD_OUT_REF_QOI), encoding="utf-8"
+        )
+        registry = CaseRegistry(cases_root)
+        case = registry.load(CASE_ID)
+        contract = init_contract(CASE_ID, registry)
+        sub = _write_submission(tmp_path, qoi={"cl": 0.5, "cd": 0.02})
+        result = score_submission(contract, case, case_dir, sub)
+        assert result.score is None
+        assert any("no recomputable QoI" in n for n in result.notes)

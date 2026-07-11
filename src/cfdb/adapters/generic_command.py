@@ -10,6 +10,7 @@ from pathlib import Path
 from jinja2 import Template
 
 from cfdb.adapters.base import ArtifactManifest, ResourceSpec, RunResult, SolverAdapter
+from cfdb.execution.base import ExecutionBackend
 from cfdb.schema import CaseSpec
 
 logger = logging.getLogger(__name__)
@@ -24,16 +25,25 @@ class GenericCommandAdapter:
 
     name: str = "generic"
 
-    def __init__(self, dry_run: bool = False) -> None:
-        """Initialize with default local backend.
+    def __init__(
+        self,
+        dry_run: bool = False,
+        backend: ExecutionBackend | None = None,
+    ) -> None:
+        """Initialize the adapter.
 
         Args:
             dry_run: If True, run() returns synthetic result without executing subprocess.
+            backend: Execution backend to use (v5.0). If None, defaults to
+                LocalExecutionBackend (P0 behavior unchanged). Pass a sandbox-profile
+                backend (e.g. DockerBackend) to satisfy CaseSpec.execution.requires_sandbox.
         """
         self._dry_run = dry_run
-        from cfdb.execution.local import LocalExecutionBackend
+        if backend is None:
+            from cfdb.execution.local import LocalExecutionBackend
 
-        self._backend = LocalExecutionBackend()
+            backend = LocalExecutionBackend()
+        self._backend = backend
 
     def _find_solver_config(self, case: CaseSpec) -> str:
         """Find the command template for 'generic' solver in the case.
@@ -164,7 +174,10 @@ set -euo pipefail
         return result
 
     def collect_outputs(self, case: CaseSpec, run_dir: Path) -> ArtifactManifest:
-        """Collect run artifacts from run_dir.
+        """Collect run artifacts from run_dir, recursively (v5.0 A5).
+
+        Nested output directories (e.g. pytest junitxml under a subdir) are
+        no longer dropped — the P0 implementation only scanned the top level.
 
         Args:
             case: CaseSpec configuration.
@@ -176,7 +189,7 @@ set -euo pipefail
         files: dict[str, Path] = {}
         qoi_values: dict[str, float] | None = None
 
-        for entry in sorted(run_dir.iterdir()):
+        for entry in sorted(run_dir.rglob("*")):
             if entry.is_file():
                 rel = entry.relative_to(run_dir)
                 files[str(rel)] = rel

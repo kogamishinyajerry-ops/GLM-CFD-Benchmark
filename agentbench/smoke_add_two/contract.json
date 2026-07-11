@@ -1,0 +1,19 @@
+{
+  "contract_version": "1",
+  "case_id": "smoke_add_two",
+  "frozen": {
+    "case.yaml": "c627051e4e8c81db9b9ab92ac5680fa07c5ef12d844d676af4e0d845ce1839c0",
+    "reference/golden/solution.py": "b46cc13311dcd4fa7d819f26c1095ba7b02e4d3887c800d12157c9e860ac2764",
+    "reference/hidden_tests/test_fail_to_pass.py": "713df85b45e2b0728e6000588ff47177fa1ed41006d70a79499288633e681438",
+    "reference/hidden_tests/test_pass_to_pass.py": "594dd94f304423077fe061c3a3c6bff3fbe6233b41928a185b9839d711f3b47a",
+    "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
+    "__validity_gates__": "a01060fa26bbaf79ad2dcbf55327e92627d1bfae7a393fa96885ff5964ca1827"
+  },
+  "weights": {
+    "pass_rate": 1.0
+  },
+  "validity_gates": [
+    "tests_all_pass",
+    "sandbox_used"
+  ]
+}

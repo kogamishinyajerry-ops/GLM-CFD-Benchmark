@@ -1,0 +1,17 @@
+{
+  "contract_version": "1",
+  "case_id": "csv_field_extract",
+  "frozen": {
+    "case.yaml": "c9cefd970ccbfb3fc37cb11c6726664881fe5d50d62388c1bb4eb3ace4b65e3d",
+    "reference/checker.py": "4fe70160409326aec29fdf27c8830e465a63e92fd4dd7b847a1beae2239e6f4a",
+    "reference/expected.json": "ccdcc445576768cccb278d421f14d2fb01d53a56e996a66d227cd7133a9c148f",
+    "__weights__": "89f4764a4a60c4de3243d5ba83c99c58862ce79efbb655e144dff233bf4f4173",
+    "__validity_gates__": "1a2479196ccfe68923532a90b45fd7f4b0d1cad5147fcce06e1759a7a60cda1d"
+  },
+  "weights": {
+    "checker_success": 1.0
+  },
+  "validity_gates": [
+    "checker_ok"
+  ]
+}

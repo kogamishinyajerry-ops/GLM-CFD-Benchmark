@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+
+import pytest
 
 from cfdb.adapters.base import ArtifactManifest, RunResult
 from cfdb.metrics.curves import compute_curve_l2
 from cfdb.metrics.engine import MetricsEngine
 from cfdb.metrics.performance import check_budget
-from cfdb.metrics.qoi import compute_qoi_errors
 from cfdb.schema import (
     BudgetSpec,
     CaseSpec,
@@ -19,32 +21,14 @@ from cfdb.schema import (
     TimingSpec,
 )
 
-
-class TestComputeQoiErrors:
-    def test_basic_error(self) -> None:
-        reference = {"drag": 0.371}
-        computed = {"drag": 0.380}
-        errors = compute_qoi_errors(reference, computed)
-        assert "drag" in errors
-        expected = abs(0.380 - 0.371) / abs(0.371)
-        assert abs(errors["drag"] - expected) < 1e-9
-
-    def test_missing_in_computed(self) -> None:
-        reference = {"drag": 0.371, "lift": 0.1}
-        computed = {"drag": 0.380}
-        errors = compute_qoi_errors(reference, computed)
-        assert "drag" in errors
-        assert "lift" not in errors
-
-    def test_zero_reference_skipped(self) -> None:
-        reference = {"zero_qoi": 0.0}
-        computed = {"zero_qoi": 1.0}
-        errors = compute_qoi_errors(reference, computed)
-        assert "zero_qoi" not in errors
-
-    def test_empty_dicts(self) -> None:
-        errors = compute_qoi_errors({}, {})
-        assert errors == {}
+# NOTE (v5.0 A3): metrics/qoi.py (compute_qoi_errors) was deleted -- it was
+# a dead P0 fork that silently skipped ref==0 QoIs, superseded by the
+# engine.compute() path (absolute-tolerance gating, see
+# tests/test_metrics_hardening.py::TestZeroReferenceAbsoluteTolerance).
+# Its unit tests here are replaced by the equivalent engine-level
+# assertions already present below (basic error / missing QoI) or in
+# test_metrics_hardening.py (zero-reference handling); nothing here
+# preserves the old silent-skip semantics.
 
 
 class TestComputeCurveL2:
@@ -189,3 +173,144 @@ class TestMetricsEngine:
         result = engine.compute(case, artifacts, run_result)
         assert result.qoi_pass is False
         assert result.overall_status == "fail"
+
+
+def make_curve_case(
+    curve_tolerance: dict[str, float] | None = None,
+    reference_files: dict[str, str] | None = None,
+) -> CaseSpec:
+    """Create a minimal CaseSpec declaring one curve output ('cl_alpha')."""
+    return CaseSpec(
+        id="curve_test",
+        name="Curve Test",
+        category="smoke",
+        physics=PhysicsSpec(flow="incompressible"),
+        conditions=ConditionsSpec(),
+        solvers=[{"name": "generic", "command": "true"}],
+        outputs=OutputSpec(curves=["cl_alpha"]),
+        metrics=MetricSpec(curve_l2_tolerance=curve_tolerance),
+        reference={
+            "type": "analytical",
+            "files": reference_files or {},
+        },
+    )
+
+
+class TestCurveL2Judgment:
+    """v5.0 D1: engine.compute() wires compute_curve_l2 into the gate."""
+
+    def test_no_curves_configured_is_zero_behavior_change(self) -> None:
+        """outputs.curves == [] (every existing case) -> curve fields empty,
+        overall_status driven by QoI alone (regression guard)."""
+        case = CaseSpec(
+            id="test",
+            name="Test",
+            category="smoke",
+            physics=PhysicsSpec(flow="incompressible"),
+            conditions=ConditionsSpec(),
+            solvers=[{"name": "generic", "command": "true"}],
+            outputs=OutputSpec(qoi=["drag"]),
+            metrics=MetricSpec(qoi_relative_tolerance={"drag": 0.05}),
+            reference={"type": "analytical", "qoi_values": {"drag": 0.371}},
+        )
+        artifacts = ArtifactManifest(qoi_values={"drag": 0.372})
+        result = MetricsEngine().compute(
+            case,
+            artifacts,
+            RunResult(exit_code=0, stdout="", stderr="", wall_time_sec=1.0),
+        )
+        assert result.overall_status == "pass"
+        assert result.curve_l2_errors == {}
+        assert result.curves_failed == []
+        assert result.ungated_curves == []
+
+    def test_curve_within_tolerance_passes(self, tmp_path) -> None:
+        ref_file = tmp_path / "cl_alpha.json"
+        ref_file.write_text(json.dumps([[0.0, 0.0], [1.0, 1.0]]))
+        case = make_curve_case(
+            curve_tolerance={"cl_alpha": 0.5},
+            reference_files={"cl_alpha": "cl_alpha.json"},
+        )
+        artifacts = ArtifactManifest(curves={"cl_alpha": [(0.0, 0.0), (1.0, 1.2)]})
+        result = MetricsEngine().compute(
+            case,
+            artifacts,
+            RunResult(exit_code=0, stdout="", stderr="", wall_time_sec=1.0),
+            case_dir=tmp_path,
+        )
+        assert result.overall_status == "pass"
+        assert result.curves_failed == []
+        assert result.curve_l2_errors["cl_alpha"] == pytest.approx(0.2)
+
+    def test_missing_computed_curve_is_incomplete(self, tmp_path) -> None:
+        """artifacts.curves={} (adapter ran, produced no curves) -- distinct
+        from curves=None (no collection infrastructure at all, see
+        test_curves_is_none_is_zero_behavior_change)."""
+        ref_file = tmp_path / "cl_alpha.json"
+        ref_file.write_text(json.dumps([[0.0, 0.0], [1.0, 1.0]]))
+        case = make_curve_case(
+            curve_tolerance={"cl_alpha": 0.5},
+            reference_files={"cl_alpha": "cl_alpha.json"},
+        )
+        artifacts = ArtifactManifest(curves={})
+        result = MetricsEngine().compute(
+            case,
+            artifacts,
+            RunResult(exit_code=0, stdout="", stderr="", wall_time_sec=1.0),
+            case_dir=tmp_path,
+        )
+        assert result.overall_status == "incomplete"
+        assert any("missing computed curve: cl_alpha" in n for n in result.notes)
+        assert result.curve_l2_errors == {}
+
+    def test_curves_is_none_is_zero_behavior_change(self, tmp_path) -> None:
+        """artifacts.curves is None (every shipped adapter today) -> curve
+        gating is a full no-op even when outputs.curves + tolerance are
+        both configured (regression guard for the real naca0012 case)."""
+        ref_file = tmp_path / "cl_alpha.json"
+        ref_file.write_text(json.dumps([[0.0, 0.0], [1.0, 1.0]]))
+        case = make_curve_case(
+            curve_tolerance={"cl_alpha": 0.5},
+            reference_files={"cl_alpha": "cl_alpha.json"},
+        )
+        artifacts = ArtifactManifest(curves=None)
+        result = MetricsEngine().compute(
+            case,
+            artifacts,
+            RunResult(exit_code=0, stdout="", stderr="", wall_time_sec=1.0),
+            case_dir=tmp_path,
+        )
+        assert result.overall_status == "pass"
+        assert result.curve_l2_errors == {}
+        assert result.curves_failed == []
+        assert result.ungated_curves == []
+        assert not any("curve" in n.lower() for n in result.notes)
+
+    def test_missing_reference_curve_is_incomplete(self, tmp_path) -> None:
+        case = make_curve_case(curve_tolerance={"cl_alpha": 0.5}, reference_files={})
+        artifacts = ArtifactManifest(curves={"cl_alpha": [(0.0, 0.0), (1.0, 1.2)]})
+        result = MetricsEngine().compute(
+            case,
+            artifacts,
+            RunResult(exit_code=0, stdout="", stderr="", wall_time_sec=1.0),
+            case_dir=tmp_path,
+        )
+        assert result.overall_status == "incomplete"
+        assert any("missing reference curve: cl_alpha" in n for n in result.notes)
+
+    def test_shape_mismatch_is_incomplete(self, tmp_path) -> None:
+        ref_file = tmp_path / "cl_alpha.json"
+        ref_file.write_text(json.dumps([[0.0, 0.0], [1.0, 1.0]]))
+        case = make_curve_case(
+            curve_tolerance={"cl_alpha": 0.5},
+            reference_files={"cl_alpha": "cl_alpha.json"},
+        )
+        artifacts = ArtifactManifest(curves={"cl_alpha": [(0.0, 0.0)]})
+        result = MetricsEngine().compute(
+            case,
+            artifacts,
+            RunResult(exit_code=0, stdout="", stderr="", wall_time_sec=1.0),
+            case_dir=tmp_path,
+        )
+        assert result.overall_status == "incomplete"
+        assert any("shape mismatch" in n for n in result.notes)

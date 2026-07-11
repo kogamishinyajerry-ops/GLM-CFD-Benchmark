@@ -65,15 +65,22 @@ def list_cases(
 
     if not cases:
         typer.echo("No cases found.")
-        return
+    else:
+        typer.echo(f"{'ID':<25} {'Category':<15} {'Solvers':<20} {'Name'}")
+        typer.echo("-" * 80)
+        for case in cases:
+            solvers = ", ".join(s.name for s in case.solvers)
+            typer.echo(f"{case.id:<25} {case.category:<15} {solvers:<20} {case.name}")
 
-    typer.echo(f"{'ID':<25} {'Category':<15} {'Solvers':<20} {'Name'}")
-    typer.echo("-" * 80)
-    for case in cases:
-        solvers = ", ".join(s.name for s in case.solvers)
-        typer.echo(f"{case.id:<25} {case.category:<15} {solvers:<20} {case.name}")
+        typer.echo(f"\nTotal: {len(cases)} case(s)")
 
-    typer.echo(f"\nTotal: {len(cases)} case(s)")
+    # A2: registry fail-open scanning never hides invalid cases — surface them
+    # on stderr while keeping exit code 0 (list-cases is a read-only report).
+    skipped = registry.skipped
+    if skipped:
+        typer.echo(f"\n{len(skipped)} case(s) skipped (invalid):", err=True)
+        for rel_path, reason in skipped:
+            typer.echo(f"  {rel_path}: {reason}", err=True)
 
 
 @app.command("validate-case")
@@ -1309,7 +1316,10 @@ def agent_eval_score_cmd(
     )
 
     # Void-input pre-gate: nothing below this block may touch the ledger
-    # unless the submission is at least structurally readable.
+    # unless the submission is at least structurally readable. What counts
+    # as "readable" is domain-aware (v5.0): a cfd submission must carry a
+    # parsable qoi.json; a coding/agentic submission is a code/artifact
+    # directory and merely must not be empty.
     if not submission.is_dir():
         typer.echo(
             f"[FAIL] Submission directory not found: {submission} "
@@ -1317,23 +1327,40 @@ def agent_eval_score_cmd(
             err=True,
         )
         raise typer.Exit(code=1)
-    qoi_path = submission / "qoi.json"
+
+    pre_registry = CaseRegistry(cases_dir)
     try:
-        parsed_qoi = json.loads(qoi_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        typer.echo(
-            f"[FAIL] Cannot parse {qoi_path}: {e} "
-            "(void input — nothing written to the ledger).",
-            err=True,
-        )
+        pre_spec = pre_registry.load(case)
+    except (KeyError, ValueError, FileNotFoundError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
-    if not isinstance(parsed_qoi, dict):
-        typer.echo(
-            f"[FAIL] {qoi_path} must contain a JSON object "
-            "(void input — nothing written to the ledger).",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+
+    if pre_spec.domain == "cfd":
+        qoi_path = submission / "qoi.json"
+        try:
+            parsed_qoi = json.loads(qoi_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            typer.echo(
+                f"[FAIL] Cannot parse {qoi_path}: {e} "
+                "(void input — nothing written to the ledger).",
+                err=True,
+            )
+            raise typer.Exit(code=1) from e
+        if not isinstance(parsed_qoi, dict):
+            typer.echo(
+                f"[FAIL] {qoi_path} must contain a JSON object "
+                "(void input — nothing written to the ledger).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    else:
+        if next(submission.iterdir(), None) is None:
+            typer.echo(
+                f"[FAIL] Submission directory is empty: {submission} "
+                "(void input — nothing written to the ledger).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
 
     contract_path = agentbench_dir / case / "contract.json"
     if not contract_path.exists():

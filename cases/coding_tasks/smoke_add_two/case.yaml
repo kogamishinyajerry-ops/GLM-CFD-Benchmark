@@ -1,0 +1,27 @@
+id: smoke_add_two
+name: Coding Smoke -- add_two
+category: smoke
+domain: coding
+description: >-
+  Minimal coding-domain pipeline smoke test: implement a trivial add_two(x)
+  function. Exercises the full judging chain (sandbox execution, hidden
+  test collection, FAIL_TO_PASS/PASS_TO_PASS accounting) without any real
+  task difficulty. See Architecture-v5.0-multi-domain.md §3.4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi:
+    - pass_rate
+reference:
+  type: manufactured
+  qoi_values:
+    pass_rate: 1.0
+metrics:
+  qoi_relative_tolerance:
+    pass_rate: 0.0
+budget:
+  max_runtime_sec: 60
+execution:
+  requires_sandbox: true
+  expected_test_count: 2

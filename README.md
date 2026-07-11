@@ -1,6 +1,24 @@
 # CFD-Benchmark (`cfdb`)
 
-Open-source CFD solver benchmark platform. Standardized cases + solver adapter abstraction layer lets any CFD solution (traditional solver or ML surrogate) be evaluated, compared, and regression-tracked on the same reproducible cases.
+Open-source benchmark trust platform. Standardized cases + solver adapter abstraction layer lets any CFD solution (traditional solver or ML surrogate) be evaluated, compared, and regression-tracked on the same reproducible cases.
+
+**v5.0 — multi-domain**: the trust machinery (provenance anchoring, human-signed
+baselines, fail-closed gates, frozen rulers, append-only ledgers) is
+domain-agnostic; domains are plugins. Three domains ship in v5.0:
+
+| Domain | Judged by | Case root |
+|--------|-----------|-----------|
+| `cfd` | QoI/curve error vs anchored reference data | `cases/{smoke,verification,validation}` |
+| `coding` | hidden pytest suite in a network-less Docker sandbox (three read-only/rw mount zones, junitxml recomputation, collected-count reconciliation) | `cases/coding_tasks/` |
+| `agentic` | state-based `checker.py` executed by cfdb (never by the agent), quasi-exact-match normalization frozen with the contract | `cases/agentic_tasks/` |
+
+Design SSOT: `docs/architecture/Architecture-v5.0-multi-domain.md`. Constitution
+additions: judging material (hidden tests / checkers / normalize rules) is
+sha256-anchored like reference data; LLM-as-judge never enters any verdict
+path; exit 3 always and only means "the ruler was touched". Coding-domain
+scoring requires a judge image with pytest preinstalled (default
+`cfdb-judge:py312`, override via `CFDB_JUDGE_IMAGE`; the sandbox runs with
+`--network none`, nothing can be installed at scoring time).
 
 ## Quick Start
 

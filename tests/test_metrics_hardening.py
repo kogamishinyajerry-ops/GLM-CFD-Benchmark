@@ -17,6 +17,14 @@ Plus the NaN false-green family (Codex P1 + adversarial wave 2xP1):
 6. Downstream visibility: qoi_absolute_errors (zero-reference deviations)
    and qoi_failed (sorted union of tolerance violators).
 
+Plus v5.0 Wave D1 (curve L2 gating -- compute_curve_l2 was implemented in
+metrics/curves.py but never wired into engine.compute()):
+
+7. Curve L2 gating: TestCurveL2Gating -- over-tolerance curve -> fail,
+   missing/mismatched shape -> incomplete, no tolerance -> ungated_curves
+   disclosure, non-finite L2 -> hard fail, no-curves-configured -> zero
+   behavior change.
+
 Each hole has a regression test plus a tamper witness (tampering the
 input must flip the verdict / must be rejected).
 """
@@ -24,6 +32,7 @@ input must flip the verdict / must be rejected).
 from __future__ import annotations
 
 import copy
+import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
@@ -464,3 +473,138 @@ class TestQoiFailedUnion:
         result = MetricsEngine().compute(case, artifacts, make_run())
         assert result.overall_status == "pass"
         assert result.qoi_failed == []
+
+
+def make_curve_case(
+    tmp_path: Path,
+    curve_tolerance: dict[str, float] | None,
+    reference_points: list[list[float]],
+) -> CaseSpec:
+    """Build a CaseSpec declaring curve 'cl_alpha' with a JSON reference file
+    written under tmp_path (case_dir), for v5.0 D1 curve-gating tests."""
+    ref_file = tmp_path / "cl_alpha.json"
+    ref_file.write_text(json.dumps(reference_points))
+    return CaseSpec(
+        id="curve_hardening_test",
+        name="Curve Hardening Test",
+        category="smoke",
+        physics=PhysicsSpec(flow="incompressible"),
+        conditions=ConditionsSpec(),
+        solvers=[{"name": "generic", "command": "true"}],
+        outputs=OutputSpec(curves=["cl_alpha"]),
+        metrics=MetricSpec(curve_l2_tolerance=curve_tolerance),
+        reference={
+            "type": "analytical",
+            "files": {"cl_alpha": "cl_alpha.json"},
+        },
+    )
+
+
+class TestCurveL2Gating:
+    """v5.0 D1: compute_curve_l2 wired into the gate (previously dead code
+    per the wave-D recon: implemented in metrics/curves.py, never called
+    from engine.compute()). Mirrors the QoI hardening pattern -- regression
+    test + tamper witness for both the 'bites' and 'discloses' directions.
+    """
+
+    def test_curve_over_tolerance_fails(self, tmp_path: Path) -> None:
+        """Positive bite: L2 exceeds the configured tolerance -> fail."""
+        case = make_curve_case(
+            tmp_path,
+            curve_tolerance={"cl_alpha": 0.05},
+            reference_points=[[0.0, 0.0], [1.0, 1.0]],
+        )
+        artifacts = ArtifactManifest(curves={"cl_alpha": [(0.0, 0.0), (1.0, 2.0)]})
+        result = MetricsEngine().compute(case, artifacts, make_run(), case_dir=tmp_path)
+        assert result.overall_status == "fail"
+        assert result.curves_failed == ["cl_alpha"]
+        assert result.curve_l2_errors["cl_alpha"] == pytest.approx(1.0)
+        assert any("failed L2 tolerance" in n for n in result.notes)
+
+    def test_curve_within_tolerance_passes(self, tmp_path: Path) -> None:
+        """Untampered baseline: same shape, well within tolerance -> pass."""
+        case = make_curve_case(
+            tmp_path,
+            curve_tolerance={"cl_alpha": 0.05},
+            reference_points=[[0.0, 0.0], [1.0, 1.0]],
+        )
+        artifacts = ArtifactManifest(curves={"cl_alpha": [(0.0, 0.0), (1.0, 1.01)]})
+        result = MetricsEngine().compute(case, artifacts, make_run(), case_dir=tmp_path)
+        assert result.overall_status == "pass"
+        assert result.curves_failed == []
+
+    def test_removing_tolerance_discloses_as_ungated_not_silent(
+        self, tmp_path: Path
+    ) -> None:
+        """Tamper witness (inverse direction): delete the configured
+        tolerance on the exact same bad curve from
+        test_curve_over_tolerance_fails -- the L2 value must resurface in
+        ungated_curves (disclosed) rather than vanishing, and must NOT
+        force a fail on its own (compatible/ungated semantics, same as
+        ungated_qoi)."""
+        case = make_curve_case(
+            tmp_path,
+            curve_tolerance=None,
+            reference_points=[[0.0, 0.0], [1.0, 1.0]],
+        )
+        artifacts = ArtifactManifest(curves={"cl_alpha": [(0.0, 0.0), (1.0, 2.0)]})
+        result = MetricsEngine().compute(case, artifacts, make_run(), case_dir=tmp_path)
+        assert result.overall_status == "pass"
+        assert result.curves_failed == []
+        assert result.ungated_curves == ["cl_alpha"]
+        assert result.curve_l2_errors["cl_alpha"] == pytest.approx(1.0)
+        assert any("ungated curve 'cl_alpha'" in n for n in result.notes)
+
+    def test_non_finite_curve_l2_is_hard_fail(self, tmp_path: Path) -> None:
+        """NaN family parity: a non-finite computed curve point produces a
+        non-finite L2 -> hard 'fail', never silently dropped/incomplete."""
+        case = make_curve_case(
+            tmp_path,
+            curve_tolerance={"cl_alpha": 0.05},
+            reference_points=[[0.0, 0.0], [1.0, 1.0]],
+        )
+        artifacts = ArtifactManifest(
+            curves={"cl_alpha": [(0.0, 0.0), (1.0, float("nan"))]}
+        )
+        result = MetricsEngine().compute(case, artifacts, make_run(), case_dir=tmp_path)
+        assert result.overall_status == "fail"
+        assert "cl_alpha" not in result.curve_l2_errors
+        assert any("non-finite curve L2" in n for n in result.notes)
+
+    def test_no_curves_configured_zero_behavior_change(self) -> None:
+        """Regression guard: every case shipped today has outputs.curves ==
+        [] -- confirm the curve-gating loop is a true no-op alongside a
+        QoI-only pass/fail decision."""
+        case = make_case(
+            ["cd"], {"cd": 0.0086}, relative_tolerance={"cd": 0.10}
+        )
+        artifacts = ArtifactManifest(qoi_values={"cd": 0.0088})
+        result = MetricsEngine().compute(case, artifacts, make_run())
+        assert result.overall_status == "pass"
+        assert result.curve_l2_errors == {}
+        assert result.curves_failed == []
+        assert result.ungated_curves == []
+
+    def test_shipped_naca0012_curve_config_stays_inert_without_adapter_data(
+        self,
+    ) -> None:
+        """Concrete regression guard: the real naca0012 case.yaml already
+        declares outputs.curves=['cp_distribution'] + a configured
+        curve_l2_tolerance (dead-lettered pre-D1 since nothing ever called
+        compute_curve_l2). No shipped adapter populates artifacts.curves
+        (always None) -- confirm this real case's QoI-only verdict is
+        unaffected by wiring the gate live (mirrors
+        TestNaca0012TamperWitness, which exercises the same case.yaml with
+        artifacts.curves left at its default None)."""
+        with NACA0012_YAML.open(encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+        case = CaseSpec.model_validate(raw)
+        assert case.outputs.curves == ["cp_distribution"]
+        assert case.metrics.curve_l2_tolerance == {"cp_distribution": 0.05}
+        artifacts = ArtifactManifest(qoi_values={"cl": 0.002, "cd": 0.0088})
+        assert artifacts.curves is None
+        result = MetricsEngine().compute(case, artifacts, make_run())
+        assert result.overall_status == "pass"
+        assert result.curve_l2_errors == {}
+        assert result.curves_failed == []
+        assert result.ungated_curves == []

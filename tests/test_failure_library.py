@@ -175,6 +175,185 @@ class TestClassify:
 
 
 # ============================================================================
+# v5 §2.A4 — domain-agnostic generic detectors
+# ============================================================================
+
+
+class TestGenericDetectorsA4:
+    """BUILD_FAILURE / TEST_FAILURE / WRONG_ANSWER / RESOURCE_EXCEEDED /
+    CHECKER_ERROR: one positive test + one "does not misfire on CFD" test
+    per detector, plus explicit priority-chain pins (§2.A4 SPEC)."""
+
+    # --- BUILD_FAILURE ---------------------------------------------------
+
+    def test_build_failure_on_nonzero_build_step(self) -> None:
+        manifest = _manifest(
+            step_details=[{"name": "build", "exit_code": 1, "status": "failed"}]
+        )
+        assert classify(manifest, _metrics()) == "BUILD_FAILURE"
+
+    def test_build_failure_on_compile_step(self) -> None:
+        manifest = _manifest(
+            step_details=[{"name": "compile_submission", "exit_code": 2, "status": "failed"}]
+        )
+        assert classify(manifest, _metrics()) == "BUILD_FAILURE"
+
+    def test_successful_build_step_does_not_misfire(self) -> None:
+        """A passing build step must not trigger BUILD_FAILURE, and must not
+        shadow a genuine CFD mesh failure elsewhere in the same run."""
+        manifest = _manifest(
+            step_details=[
+                {"name": "build", "exit_code": 0, "status": "success"},
+                {"name": "snappy_mesh", "exit_code": 1, "status": "failed"},
+            ]
+        )
+        assert classify(manifest, _metrics()) == "MESH_FAILURE"
+
+    # --- TEST_FAILURE ------------------------------------------------------
+
+    def test_test_failure_on_nonzero_test_step(self) -> None:
+        manifest = _manifest(
+            step_details=[{"name": "run_hidden_tests", "exit_code": 1, "status": "failed"}]
+        )
+        assert classify(manifest, _metrics()) == "TEST_FAILURE"
+
+    def test_priority_build_failure_beats_test_failure(self) -> None:
+        """If both a build step and a test step failed, BUILD_FAILURE wins
+        (a broken build means the tests never meaningfully ran)."""
+        manifest = _manifest(
+            step_details=[
+                {"name": "build", "exit_code": 1, "status": "failed"},
+                {"name": "pytest", "exit_code": 1, "status": "failed"},
+            ]
+        )
+        assert classify(manifest, _metrics()) == "BUILD_FAILURE"
+
+    def test_successful_test_step_does_not_misfire_on_cfd_divergence(self) -> None:
+        """A passing test-named step must not shadow a real CFD divergence."""
+        manifest = _manifest(
+            status="failed",
+            step_details=[{"name": "test_smoke", "exit_code": 0, "status": "success"}],
+            final_residuals={"Ux": 1.0e6},
+        )
+        assert classify(manifest, _metrics()) == "DIVERGENCE"
+
+    # --- CHECKER_ERROR -----------------------------------------------------
+
+    def test_checker_error_on_notes_keyword(self) -> None:
+        manifest = _manifest(status="failed")
+        metrics = _metrics(notes=["checker error: division by zero in checker.py"])
+        assert classify(manifest, metrics) == "CHECKER_ERROR"
+
+    def test_priority_checker_error_beats_divergence(self) -> None:
+        """CHECKER_ERROR is checked right after TIMEOUT: a broken judge
+        invalidates every downstream signal, including a genuine divergence."""
+        manifest = _manifest(status="failed", final_residuals={"Ux": 1.0e6})
+        metrics = _metrics(notes=["checker crashed while parsing evidence"])
+        assert classify(manifest, metrics) == "CHECKER_ERROR"
+
+    def test_unrelated_cfd_notes_do_not_misfire_checker_error(self) -> None:
+        """Regression pin: ordinary CFD notes must never be mistaken for a
+        checker-runtime failure."""
+        manifest = _manifest(status="success")
+        metrics = _metrics(overall_status="incomplete", notes=["missing computed QoI: cl"])
+        assert classify(manifest, metrics) == "MISSING_ARTIFACT"
+
+    # --- WRONG_ANSWER --------------------------------------------------------
+
+    def test_wrong_answer_on_notes_keyword_without_tolerance_signal(self) -> None:
+        """No qoi_failed/qoi_relative_errors data (so TOLERANCE_EXCEEDED's own
+        condition is false) — notes-only wrong-answer signal must be caught."""
+        manifest = _manifest(status="success")
+        metrics = _metrics(qoi_pass=False, notes=["wrong answer on hidden case 3"])
+        assert classify(manifest, metrics) == "WRONG_ANSWER"
+
+    def test_wrong_answer_conservative_tolerance_exceeded_wins(self) -> None:
+        """Conservative priority: when TOLERANCE_EXCEEDED's own condition is
+        also satisfied, it must win over a coincidental wrong-answer-shaped
+        note — never over-match WRONG_ANSWER."""
+        manifest = _manifest(status="success")
+        metrics = _metrics(
+            qoi_pass=False,
+            qoi_failed=["cl"],
+            notes=["wrong answer: cl outside tolerance band"],
+        )
+        assert classify(manifest, metrics) == "TOLERANCE_EXCEEDED"
+
+    # --- RESOURCE_EXCEEDED -----------------------------------------------
+
+    def test_resource_exceeded_on_out_of_memory_note(self) -> None:
+        manifest = _manifest(status="failed")
+        metrics = _metrics(notes=["submission process killed: out of memory"])
+        assert classify(manifest, metrics) == "RESOURCE_EXCEEDED"
+
+    def test_resource_exceeded_on_rlimit_note(self) -> None:
+        manifest = _manifest(status="failed")
+        metrics = _metrics(notes=["rlimit exceeded during sandbox execution"])
+        assert classify(manifest, metrics) == "RESOURCE_EXCEEDED"
+
+    def test_env_missing_still_wins_when_no_resource_keyword_present(self) -> None:
+        """Regression pin: ENV_MISSING's existing manifest.error detector is
+        untouched by the new notes-based RESOURCE_EXCEEDED detector."""
+        manifest = _manifest(error="bash: simpleFoam: command not found")
+        assert classify(manifest, _metrics()) == "ENV_MISSING"
+
+
+class TestSignatureA4:
+    def test_build_failure_signature(self) -> None:
+        manifest = _manifest(
+            step_details=[{"name": "build", "exit_code": 1, "status": "failed"}]
+        )
+        assert build_signature(manifest, _metrics(), "BUILD_FAILURE") == "step=build exit=1"
+
+    def test_test_failure_signature(self) -> None:
+        manifest = _manifest(
+            step_details=[{"name": "pytest", "exit_code": 1, "status": "failed"}]
+        )
+        assert build_signature(manifest, _metrics(), "TEST_FAILURE") == "step=pytest exit=1"
+
+    def test_checker_error_signature(self) -> None:
+        manifest = _manifest(status="failed")
+        metrics = _metrics(notes=["checker error: boom"])
+        assert build_signature(manifest, metrics, "CHECKER_ERROR") == "checker error: boom"
+
+    def test_wrong_answer_signature(self) -> None:
+        manifest = _manifest(status="success")
+        metrics = _metrics(qoi_pass=False, notes=["wrong answer on hidden case 3"])
+        assert (
+            build_signature(manifest, metrics, "WRONG_ANSWER") == "wrong answer on hidden case 3"
+        )
+
+    def test_resource_exceeded_signature(self) -> None:
+        manifest = _manifest(status="failed")
+        metrics = _metrics(notes=["submission process killed: out of memory"])
+        assert (
+            build_signature(manifest, metrics, "RESOURCE_EXCEEDED")
+            == "submission process killed: out of memory"
+        )
+
+    def test_build_failure_signature_fallback_without_step(self) -> None:
+        manifest = _manifest()
+        assert build_signature(manifest, None, "BUILD_FAILURE") == "step=<unknown-build-step>"
+
+    def test_test_failure_signature_fallback_without_step(self) -> None:
+        manifest = _manifest()
+        assert build_signature(manifest, None, "TEST_FAILURE") == "step=<unknown-test-step>"
+
+    def test_a4_fingerprints_are_distinct_from_each_other(self) -> None:
+        """Sanity: the five new modes never collide on the same signature text."""
+        fps = {
+            compute_fingerprint("case_a", "solver_x", "BUILD_FAILURE", "step=build exit=1"),
+            compute_fingerprint("case_a", "solver_x", "TEST_FAILURE", "step=pytest exit=1"),
+            compute_fingerprint("case_a", "solver_x", "CHECKER_ERROR", "checker error: boom"),
+            compute_fingerprint("case_a", "solver_x", "WRONG_ANSWER", "wrong answer: x"),
+            compute_fingerprint(
+                "case_a", "solver_x", "RESOURCE_EXCEEDED", "out of memory"
+            ),
+        }
+        assert len(fps) == 5
+
+
+# ============================================================================
 # signature / fingerprint stability
 # ============================================================================
 
@@ -563,6 +742,52 @@ class TestFailureLibrary:
         old_fps = {r["fingerprint"] for r in before["records"]}
         new_fps = {r["fingerprint"] for r in after["records"]}
         assert old_fps <= new_fps
+
+    def test_new_a4_mode_ingest_preserves_append_only_superset_guard(
+        self, tmp_path: Path
+    ) -> None:
+        """v5 §2.A4 SPEC item 3: the append-only guard is a fingerprint
+        superset comparison, so a brand-new FailureMode (BUILD_FAILURE, not
+        in the original v4 FAILURE_MODES tuple) must ingest cleanly alongside
+        an existing CFD-mode record, and the on-disk fingerprint set must
+        only grow — proving the guard needed zero changes to accept new
+        modes."""
+        runs = tmp_path / "runs"
+        _write_run(
+            runs,
+            _manifest(run_id="20260708T120000Z_case_a_solver_x_00000001", status="timeout"),
+            _metrics(),
+        )
+        lib = self._library(tmp_path)
+        lib.ingest(runs)
+        path = tmp_path / "failures" / "library.json"
+        before = json.loads(path.read_text(encoding="utf-8"))
+        assert {r["mode"] for r in before["records"]} == {"TIMEOUT"}
+
+        _write_run(
+            runs,
+            _manifest(
+                run_id="20260708T140000Z_case_b_solver_x_00000003",
+                status="failed",
+                step_details=[{"name": "build", "exit_code": 1, "status": "failed"}],
+            ),
+            _metrics(),
+        )
+        summary = lib.ingest(runs)
+        assert summary.new_records == 1
+
+        after = json.loads(path.read_text(encoding="utf-8"))
+        after_modes = {r["mode"] for r in after["records"]}
+        assert after_modes == {"TIMEOUT", "BUILD_FAILURE"}
+        old_fps = {r["fingerprint"] for r in before["records"]}
+        new_fps = {r["fingerprint"] for r in after["records"]}
+        assert old_fps <= new_fps  # append-only guard: strictly a superset
+
+        # A second FailureLibrary instance loading from disk must also see
+        # both records (round-trip through the real pydantic FailureRecord
+        # model, whose `mode: FailureMode` field must accept the new value).
+        fresh = self._library(tmp_path)
+        assert {r.mode for r in fresh.records()} == {"TIMEOUT", "BUILD_FAILURE"}
 
 
 class TestEnvMissingIsNotSolverDictError:

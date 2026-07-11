@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 import yaml
 from pydantic import ValidationError
+from typer.testing import CliRunner
 
+from cfdb.cli import app
 from cfdb.registry import CaseRegistry
 
 
@@ -97,3 +99,151 @@ class TestCaseRegistry:
         registry.clear_cache()
         assert registry._scanned is False
         assert registry._cache == {}
+
+
+class TestCaseRegistrySkipped:
+    """A2: registry fail-open scanning must never hide invalid cases (visibility gate)."""
+
+    @staticmethod
+    def _write_case(cases_root: Path, case_id: str, data: dict) -> None:
+        case_dir = cases_root / "smoke" / case_id
+        case_dir.mkdir(parents=True)
+        payload = dict(data)
+        payload["id"] = case_id
+        (case_dir / "case.yaml").write_text(yaml.dump(payload), encoding="utf-8")
+
+    def test_baseline_no_skipped_when_all_valid(
+        self, tmp_path: Path, sample_case_spec_data: dict
+    ) -> None:
+        """Untampered baseline: a registry of only valid cases reports skipped == []."""
+        cases_root = tmp_path / "cases"
+        self._write_case(cases_root, "good_case", sample_case_spec_data)
+
+        registry = CaseRegistry(cases_root)
+        cases = registry.list_all()
+
+        assert [c.id for c in cases] == ["good_case"]
+        assert registry.skipped == []
+
+    def test_tampered_yaml_case_is_recorded_and_scan_continues(
+        self, tmp_path: Path, sample_case_spec_data: dict
+    ) -> None:
+        """Single-point tamper: inject a malformed case.yaml (unparsable YAML).
+
+        Fail-open must still list the good case; the bad one must never be
+        silently invisible — it must show up in ``registry.skipped``.
+        """
+        cases_root = tmp_path / "cases"
+        self._write_case(cases_root, "good_case", sample_case_spec_data)
+
+        bad_dir = cases_root / "smoke" / "bad_case"
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "case.yaml").write_text("id: [unterminated\n", encoding="utf-8")
+
+        registry = CaseRegistry(cases_root)
+        cases = registry.list_all()
+
+        # fail-open: scan continues, good case unaffected
+        assert [c.id for c in cases] == ["good_case"]
+
+        # visibility: the bad case is never silently dropped
+        skipped = registry.skipped
+        assert len(skipped) == 1
+        rel_path, reason = skipped[0]
+        assert rel_path == str(Path("smoke") / "bad_case" / "case.yaml")
+        assert reason  # non-empty summary
+        assert "\n" not in reason  # collapsed to a one-line summary
+
+    def test_tampered_schema_invalid_case_is_recorded(
+        self, tmp_path: Path, sample_case_spec_data: dict
+    ) -> None:
+        """Single-point tamper: syntactically valid YAML that fails CaseSpec schema."""
+        cases_root = tmp_path / "cases"
+        self._write_case(cases_root, "good_case", sample_case_spec_data)
+
+        bad_dir = cases_root / "smoke" / "bad_case"
+        bad_dir.mkdir(parents=True)
+        bad_dir_yaml = bad_dir / "case.yaml"
+        bad_dir_yaml.write_text("id: BAD\nname: Bad\ncategory: smoke\n", encoding="utf-8")
+
+        registry = CaseRegistry(cases_root)
+        cases = registry.list_all()
+
+        assert [c.id for c in cases] == ["good_case"]
+        skipped = registry.skipped
+        assert len(skipped) == 1
+        rel_path, reason = skipped[0]
+        assert "bad_case" in rel_path
+        assert reason
+
+    def test_clear_cache_rescan_does_not_duplicate_skipped(
+        self, tmp_path: Path, sample_case_spec_data: dict
+    ) -> None:
+        cases_root = tmp_path / "cases"
+        self._write_case(cases_root, "good_case", sample_case_spec_data)
+        bad_dir = cases_root / "smoke" / "bad_case"
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "case.yaml").write_text("id: [unterminated\n", encoding="utf-8")
+
+        registry = CaseRegistry(cases_root)
+        registry.list_all()
+        assert len(registry.skipped) == 1
+
+        registry.clear_cache()
+        registry.list_all()
+        assert len(registry.skipped) == 1  # re-scanned, not accumulated to 2
+
+
+class TestListCasesSkippedVisibility:
+    """A2: `cfdb list-cases` must surface skipped cases on stderr, exit code 0."""
+
+    def test_untampered_baseline_lists_cleanly(
+        self, tmp_path: Path, sample_case_spec_data: dict
+    ) -> None:
+        cases_root = tmp_path / "cases"
+        TestCaseRegistrySkipped._write_case(cases_root, "good_case", sample_case_spec_data)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["list-cases", "--cases-dir", str(cases_root)])
+
+        assert result.exit_code == 0
+        assert "good_case" in result.stdout
+        assert "skipped" not in result.stderr
+
+    def test_tampered_case_surfaced_on_stderr_exit_code_still_zero(
+        self, tmp_path: Path, sample_case_spec_data: dict
+    ) -> None:
+        cases_root = tmp_path / "cases"
+        TestCaseRegistrySkipped._write_case(cases_root, "good_case", sample_case_spec_data)
+        bad_dir = cases_root / "smoke" / "bad_case"
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "case.yaml").write_text("id: [unterminated\n", encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["list-cases", "--cases-dir", str(cases_root)])
+
+        # exit code contract: visibility, not a hard failure
+        assert result.exit_code == 0
+        # good case still listed normally on stdout
+        assert "good_case" in result.stdout
+        # bad case is never invisible: must appear on stderr
+        assert "1 case(s) skipped (invalid):" in result.stderr
+        assert "bad_case" in result.stderr
+
+    def test_all_cases_invalid_still_reports_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """Edge case: zero valid cases but one invalid — skip visibility must not
+        depend on there being at least one good case to print alongside it."""
+        cases_root = tmp_path / "cases"
+        bad_dir = cases_root / "smoke" / "bad_case"
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "case.yaml").write_text("id: [unterminated\n", encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["list-cases", "--cases-dir", str(cases_root)])
+
+        assert result.exit_code == 0
+        assert "No cases found." in result.stdout
+        assert "1 case(s) skipped (invalid):" in result.stderr
+        assert "bad_case" in result.stderr

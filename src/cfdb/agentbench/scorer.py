@@ -28,11 +28,15 @@ import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from cfdb.agentbench.contract import FrozenDriftError, ScoringContract, verify_frozen
 from cfdb.schema import CaseSpec
+
+if TYPE_CHECKING:
+    from cfdb.agentbench.sandbox_scorer import BackendFactory
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,12 @@ def _load_json_dict(path: Path) -> dict[str, object] | None:
     """
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # manifest.json is an optional side-channel (wall-time only, and
+        # wall time is self-reported anyway) — absence is normal for
+        # coding/agentic submissions and must not read like an error.
+        logger.debug("optional %s not present", path)
+        return None
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("failed to read %s: %s", path, e)
         return None
@@ -171,6 +181,12 @@ def _load_wall_time(submission_dir: Path) -> float | None:
 def _load_reference_qoi(case: CaseSpec, case_dir: Path) -> dict[str, float]:
     """Load reference QoI values from the case (inline values preferred).
 
+    v5.0 Wave D2: when the case declares ``held_out_files``, scoring reads
+    the held-out copy instead of the public reference (submission-authenticity
+    mitigation) — the public reference stays anchored in the frozen map and
+    keeps driving the visible case surface, it just does not drive scoring
+    when a held-out counterpart exists.
+
     Args:
         case: Case spec.
         case_dir: Case directory for resolving relative reference paths.
@@ -179,6 +195,26 @@ def _load_reference_qoi(case: CaseSpec, case_dir: Path) -> dict[str, float]:
         Reference QoI values; empty when the case has no usable reference.
     """
     if case.reference is None:
+        return {}
+    held_out = case.reference.held_out_files
+    if len(held_out) > 0:
+        for key in ("qoi", "qoi_values"):
+            if key in held_out:
+                raw = _load_json_dict(case_dir / held_out[key])
+                if raw is None:
+                    return {}
+                try:
+                    values = {k: float(v) for k, v in raw.items()}  # type: ignore[arg-type]
+                except (TypeError, ValueError) as e:
+                    logger.warning("invalid held-out reference QoI file for %s: %s", case.id, e)
+                    return {}
+                return _finite_only(values, case.id)
+        logger.warning(
+            "held_out_files declared for %s but none of the keys %s are present "
+            "(fail-closed: no held-out QoI reference usable)",
+            case.id,
+            ("qoi", "qoi_values"),
+        )
         return {}
     if case.reference.qoi_values is not None:
         return _finite_only(dict(case.reference.qoi_values), case.id)
@@ -303,11 +339,66 @@ def _evaluate_gates(
                         f"gate within_budget failed: wall_time_sec={wall_time:g} "
                         f"> max_runtime_sec={budget}"
                     )
+        elif gate == "tests_all_pass":
+            # v5.0 Wave B: coding domain. sandbox_scorer encodes the recomputed
+            # hidden-test verdict as a 1.0/0.0 sentinel in `computed` — never a
+            # bare bool, so the existing FiniteFloat-shaped `computed` dict stays
+            # the single source of truth this function reads from.
+            ok = computed.get("tests_all_pass") == 1.0
+            if not ok:
+                notes.append("gate tests_all_pass failed: hidden test suite did not fully pass")
+        elif gate == "sandbox_used":
+            ok = computed.get("sandbox_used") == 1.0
+            if not ok:
+                notes.append("gate sandbox_used failed: submission was not scored in a sandbox")
         else:
             ok = False
             notes.append(f"unknown validity gate '{gate}' (fail-closed: cannot pass)")
         results[gate] = ok
     return results
+
+
+def _assemble_score(
+    contract: ScoringContract,
+    valid: bool,
+    metric_values: dict[str, float],
+    notes: list[str],
+) -> tuple[float | None, dict[str, float]]:
+    """Assemble the weighted score from recomputed metric values.
+
+    Shared by every domain branch of :func:`score_submission` so the
+    fail-closed assembly rule is defined exactly once: any weighted metric
+    that is unavailable, or a non-finite candidate score, yields
+    ``score=None`` — never fabricated. This is a pure extraction of the
+    pre-v5.0 inline cfd logic; behavior for the cfd path is unchanged.
+
+    Args:
+        contract: Frozen scoring contract (declares the weights).
+        valid: Recomputed gate verdict (``all(gates[g] is True for g in
+            contract.validity_gates)``).
+        metric_values: Recomputed metric name -> value.
+        notes: Audit note sink (mutated in place).
+
+    Returns:
+        ``(score, breakdown)``; ``score`` is None whenever it cannot be
+        honestly computed.
+    """
+    if valid is not True:
+        notes.append("submission invalid: no score assigned (score=None)")
+        return None, {}
+    missing_metrics = sorted(m for m in contract.weights if m not in metric_values)
+    if len(missing_metrics) > 0:
+        notes.append(
+            f"cannot compute score: metrics {missing_metrics} unavailable "
+            "(fail-closed: score=None)"
+        )
+        return None, {}
+    breakdown = {m: w * metric_values[m] for m, w in contract.weights.items()}
+    candidate = sum(breakdown.values())
+    if math.isfinite(candidate) and all(math.isfinite(v) for v in breakdown.values()):
+        return candidate, breakdown
+    notes.append("non-finite score (fail-closed: score=None)")
+    return None, {}
 
 
 def score_submission(
@@ -317,16 +408,34 @@ def score_submission(
     submission_dir: Path,
     ledger_path: Path | None = None,
     ruler_id: str | None = None,
+    backend_factory: BackendFactory | None = None,
 ) -> SubmissionScore:
     """Score one agent submission against a frozen contract.
+
+    Dispatches by ``case.domain`` (v5.0): ``cfd`` recomputes QoI/curve error
+    against the (possibly held-out, see :func:`_load_reference_qoi`)
+    reference exactly as before — this branch is byte-for-byte the pre-v5.0
+    logic, only extracted into :func:`_assemble_score`. ``coding`` delegates
+    to :func:`cfdb.agentbench.sandbox_scorer.score_coding`, which runs the
+    frozen hidden-test suite inside an execution backend. ``agentic``
+    delegates to ``cfdb.agentbench.checker_scorer.score_agentic`` — a sibling
+    module owned elsewhere, imported lazily so its absence fails closed with
+    a clear ``ImportError`` instead of silently skipping the score.
 
     Args:
         contract: Frozen scoring contract for the case.
         case: Case spec (must match ``contract.case_id``).
         case_dir: Case directory (frozen paths and reference resolve here).
-        submission_dir: Directory holding ``qoi.json`` (+ optional
-            ``manifest.json``).
+        submission_dir: Directory holding the submission artifacts
+            (``qoi.json`` + optional ``manifest.json`` for cfd; the
+            submission source tree for coding).
         ledger_path: When given, the score is appended to this JSONL ledger.
+        ruler_id: Contract lineage tag recorded on the score (see
+            :attr:`SubmissionScore.ruler_id`).
+        backend_factory: Coding domain only. Overrides sandbox execution
+            backend construction — unit tests inject a stub here; production
+            callers leave this None to get the real sandboxed backend.
+            Ignored for cfd/agentic domains.
 
     Returns:
         The submission score. Invalid or unscorable submissions carry
@@ -334,8 +443,11 @@ def score_submission(
 
     Raises:
         FrozenDriftError: If any frozen path drifted (ruler changed —
-            scoring is refused before anything else happens).
+            scoring is refused before anything else happens), or — coding
+            domain only — drifted during the scoring window itself.
         ValueError: If ``case.id`` does not match the contract.
+        ImportError: If ``case.domain == "agentic"`` and the sibling
+            ``checker_scorer`` module is unavailable.
     """
     if case.id != contract.case_id:
         raise ValueError(f"case '{case.id}' does not match contract case '{contract.case_id}'")
@@ -344,65 +456,104 @@ def score_submission(
     if len(drifted) > 0:
         raise FrozenDriftError(drifted)
 
-    notes: list[str] = []
-    computed = _load_submission_qoi(submission_dir, notes)
-    wall_time = _load_wall_time(submission_dir)
+    if case.domain == "coding":
+        from cfdb.agentbench.sandbox_scorer import score_coding
 
-    self_reported = sorted(set(computed) - set(case.outputs.qoi))
-    if len(self_reported) > 0:
-        notes.append(
-            f"ignored self-reported fields {self_reported}: "
-            "scoring metrics are recomputed, never trusted"
+        result = score_coding(
+            case,
+            case_dir,
+            submission_dir,
+            contract,
+            backend_factory=backend_factory,
+            ruler_id=ruler_id,
+        )
+    elif case.domain == "agentic":
+        try:
+            from cfdb.agentbench.checker_scorer import score_agentic
+        except ImportError as e:
+            raise ImportError(
+                "agentic domain scoring requires cfdb.agentbench.checker_scorer, "
+                "which is not available in this build (fail-closed: refusing to "
+                "silently fabricate a score for an agentic submission)"
+            ) from e
+        # checker_scorer.score_agentic is the state-based checker execution
+        # primitive (Architecture v5.0 §4): it runs case_dir/reference/checker.py
+        # against submission_dir and reduces stdout to a CheckerVerdict. The
+        # contract-driven gate/score assembly around that verdict is not owned
+        # by that sibling module (it has no SubmissionScore-shaped API) — it is
+        # assembled here, symmetric to the coding branch, so the ledger keeps
+        # a single append point regardless of domain.
+        agentic_notes: list[str] = []
+        verdict = score_agentic(case_dir, submission_dir)
+        if verdict.mode != "CHECKER_OK":
+            agentic_notes.append(f"checker_error: {verdict.error}")
+            agentic_gates = {"checker_ok": False}
+            agentic_valid = False
+            agentic_score: float | None = None
+            agentic_breakdown: dict[str, float] = {}
+        else:
+            if len(verdict.evidence) > 0:
+                agentic_notes.append(f"checker evidence: {'; '.join(verdict.evidence)}")
+            agentic_gates = {"checker_ok": True}
+            agentic_valid = verdict.success is True
+            agentic_metric_values = {"checker_success": 1.0 if verdict.success else 0.0}
+            agentic_score, agentic_breakdown = _assemble_score(
+                contract, agentic_valid, agentic_metric_values, agentic_notes
+            )
+        result = SubmissionScore(
+            submission_id=submission_dir.name,
+            valid=agentic_valid,
+            score=agentic_score,
+            breakdown=agentic_breakdown,
+            gates=agentic_gates,
+            scored_at=datetime.now(timezone.utc).isoformat(),
+            notes=agentic_notes,
+            wall_time=WallTimeRecord(value_sec=_load_wall_time(submission_dir)),
+            ruler_id=ruler_id,
+        )
+    else:
+        notes: list[str] = []
+        computed = _load_submission_qoi(submission_dir, notes)
+        wall_time = _load_wall_time(submission_dir)
+
+        self_reported = sorted(set(computed) - set(case.outputs.qoi))
+        if len(self_reported) > 0:
+            notes.append(
+                f"ignored self-reported fields {self_reported}: "
+                "scoring metrics are recomputed, never trusted"
+            )
+
+        if "wall_time_sec" in contract.weights:
+            notes.append(
+                "wall_time_sec is self-reported (weighted by explicit contract choice)"
+            )
+            logger.warning("wall_time_sec is self-reported: it is weighted in this contract")
+
+        gates = _evaluate_gates(contract, case, computed, wall_time, notes)
+        valid = all(gates[g] is True for g in contract.validity_gates)
+
+        metric_values: dict[str, float] = {}
+        reference = _load_reference_qoi(case, case_dir)
+        qoi_error = _recompute_qoi_error(case, reference, computed, notes)
+        if qoi_error is not None:
+            metric_values["qoi_error"] = qoi_error
+        if wall_time is not None:
+            metric_values["wall_time_sec"] = wall_time
+
+        score, breakdown = _assemble_score(contract, valid, metric_values, notes)
+
+        result = SubmissionScore(
+            submission_id=submission_dir.name,
+            valid=valid,
+            score=score,
+            breakdown=breakdown,
+            gates=gates,
+            scored_at=datetime.now(timezone.utc).isoformat(),
+            notes=notes,
+            wall_time=WallTimeRecord(value_sec=wall_time),
+            ruler_id=ruler_id,
         )
 
-    if "wall_time_sec" in contract.weights:
-        notes.append("wall_time_sec is self-reported (weighted by explicit contract choice)")
-        logger.warning("wall_time_sec is self-reported: it is weighted in this contract")
-
-    gates = _evaluate_gates(contract, case, computed, wall_time, notes)
-    valid = all(gates[g] is True for g in contract.validity_gates)
-
-    metric_values: dict[str, float] = {}
-    reference = _load_reference_qoi(case, case_dir)
-    qoi_error = _recompute_qoi_error(case, reference, computed, notes)
-    if qoi_error is not None:
-        metric_values["qoi_error"] = qoi_error
-    if wall_time is not None:
-        metric_values["wall_time_sec"] = wall_time
-
-    score: float | None = None
-    breakdown: dict[str, float] = {}
-    if valid is True:
-        missing_metrics = sorted(m for m in contract.weights if m not in metric_values)
-        if len(missing_metrics) > 0:
-            notes.append(
-                f"cannot compute score: metrics {missing_metrics} unavailable "
-                "(fail-closed: score=None)"
-            )
-        else:
-            breakdown = {m: w * metric_values[m] for m, w in contract.weights.items()}
-            candidate = sum(breakdown.values())
-            if math.isfinite(candidate) and all(
-                math.isfinite(v) for v in breakdown.values()
-            ):
-                score = candidate
-            else:
-                notes.append("non-finite score (fail-closed: score=None)")
-                breakdown = {}
-    else:
-        notes.append("submission invalid: no score assigned (score=None)")
-
-    result = SubmissionScore(
-        submission_id=submission_dir.name,
-        valid=valid,
-        score=score,
-        breakdown=breakdown,
-        gates=gates,
-        scored_at=datetime.now(timezone.utc).isoformat(),
-        notes=notes,
-        wall_time=WallTimeRecord(value_sec=wall_time),
-        ruler_id=ruler_id,
-    )
     if ledger_path is not None:
         append_ledger(ledger_path, result)
     return result

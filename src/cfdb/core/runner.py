@@ -85,6 +85,22 @@ class Runner:
 
         adapter = get_adapter(solver, dry_run=dry_run, backend=backend_inst)
 
+        # v5.0 A1: fail-closed sandbox enforcement. A case that declares
+        # execution.requires_sandbox=True must never silently execute on a
+        # non-sandbox backend (e.g. LocalExecutionBackend, or DockerBackend
+        # constructed without sandbox=True). `is_sandbox` is read defensively
+        # via getattr since not every ExecutionBackend implementation defines
+        # it — absence is treated as "not a sandbox".
+        if case.execution.requires_sandbox is True and (
+            getattr(backend_inst, "is_sandbox", False) is not True
+        ):
+            raise RuntimeError(
+                f"case '{case_id}' requires execution.requires_sandbox=True but "
+                f"backend '{backend}' is not a sandbox-profile backend. Refusing to "
+                "run unisolated (fail-closed) — pass a sandbox-capable backend "
+                "(e.g. DockerBackend(sandbox=True))."
+            )
+
         logger.info("starting run %s for case '%s' with solver '%s'", run_id, case_id, solver)
 
         start_time = datetime.now(timezone.utc)

@@ -12,6 +12,24 @@ from cfdb.schema import CaseSpec
 
 logger = logging.getLogger(__name__)
 
+_SKIPPED_REASON_MAX_LEN = 200
+
+
+def _summarize_error(err: Exception) -> str:
+    """Collapse a (possibly multi-line) validation/YAML error into one-line reason.
+
+    Args:
+        err: The caught ValidationError or yaml.YAMLError.
+
+    Returns:
+        Single-line, whitespace-collapsed summary capped at
+        ``_SKIPPED_REASON_MAX_LEN`` characters.
+    """
+    reason = " ".join(str(err).split())
+    if len(reason) > _SKIPPED_REASON_MAX_LEN:
+        reason = reason[: _SKIPPED_REASON_MAX_LEN - 3] + "..."
+    return reason
+
 
 class CaseRegistry:
     """Case registry: scan, load, validate, and cache CaseSpec objects.
@@ -30,6 +48,7 @@ class CaseRegistry:
         self._cache: dict[str, CaseSpec] = {}
         self._case_dirs: dict[str, Path] = {}
         self._scanned: bool = False
+        self._skipped: list[tuple[str, str]] = []
 
     def _scan(self) -> None:
         """Scan cases/<category>/*/case.yaml and load all valid CaseSpecs."""
@@ -59,6 +78,14 @@ class CaseRegistry:
                     logger.debug("loaded case '%s' from %s", spec.id, yaml_path)
                 except (ValidationError, yaml.YAMLError) as e:
                     logger.error("failed to load case from %s: %s", yaml_path, e)
+                    # A2: fail-open scanning continues past invalid cases, but they
+                    # must never go silently invisible — record for callers (e.g.
+                    # ``list-cases``) to surface.
+                    try:
+                        rel_path = str(yaml_path.relative_to(self._root))
+                    except ValueError:
+                        rel_path = str(yaml_path)
+                    self._skipped.append((rel_path, _summarize_error(e)))
 
         self._scanned = True
 
@@ -103,6 +130,21 @@ class CaseRegistry:
             raise KeyError(f"case '{case_id}' not found. Available: {available}")
         return self._case_dirs[case_id]
 
+    @property
+    def skipped(self) -> list[tuple[str, str]]:
+        """Cases skipped during scan due to invalid YAML or schema violations.
+
+        Fail-open scanning (see ``_scan``) continues past these so a single
+        broken case.yaml never blocks discovery of the rest, but they must
+        never be silently invisible — this is the visibility surface callers
+        (e.g. the ``list-cases`` CLI command) use to report them (A2).
+
+        Returns:
+            List of (relative_path, reason_summary) tuples, in scan order.
+        """
+        self._ensure_scanned()
+        return list(self._skipped)
+
     def list_all(self) -> list[CaseSpec]:
         """Return all registered CaseSpecs, sorted by id.
 
@@ -134,4 +176,5 @@ class CaseRegistry:
         """Clear the cache, forcing a re-scan on next access."""
         self._cache.clear()
         self._case_dirs.clear()
+        self._skipped.clear()
         self._scanned = False

@@ -178,6 +178,15 @@ class ReferenceSpec(BaseModel):
     qoi_values: dict[str, float] | None = None
     """Inline reference QoI values (alternative to files['qoi'])."""
 
+    # === v5.0: held-out reference (scoring-only, submission-authenticity mitigation) ===
+    held_out_files: dict[str, Path] = Field(default_factory=dict)
+    """Held-out reference file mapping, used only by agent-eval scoring.
+
+    These files are NOT part of the public case surface handed to agents.
+    Their sha256 is anchored separately in the scoring contract; drift
+    refuses scoring (exit 3). Mitigates copy-the-public-reference gaming;
+    does not prove the computation behind a submission actually ran."""
+
 
 class MetricSpec(BaseModel):
     """Metric tolerance configuration."""
@@ -214,6 +223,24 @@ class BudgetSpec(BaseModel):
     """Maximum allowed mesh cell count (not enforced in P0)."""
 
 
+class ExecutionSpec(BaseModel):
+    """Execution requirements for a case (v5.0)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requires_sandbox: bool = False
+    """When True the case may only run on a sandbox-profile backend.
+
+    Fail-closed: a non-sandbox backend must REFUSE to execute this case
+    (never silently fall back to unisolated local execution)."""
+
+    expected_test_count: int | None = Field(None, gt=0)
+    """Coding domain: frozen total test count of hidden_tests.
+
+    Scored runs reconcile the junitxml collected-test total against this
+    number; mismatch invalidates the submission (collection tampering)."""
+
+
 class CaseSpec(BaseModel):
     """Complete specification for a single case.
 
@@ -231,14 +258,19 @@ class CaseSpec(BaseModel):
     category: Literal["smoke", "verification", "validation", "performance", "surrogate"]
     """Case category, determines the subdirectory under cases/."""
 
+    domain: Literal["cfd", "coding", "agentic"] = "cfd"
+    """Benchmark domain (v5.0). Orthogonal to category: category expresses
+    the V&V nature of the case within its domain."""
+
     description: str | None = None
     """Detailed description (optional)."""
 
-    physics: PhysicsSpec
-    """Physics model description."""
+    physics: PhysicsSpec | None = None
+    """Physics model description (CFD-domain descriptive metadata; unused
+    by the judging engine — verified zero downstream consumers in v5 recon)."""
 
-    conditions: ConditionsSpec
-    """Flow condition parameters."""
+    conditions: ConditionsSpec = Field(default_factory=ConditionsSpec)  # type: ignore[call-arg]
+    """Flow condition parameters (read only by CFD solver adapters)."""
 
     geometry: GeometrySpec | None = None
     """Geometry info (optional for smoke cases)."""
@@ -260,6 +292,9 @@ class CaseSpec(BaseModel):
 
     budget: BudgetSpec = Field(default_factory=BudgetSpec)  # type: ignore[call-arg]
     """Resource budget (optional, has defaults)."""
+
+    execution: ExecutionSpec = Field(default_factory=ExecutionSpec)  # type: ignore[call-arg]
+    """Execution requirements (v5.0, optional, defaults to no sandbox)."""
 
     @field_validator("id")
     @classmethod
@@ -412,6 +447,19 @@ class MetricsResult(BaseModel):
 
     Budget overruns keep warning semantics (they never flip pass/fail),
     but showcase/trust efficiency dimensions consume this flag."""
+
+    # === v5.0 D1: curve L2 judgment wiring (defaults keep old data readable) ===
+    curve_l2_errors: dict[str, FiniteFloat] = Field(default_factory=dict)
+    """Per-curve L2 norm error, computed when the curve artifact and its
+    reference are both available."""
+
+    curves_failed: list[str] = Field(default_factory=list)
+    """Curves whose L2 error exceeded the configured curve_l2_tolerance.
+    Non-empty contributes to overall_status='fail'."""
+
+    ungated_curves: list[str] = Field(default_factory=list)
+    """Curves declared in outputs.curves whose L2 error was computed but
+    for which no tolerance is configured — disclosed, never gated."""
 
     # === NaN-family hardening: downstream visibility fields ===
     qoi_absolute_errors: dict[str, FiniteFloat] = Field(default_factory=dict)

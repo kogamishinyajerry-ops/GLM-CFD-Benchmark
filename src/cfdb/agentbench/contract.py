@@ -38,6 +38,14 @@ WEIGHTS_KEY = "__weights__"
 VALIDITY_GATES_KEY = "__validity_gates__"
 """Frozen-map key anchoring the sha256 of the contract's validity gates."""
 
+HELD_OUT_PREFIX = "held_out:"
+"""Frozen-map key prefix for held-out reference files (v5.0 Wave D2).
+
+Held-out files live under the case directory like any other reference file,
+but are kept out of the public case surface handed to agents. They get a
+distinct key namespace (``held_out:<relpath>``) so a leaked/renamed public
+reference can never be silently reinterpreted as a held-out anchor."""
+
 DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0}
 """Default public scoring weights (negative = lower metric is better).
 
@@ -47,6 +55,23 @@ via ``init_contract(..., weights=...)``, which logs a loud warning."""
 
 DEFAULT_VALIDITY_GATES: list[str] = ["qoi_complete", "within_budget"]
 """Default validity gates a submission must pass to receive a score."""
+
+DOMAIN_DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
+    "cfd": DEFAULT_WEIGHTS,
+    "coding": {"pass_rate": 1.0},
+    "agentic": {"checker_success": 1.0},
+}
+"""Per-domain default weights (v5.0). The cfd entry aliases the historic
+defaults so pre-v5 contracts and call sites are byte-identical."""
+
+DOMAIN_DEFAULT_VALIDITY_GATES: dict[str, list[str]] = {
+    "cfd": DEFAULT_VALIDITY_GATES,
+    "coding": ["tests_all_pass", "sandbox_used"],
+    "agentic": ["checker_ok"],
+}
+"""Per-domain default validity gates (v5.0). Names must match what the
+domain scorer actually emits (sandbox_scorer / the agentic branch of
+score_submission) — an unmatched gate name fails closed at scoring time."""
 
 
 class FrozenDriftError(Exception):
@@ -181,6 +206,34 @@ def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
     return sorted(rel_paths)
 
 
+def _collect_held_out_files(case: CaseSpec, case_dir: Path) -> dict[str, str]:
+    """Enumerate held-out reference files, keyed by their frozen key.
+
+    Args:
+        case: Loaded case spec.
+        case_dir: Directory containing ``case.yaml``.
+
+    Returns:
+        Mapping of frozen key (``held_out:<relpath>``) to the case-dir-relative
+        POSIX path it anchors.
+
+    Raises:
+        FileNotFoundError: If a declared held-out file is missing
+            (fail-closed: cannot freeze what does not exist).
+    """
+    result: dict[str, str] = {}
+    if case.reference is None:
+        return result
+    for rel in case.reference.held_out_files.values():
+        held_path = case_dir / rel
+        if not held_path.is_file():
+            raise FileNotFoundError(
+                f"declared held-out reference file missing, cannot freeze: {held_path}"
+            )
+        result[f"{HELD_OUT_PREFIX}{Path(rel).as_posix()}"] = Path(rel).as_posix()
+    return result
+
+
 def init_contract(
     case_id: str,
     registry: CaseRegistry,
@@ -207,8 +260,10 @@ def init_contract(
     """
     case = registry.load(case_id)
     case_dir = registry.get_case_dir(case_id)
-    final_weights = dict(DEFAULT_WEIGHTS if weights is None else weights)
-    final_gates = list(DEFAULT_VALIDITY_GATES if validity_gates is None else validity_gates)
+    domain_weights = DOMAIN_DEFAULT_WEIGHTS.get(case.domain, DEFAULT_WEIGHTS)
+    domain_gates = DOMAIN_DEFAULT_VALIDITY_GATES.get(case.domain, DEFAULT_VALIDITY_GATES)
+    final_weights = dict(domain_weights if weights is None else weights)
+    final_gates = list(domain_gates if validity_gates is None else validity_gates)
     if "wall_time_sec" in final_weights:
         logger.warning(
             "wall_time_sec is self-reported: weighting it lets submissions "
@@ -218,6 +273,8 @@ def init_contract(
     frozen: dict[str, str] = {}
     for rel in _collect_frozen_files(case, case_dir):
         frozen[rel] = sha256_file(case_dir / rel)
+    for held_out_key, rel in _collect_held_out_files(case, case_dir).items():
+        frozen[held_out_key] = sha256_file(case_dir / rel)
     frozen[WEIGHTS_KEY] = canonical_digest(final_weights)
     frozen[VALIDITY_GATES_KEY] = canonical_digest(final_gates)
 
@@ -252,7 +309,8 @@ def verify_frozen(contract: ScoringContract, case_dir: Path) -> list[str]:
         elif key == VALIDITY_GATES_KEY:
             actual = canonical_digest(contract.validity_gates)
         else:
-            path = case_dir / key
+            rel = key[len(HELD_OUT_PREFIX):] if key.startswith(HELD_OUT_PREFIX) else key
+            path = case_dir / rel
             if not path.is_file():
                 logger.error("frozen file missing: %s", path)
                 drifted.append(key)

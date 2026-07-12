@@ -79,10 +79,14 @@ class TestJudgeSourceAnchor:
         assert f"{JUDGE_SOURCE_PREFIX}checker_scorer" in contract.frozen
         assert f"{JUDGE_SOURCE_PREFIX}sandbox_scorer" not in contract.frozen
 
-    def test_cfd_contract_has_no_judge_anchor(self) -> None:
+    def test_cfd_contract_anchors_shared_scorer_only(self) -> None:
+        # Since the R2 batch the shared scorer.py (gate evaluation, score
+        # assembly, cfd QoI recomputation) is anchored for every domain;
+        # cfd carries no domain-specific judge module beyond it.
         registry = CaseRegistry(PROJECT_CASES)
         contract = init_contract("lid_driven_cavity", registry)
-        assert not any(k.startswith(JUDGE_SOURCE_PREFIX) for k in contract.frozen)
+        judge_keys = {k for k in contract.frozen if k.startswith(JUDGE_SOURCE_PREFIX)}
+        assert judge_keys == {f"{JUDGE_SOURCE_PREFIX}scorer"}
 
     def test_baseline_then_judge_source_drift(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

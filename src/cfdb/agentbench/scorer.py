@@ -32,7 +32,12 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from cfdb.agentbench.contract import FrozenDriftError, ScoringContract, verify_frozen
+from cfdb.agentbench.contract import (
+    FrozenDriftError,
+    ScoringContract,
+    missing_required_anchors,
+    verify_frozen,
+)
 from cfdb.schema import CaseSpec
 
 if TYPE_CHECKING:
@@ -389,8 +394,7 @@ def _assemble_score(
     missing_metrics = sorted(m for m in contract.weights if m not in metric_values)
     if len(missing_metrics) > 0:
         notes.append(
-            f"cannot compute score: metrics {missing_metrics} unavailable "
-            "(fail-closed: score=None)"
+            f"cannot compute score: metrics {missing_metrics} unavailable (fail-closed: score=None)"
         )
         return None, {}
     breakdown = {m: w * metric_values[m] for m, w in contract.weights.items()}
@@ -452,6 +456,14 @@ def score_submission(
     if case.id != contract.case_id:
         raise ValueError(f"case '{case.id}' does not match contract case '{contract.case_id}'")
 
+    # An anchor that is absent cannot drift (verify_frozen only re-checks
+    # keys that exist), so a contract stripped of a mandatory anchor would
+    # otherwise verify clean (Codex R2 P2). An incomplete ruler is treated
+    # exactly like a drifted one: refuse to score, exit 3, zero ledger.
+    missing = missing_required_anchors(contract, case.domain)
+    if len(missing) > 0:
+        raise FrozenDriftError([f"{key} (mandatory anchor missing)" for key in missing])
+
     drifted = verify_frozen(contract, case_dir)
     if len(drifted) > 0:
         raise FrozenDriftError(drifted)
@@ -509,22 +521,16 @@ def score_submission(
                 agentic_gates[gate_name] = checker_ok
             else:
                 agentic_gates[gate_name] = False
-                agentic_notes.append(
-                    f"unknown agentic gate '{gate_name}' failed closed"
-                )
+                agentic_notes.append(f"unknown agentic gate '{gate_name}' failed closed")
         if "checker_ok" not in agentic_gates:
             # The verdict is always recorded even if the frozen gate list
             # omitted it (visibility; it cannot make the score rankable).
             agentic_gates["checker_ok"] = checker_ok
 
-        gates_pass = all(
-            agentic_gates[g] is True for g in contract.validity_gates
-        )
+        gates_pass = all(agentic_gates[g] is True for g in contract.validity_gates)
         agentic_valid = gates_pass and verdict.success is True
         agentic_metric_values = (
-            {"checker_success": 1.0 if verdict.success is True else 0.0}
-            if checker_ok
-            else {}
+            {"checker_success": 1.0 if verdict.success is True else 0.0} if checker_ok else {}
         )
         agentic_score, agentic_breakdown = _assemble_score(
             contract, agentic_valid, agentic_metric_values, agentic_notes
@@ -553,9 +559,7 @@ def score_submission(
             )
 
         if "wall_time_sec" in contract.weights:
-            notes.append(
-                "wall_time_sec is self-reported (weighted by explicit contract choice)"
-            )
+            notes.append("wall_time_sec is self-reported (weighted by explicit contract choice)")
             logger.warning("wall_time_sec is self-reported: it is weighted in this contract")
 
         gates = _evaluate_gates(contract, case, computed, wall_time, notes)
@@ -616,9 +620,7 @@ def read_ledger(ledger_path: Path) -> list[SubmissionScore]:
     if not ledger_path.is_file():
         return []
     entries: list[SubmissionScore] = []
-    for lineno, line in enumerate(
-        ledger_path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
+    for lineno, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), start=1):
         if line.strip() == "":
             continue
         try:

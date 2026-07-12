@@ -73,20 +73,34 @@ new verdicts never share a leaderboard. Key form:
 _JUDGE_SOURCE_MODULES: dict[str, str] = {
     "sandbox_scorer": "cfdb.agentbench.sandbox_scorer",
     "checker_scorer": "cfdb.agentbench.checker_scorer",
+    "scorer": "cfdb.agentbench.scorer",
 }
 """Whitelist of anchorable judge modules; an unknown shortname in a contract
 fails closed as drift, never crashes verification."""
 
 _DOMAIN_JUDGE_MODULES: dict[str, tuple[str, ...]] = {
-    "coding": ("sandbox_scorer",),
-    "agentic": ("checker_scorer",),
+    "cfd": ("scorer",),
+    "coding": ("sandbox_scorer", "scorer"),
+    "agentic": ("checker_scorer", "scorer"),
 }
-"""Which judge modules each domain anchors. cfd verdict recomputation lives
-in scorer.py (shared assembly) and is deliberately not anchored — see
-Architecture v5.0 §8 residuals."""
+"""Which judge modules each domain anchors. scorer.py is anchored for every
+domain (Codex R2 P1): gate evaluation, verdict-to-score assembly, and the
+cfd QoI recomputation all live there, so a policy edit anywhere in it must
+drift every contract — the cost that unrelated scorer.py refactors force a
+re-anchor is accepted as correct noise (one CLI command per case)."""
 
 _MANIFEST_TREES: tuple[str, ...] = ("reference", "visible")
 """Case-dir subtrees whose file inventory the manifest anchor covers."""
+
+REQUIRED_UNIVERSAL_ANCHORS: tuple[str, ...] = (
+    "case.yaml",
+    WEIGHTS_KEY,
+    VALIDITY_GATES_KEY,
+    FILE_MANIFEST_KEY,
+)
+"""Anchors every v2 contract must carry regardless of domain (Codex R2 P2):
+the version label alone is not proof of migration — a payload claiming v2
+without these anchors is refused at load."""
 
 DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0}
 """Default public scoring weights (negative = lower metric is better).
@@ -242,13 +256,25 @@ def _judge_source_digest(shortname: str) -> str:
     return sha256_file(Path(module.__file__))  # type: ignore[arg-type]
 
 
+def _is_cache_artifact(path: Path) -> bool:
+    """True for Python bytecode-cache artifacts (``__pycache__``/``*.pyc``).
+
+    These are interpreter side effects, not judging material: a checker
+    legitimately importing a sibling helper module must never drift its own
+    ruler via a generated cache file (Codex R2 P2), and a preexisting cache
+    must never be anchored.
+    """
+    return "__pycache__" in path.parts or path.suffix == ".pyc"
+
+
 def _tree_manifest(case_dir: Path) -> list[str]:
     """Sorted inventory of every file under the judged case subtrees.
 
     Enumerates :data:`_MANIFEST_TREES` (``reference/`` and ``visible/``)
     recursively, returning case-dir-relative POSIX paths. Used identically
     at anchor time and at verify time, so any file added to, removed from,
-    or renamed within a judged tree changes the manifest digest.
+    or renamed within a judged tree changes the manifest digest. Bytecode
+    caches are excluded (see :func:`_is_cache_artifact`).
 
     Args:
         case_dir: Directory containing ``case.yaml``.
@@ -261,7 +287,7 @@ def _tree_manifest(case_dir: Path) -> list[str]:
         tree_dir = case_dir / tree
         if tree_dir.is_dir():
             for path in tree_dir.rglob("*"):
-                if path.is_file():
+                if path.is_file() and not _is_cache_artifact(path):
                     paths.append(path.relative_to(case_dir).as_posix())
     return sorted(paths)
 
@@ -300,13 +326,13 @@ def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
     reference_dir = case_dir / "reference"
     if reference_dir.is_dir():
         for path in sorted(reference_dir.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not _is_cache_artifact(path):
                 rel_paths.add(path.relative_to(case_dir).as_posix())
 
     visible_dir = case_dir / "visible"
     if visible_dir.is_dir():
         for path in sorted(visible_dir.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not _is_cache_artifact(path):
                 rel_paths.add(path.relative_to(case_dir).as_posix())
 
     if case.reference is not None:
@@ -426,6 +452,40 @@ def init_contract(
     )
 
 
+def required_domain_anchors(domain: str) -> tuple[str, ...]:
+    """Anchors a v2 contract must carry for a given case domain.
+
+    Args:
+        domain: Case domain (``cfd`` / ``coding`` / ``agentic``).
+
+    Returns:
+        The mandatory domain-specific frozen keys (judge-source anchors,
+        plus the normalize-source anchor for agentic).
+    """
+    keys = [f"{JUDGE_SOURCE_PREFIX}{module}" for module in _DOMAIN_JUDGE_MODULES.get(domain, ())]
+    if domain == "agentic":
+        keys.append(NORMALIZE_SOURCE_KEY)
+    return tuple(keys)
+
+
+def missing_required_anchors(contract: ScoringContract, domain: str) -> list[str]:
+    """Mandatory anchors absent from a contract's frozen map (Codex R2 P2).
+
+    ``verify_frozen`` can only re-check keys that exist; a contract stripped
+    of an anchor would otherwise verify clean. The scoring path refuses to
+    score when this is non-empty (an incomplete ruler is a drifted ruler).
+
+    Args:
+        contract: Contract to inspect.
+        domain: Domain of the case being scored.
+
+    Returns:
+        Sorted missing mandatory keys (universal + domain-specific).
+    """
+    required = tuple(REQUIRED_UNIVERSAL_ANCHORS) + required_domain_anchors(domain)
+    return sorted(key for key in required if key not in contract.frozen)
+
+
 def verify_frozen(contract: ScoringContract, case_dir: Path) -> list[str]:
     """Re-hash every frozen item and report drifted keys.
 
@@ -515,14 +575,27 @@ def load_contract(path: Path) -> ScoringContract:
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
     version = raw.get("contract_version") if isinstance(raw, dict) else None
+    case_hint = raw.get("case_id", "<case>") if isinstance(raw, dict) else "<case>"
     if version != "2":
         raise ValueError(
             f"legacy scoring contract (version {version!r}) at {path}: it "
             "predates the v2 judging-material anchors (file manifest, judge "
             "source) and cannot be trusted to detect ruler drift. Re-anchor "
-            "deliberately with 'cfdb agent-eval init --case "
-            f"{raw.get('case_id', '<case>') if isinstance(raw, dict) else '<case>'}"
-            " --force' — scores in the existing ledger keep their old "
+            f"deliberately with 'cfdb agent-eval init --case {case_hint} "
+            "--force' — scores in the existing ledger keep their old "
             "ruler_id and will not rank against new scores."
         )
-    return ScoringContract.model_validate(raw)
+    contract = ScoringContract.model_validate(raw)
+    # The version label is not proof of migration (Codex R2 P2): a payload
+    # relabeled or truncated to look like v2 must still carry every
+    # universal anchor. Domain-specific anchors are enforced at the scoring
+    # seam (score_submission), where the case domain is known.
+    missing = sorted(key for key in REQUIRED_UNIVERSAL_ANCHORS if key not in contract.frozen)
+    if len(missing) > 0:
+        raise ValueError(
+            f"scoring contract at {path} claims version 2 but is missing "
+            f"mandatory anchors {missing} — refusing to trust an incomplete "
+            f"ruler. Re-anchor with 'cfdb agent-eval init --case {case_hint} "
+            "--force'."
+        )
+    return contract

@@ -42,9 +42,7 @@ logger = logging.getLogger(__name__)
 
 CheckerMode = Literal["CHECKER_OK", "CHECKER_ERROR"]
 
-_DENIED_MODULES: frozenset[str] = frozenset(
-    {"subprocess", "socket", "ctypes", "importlib"}
-)
+_DENIED_MODULES: frozenset[str] = frozenset({"subprocess", "socket", "ctypes", "importlib"})
 """Module roots whose import trips :func:`validate_checker` (accidental
 outbound calls / dynamic loading in judging material)."""
 
@@ -147,8 +145,13 @@ def score_agentic(
         return _error_verdict(f"checker not found: {checker_path}")
 
     try:
+        # -B: a checker legitimately importing a sibling module (e.g.
+        # reference/helper.py) must not generate __pycache__ inside the
+        # anchored reference/ tree — a bytecode cache appearing mid-scoring
+        # would trip the post-run manifest re-verification as a false ruler
+        # drift (Codex R2 P2).
         proc = subprocess.run(
-            [sys.executable, str(checker_path), str(submission_dir)],
+            [sys.executable, "-B", str(checker_path), str(submission_dir)],
             capture_output=True,
             text=True,
             timeout=timeout_sec,
@@ -181,13 +184,10 @@ def score_agentic(
     )
     if is_valid_evidence is False:
         return _error_verdict(
-            f"checker payload 'evidence' is not a list[str] (got {evidence_raw!r}): "
-            f"{checker_path}"
+            f"checker payload 'evidence' is not a list[str] (got {evidence_raw!r}): {checker_path}"
         )
 
-    return CheckerVerdict(
-        success=success, evidence=evidence_raw, mode="CHECKER_OK", error=None
-    )
+    return CheckerVerdict(success=success, evidence=evidence_raw, mode="CHECKER_OK", error=None)
 
 
 def validate_checker(path: Path) -> CheckerValidationResult:

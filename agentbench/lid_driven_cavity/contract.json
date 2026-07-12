@@ -7,7 +7,8 @@
     "held_out:held_out/qoi.json": "52ecc81b2254237081012fdd5325f4ec7f4afd48d53c08a55bda0b1284d2fa14",
     "__weights__": "8126f570b7b068d917a534fa06679059ccd303da6e5f297c9bcbef278db36cb5",
     "__validity_gates__": "7503fa9b41d4111273ae43d63328b95b393d0f9587ee6bbcef6ad4d25015adff",
-    "__file_manifest__": "bf0450407cff3d3ff93e4f9f3c4ad3d2f22016dd93bb300cfa77d38bf481b06c"
+    "__file_manifest__": "bf0450407cff3d3ff93e4f9f3c4ad3d2f22016dd93bb300cfa77d38bf481b06c",
+    "judge_source:scorer": "3970f0154d639c9f7b1e2c704f9a3bb507cb0d71f92588a58958cc60e921c6b9"
   },
   "weights": {
     "qoi_error": -1.0

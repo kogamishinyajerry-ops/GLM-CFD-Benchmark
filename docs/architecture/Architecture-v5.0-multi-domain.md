@@ -243,12 +243,11 @@ cases/coding_tasks/<id>/
   （cp_curve）与 outputs.curves 名（cp_distribution）不一致且为 CSV 格式，engine 的
   curve 判定当前对其保持 fail-closed incomplete（adapters 尚未产 curves 数据，实际 inert）；
   键对齐 + CSV 参考装载进 backlog，绝不为「能跑」而放松装载校验。
-- **cfd 域判卷源不入锚（Codex R1 后如实声明）**：coding/agentic 的判卷器是专职模块
-  （sandbox_scorer/checker_scorer），源码 sha256 已入 `judge_source:*` 锚；cfd 的 QoI/curve
-  重算逻辑住在共享 scorer.py（同文件还承载 ledger/ranked 等非判卷代码），入锚会让无关
-  重构漂移全部 cfd 契约。当前依赖：cfd 判卷语义自 v4 冻结未变 + contract_version 升版
-  作为手动血统闸门；若未来改 cfd 判卷语义，必须手动升 contract_version（治理约定，
-  非机械强制）。判卷逻辑抽出为专职模块后入锚，进 backlog。
+- **共享 scorer.py 已全域入锚（Codex R2 P1 收口，取代 R1 时期的「cfd 不入锚」残差）**：
+  gate 评估/分数组装/cfd QoI 重算全住 scorer.py，R3 批起 `judge_source:scorer` 对三域
+  契约强制——判卷政策任何改动漂移全部契约。代价（scorer.py 无关重构也强制全量重锚，
+  每 case 一条 CLI 命令）**接受为正确噪声**：锚的语义就是「此文件即政策」。判卷逻辑
+  抽专职模块以缩小锚面，仍在 backlog（属降噪优化非安全缺口）。
 - **manifest 锚形状、逐文件哈希锚内容，合围钉死判卷树**：`__file_manifest__` 咬
   「reference/+visible/ 内文件增/删/改名」；已存在文件的内容改动由逐文件 sha256 咬。
   R1 批次起 visible/ 逐文件锚从 agentic-only 扩到全域（coding 的起始 solution.py 是
@@ -296,5 +295,20 @@ cases/coding_tasks/<id>/
   lid_driven_cavity `#d1955288→#342203d3`），旧 ledger 行按 ruler 过滤不再与新分同榜。
   witness：tests/test_codex_r1_witnesses.py（14 条）+ 真 CLI 实况（visible/ 塞文件
   →exit 3 指名 `__file_manifest__`；v1 契约→[FAIL] exit 1）。
-  注：cfd 域判卷逻辑住在共享 scorer.py，刻意不做源锚（避免无关重构全量漂移），
-  属已声明残差（§8）。
+  注：cfd 域判卷逻辑住在共享 scorer.py，R1 批刻意不做源锚（避免无关重构全量漂移），
+  当时记为已声明残差——被 Codex R2 P1 收紧后于 R3 批全域入锚（见下）。
+- **Codex R2（2026-07-12，审 5acb8da）：CHANGES_REQUIRED**——1P1+2P2，round cap 3 用尽
+  →交用户裁决，**用户授权 R3 修复批+终审**。三条全 grounded 坐实并落地：
+  ①P1 判卷政策半锚（sandbox_scorer 从 scorer.py import `_assemble_score`/`_evaluate_gates`，
+  agentic verdict→gates/score 组装整个在 scorer.py）——修复：`judge_source:scorer`
+  对**三域**强制入锚（cfd 的 R1 残差一并关闭，语义统一「判卷政策变=全域尺变」）；
+  ②P2 版本标签非迁移证明（手改 "2" 或截断 payload 照样过）——修复：load_contract
+  强制四条通用锚（case.yaml/__weights__/__validity_gates__/__file_manifest__），
+  score_submission 按域强制 judge_source/normalize 锚，缺锚=FrozenDriftError exit 3
+  零落账（缺失的锚不会漂移，必须显式点名）；③P2 checker import 兄弟模块生成
+  __pycache__ 误触 manifest 假漂移——修复：checker 子进程加 `-B` + manifest/冻结
+  枚举排除 `__pycache__`/`*.pyc`（含反向守卫：真文件新增仍必咬）。
+  三契约再重锚（smoke_add_two #17070483→#17efa751 等，各 +1 frozen 项）。
+  witness：tests/test_codex_r2_witnesses.py（10 条，含 helper-import checker 真跑
+  不自漂移 + 缺锚拒判零落账 + 缓存排除不放过真新增）。真 CLI 实况：scorer.py
+  追加一行注释→exit 3 指名 `judge_source:scorer`，还原→golden 1.0 @ #17efa751。

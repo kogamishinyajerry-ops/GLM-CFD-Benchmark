@@ -110,6 +110,15 @@ class SubmissionScore(BaseModel):
     like-with-like ranking; None marks legacy rows of unknown lineage,
     which never rank once a ruler filter is applied (fail-closed)."""
 
+    attempt_id: str | None = None
+    """Content identity of the scored submission: sha256 over the sorted
+    (relative path, file sha256) pairs of the submission tree, stamped by
+    :func:`score_submission` (Codex R6 P1). ``submission_id`` is just the
+    directory basename — caller-controlled and non-unique (``/a/run`` and
+    ``/b/run`` collide; one candidate copied under fresh names multiplies).
+    pass@k groups samples by this content identity; None marks legacy rows,
+    which are never counted as samples (fail-closed)."""
+
 
 def score_submission(
     contract: ScoringContract,
@@ -176,6 +185,11 @@ def score_submission(
     missing = missing_required_anchors(contract, case, case_dir)
     if len(missing) > 0:
         raise FrozenDriftError([f"{key} (mandatory anchor missing)" for key in missing])
+
+    # Content identity stamped BEFORE judging (Codex R6-R1 P1): the attempt
+    # is what was handed in, hashed up front — a submission that mutates
+    # itself during scoring cannot retroactively pick its identity.
+    attempt_id = _submission_digest(submission_dir)
 
     if case.domain == "coding":
         from cfdb.agentbench.sandbox_scorer import score_coding
@@ -253,6 +267,7 @@ def score_submission(
             ruler_id=ruler_id,
         )
 
+    result.attempt_id = attempt_id
     if ledger_path is not None:
         append_ledger(ledger_path, result)
     return result
@@ -333,12 +348,43 @@ def _is_rankable(entry: SubmissionScore) -> bool:
     return True
 
 
-PASS_AT_K_DOMAINS: frozenset[str] = frozenset({"coding", "agentic"})
-"""Domains with a BINARY success signal (Codex R6 P1): for coding,
-``valid`` requires ``tests_all_pass``; for agentic it requires the checker
-judging success — so a rankable entry IS a correct one. cfd scores are
-continuous error magnitudes: ``qoi_complete``/``within_budget`` pass for
-arbitrarily wrong answers, so "pass" is undefined and pass@k is refused."""
+PASS_AT_K_BINARY_GATES: dict[str, str] = {
+    "coding": "tests_all_pass",
+    "agentic": "checker_ok",
+}
+"""The explicit binary success gate per pass@k-capable domain (Codex R6-R1
+P1). Domain membership alone does not establish that rankable means
+correct: a custom coding ruler may omit ``tests_all_pass`` from its
+validity gates, making a partial hidden-test failure valid-and-rankable.
+pass@k therefore requires this gate to be IN the frozen gate list and
+recorded True on every row of a passing attempt. cfd has no binary gate —
+its scores are continuous error magnitudes — so it is absent here and
+pass@k is refused."""
+
+
+def _submission_digest(submission_dir: Path) -> str:
+    """Content identity of a submission tree (Codex R6-R1 P1).
+
+    sha256 over the sorted (relative POSIX path, file sha256) pairs of
+    every file under the submission directory: identical content under any
+    basename is one attempt; different content is a different attempt —
+    the directory name (caller-controlled, non-unique) never decides
+    sample identity.
+
+    Args:
+        submission_dir: Submission directory.
+
+    Returns:
+        64-char lowercase hex digest.
+    """
+    from cfdb.agentbench.contract import canonical_digest, sha256_file
+
+    pairs = [
+        [path.relative_to(submission_dir).as_posix(), sha256_file(path)]
+        for path in sorted(submission_dir.rglob("*"))
+        if path.is_file()
+    ]
+    return canonical_digest(pairs)
 
 
 def pass_at_k(
@@ -346,21 +392,25 @@ def pass_at_k(
     k: int,
     ruler_id: str | None = None,
     *,
+    contract: ScoringContract,
     domain: str,
 ) -> tuple[float, int, int] | None:
     """Unbiased pass@k over ledger attempts (Chen et al. 2021 estimator).
 
-    A sample is one unique submission (attempt), not one scoring event
-    (Codex R6 P1): rescoring the same ``submission_id`` appends ledger rows
-    but adds no independent attempt, so rows are collapsed per id first —
-    a collapsed attempt passes only if EVERY one of its rows is rankable
-    (a deterministic judge produces agreeing rows; disagreement fails
-    closed). pass@k = 1 - C(n-c, k)/C(n, k), stable product form.
+    A sample is one unique attempt identified by CONTENT
+    (:attr:`SubmissionScore.attempt_id`, Codex R6-R1 P1) — never by the
+    caller-controlled directory basename. Rescoring identical content
+    collapses into one attempt; an attempt passes only if EVERY one of its
+    rows is rankable AND carries the domain's explicit binary success gate
+    recorded True. Legacy rows without an attempt identity are excluded
+    (fail-closed: they can neither pass nor pad n).
+    pass@k = 1 - C(n-c, k)/C(n, k), stable product form.
 
-    Fail-closed rules: only domains with a binary success signal are
-    accepted (:data:`PASS_AT_K_DOMAINS` — Codex R6 P1: for cfd, rankable is
-    not correctness and the metric would fabricate a 100% "pass" rate from
-    arbitrarily wrong answers); fewer unique attempts than ``k`` (or
+    Fail-closed rules: the domain must have a binary success gate
+    (:data:`PASS_AT_K_BINARY_GATES`) AND that gate must be in the FROZEN
+    contract's validity gates (Codex R6-R1 P1: a coding ruler that omitted
+    ``tests_all_pass`` makes partial failures rankable — such a ruler has
+    no binary signal and is refused). Fewer unique attempts than ``k`` (or
     k < 1) returns None — never extrapolated. When ``ruler_id`` is given,
     only rows scored under that exact ruler participate (like-with-like).
 
@@ -368,20 +418,31 @@ def pass_at_k(
         entries: Ledger entries.
         k: Number of draws.
         ruler_id: When given, restrict samples to this ruler lineage.
-        domain: Case domain; must carry a binary success signal.
+        contract: The frozen contract whose gate list defines "pass".
+        domain: Case domain (must be verified against the frozen case.yaml
+            by the caller — see the CLI, which refuses on ruler drift
+            before trusting the live spec).
 
     Returns:
         ``(pass_at_k, n_unique_attempts, n_passes)``, or None when not
         honestly computable from the available samples.
 
     Raises:
-        ValueError: If ``domain`` has no binary success signal.
+        ValueError: If the domain has no binary success gate, or the
+            frozen ruler does not gate on it.
     """
-    if domain not in PASS_AT_K_DOMAINS:
+    binary_gate = PASS_AT_K_BINARY_GATES.get(domain)
+    if binary_gate is None:
         raise ValueError(
             f"pass@k requires a binary success signal; domain '{domain}' "
             "scores are continuous (rankable does not mean correct) — refusing "
             "to fabricate a pass rate"
+        )
+    if binary_gate not in contract.validity_gates:
+        raise ValueError(
+            f"pass@k requires the frozen ruler to gate on '{binary_gate}', but "
+            f"this contract's validity gates are {contract.validity_gates} — "
+            "without it, rankable does not mean correct (refusing)"
         )
     if k < 1:
         return None
@@ -390,14 +451,16 @@ def pass_at_k(
         rows = [e for e in rows if e.ruler_id == ruler_id]
     by_attempt: dict[str, list[SubmissionScore]] = {}
     for entry in rows:
-        by_attempt.setdefault(entry.submission_id, []).append(entry)
+        if entry.attempt_id is None:
+            continue  # legacy row: no content identity, never a sample
+        by_attempt.setdefault(entry.attempt_id, []).append(entry)
     n = len(by_attempt)
     if n < k:
         return None
     c = sum(
         1
         for attempt_rows in by_attempt.values()
-        if all(_is_rankable(e) is True for e in attempt_rows)
+        if all(_is_rankable(e) is True and e.gates.get(binary_gate) is True for e in attempt_rows)
     )
     if n - c < k:
         return 1.0, n, c

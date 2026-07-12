@@ -141,19 +141,34 @@ def _entry(
     score: float | None,
     ruler: str | None = "r1",
     sid: str | None = None,
+    aid: str | None = "__auto__",
+    gates: dict[str, bool] | None = None,
 ) -> SubmissionScore:
     breakdown = {"pass_rate": score} if (valid and score is not None) else {}
+    seq = next(_entry_counter)
     return SubmissionScore(
-        submission_id=sid if sid is not None else f"s_{_entry_counter.__next__()}",
+        submission_id=sid if sid is not None else f"s_{seq}",
         valid=valid,
         score=score if valid else None,
         breakdown=breakdown,
-        gates={"tests_all_pass": valid},
+        gates=gates if gates is not None else {"tests_all_pass": valid},
         ruler_id=ruler,
+        attempt_id=(f"a_{seq}" if aid == "__auto__" else aid),
     )
 
 
 _entry_counter = iter(range(10**9))
+
+
+def _binary_contract(gates: list[str] | None = None) -> object:
+    from cfdb.agentbench.contract import ScoringContract
+
+    return ScoringContract(
+        case_id="x",
+        frozen={"case.yaml": "0" * 64},
+        weights={"pass_rate": 1.0},
+        validity_gates=gates if gates is not None else ["tests_all_pass", "sandbox_used"],
+    )
 
 
 class TestPassAtK:
@@ -162,7 +177,9 @@ class TestPassAtK:
 
         entries = [_entry(True, 1.0) for _ in range(3)] + [_entry(False, None) for _ in range(7)]
         for k in (1, 2, 3, 5):
-            result = pass_at_k(entries, k, ruler_id="r1", domain="coding")
+            result = pass_at_k(
+                entries, k, ruler_id="r1", contract=_binary_contract(), domain="coding"
+            )
             assert result is not None
             value, n, c = result
             assert (n, c) == (10, 3)
@@ -173,35 +190,75 @@ class TestPassAtK:
 
     def test_insufficient_samples_never_extrapolated(self) -> None:
         entries = [_entry(True, 1.0), _entry(False, None)]
-        assert pass_at_k(entries, 3, ruler_id="r1", domain="coding") is None
-        assert pass_at_k(entries, 0, ruler_id="r1", domain="coding") is None
-        assert pass_at_k([], 1, domain="agentic") is None
+        kw = {"contract": _binary_contract(), "domain": "coding"}
+        assert pass_at_k(entries, 3, ruler_id="r1", **kw) is None
+        assert pass_at_k(entries, 0, ruler_id="r1", **kw) is None
+        assert pass_at_k([], 1, contract=_binary_contract(["checker_ok"]), domain="agentic") is None
 
     def test_continuous_domain_refused(self) -> None:
         # Codex R6 P1: for cfd, rankable does not mean correct — a ledger
         # of arbitrarily wrong QoIs must never fabricate pass@1 = 1.
         entries = [_entry(True, 1.0) for _ in range(5)]
         with pytest.raises(ValueError, match="binary success signal"):
-            pass_at_k(entries, 1, ruler_id="r1", domain="cfd")
+            pass_at_k(entries, 1, ruler_id="r1", contract=_binary_contract(), domain="cfd")
 
-    def test_rescoring_events_collapse_into_one_attempt(self) -> None:
-        # Codex R6 P1: rescoring the same submission k times must not
-        # manufacture n >= k "independent" samples.
-        entries = [_entry(True, 1.0, sid="same_sub") for _ in range(5)]
-        assert pass_at_k(entries, 3, ruler_id="r1", domain="coding") is None
-        result = pass_at_k(entries, 1, ruler_id="r1", domain="coding")
+    def test_ruler_without_binary_gate_refused(self) -> None:
+        # Codex R6-R1 P1: domain label alone is not the signal — a custom
+        # coding ruler omitting tests_all_pass makes partial failures
+        # rankable, so such a ruler must be refused outright.
+        entries = [_entry(True, 1.0) for _ in range(5)]
+        loose = _binary_contract(gates=["sandbox_used"])
+        with pytest.raises(ValueError, match="tests_all_pass"):
+            pass_at_k(entries, 1, ruler_id="r1", contract=loose, domain="coding")
+
+    def test_rankable_without_binary_gate_true_is_not_a_pass(self) -> None:
+        # A row that is rankable (all ITS recorded gates true) but whose
+        # gate set never included the binary gate must not count as a pass.
+        no_signal = _entry(True, 0.5, gates={"sandbox_used": True})
+        result = pass_at_k(
+            [no_signal], 1, ruler_id="r1", contract=_binary_contract(), domain="coding"
+        )
+        assert result is not None
+        assert result == (0.0, 1, 0)
+
+    def test_identical_content_collapses_across_basenames(self) -> None:
+        # Codex R6-R1 P1: one candidate rescored — or COPIED under fresh
+        # directory names — is still one attempt: identity is content.
+        entries = [_entry(True, 1.0, sid=f"copy_{i}", aid="same_content") for i in range(5)]
+        kw = {"contract": _binary_contract(), "domain": "coding"}
+        assert pass_at_k(entries, 3, ruler_id="r1", **kw) is None
+        result = pass_at_k(entries, 1, ruler_id="r1", **kw)
         assert result is not None
         assert result[1:] == (1, 1)
+
+    def test_colliding_basenames_are_separate_attempts(self) -> None:
+        # /team-a/run and /team-b/run share a basename but are different
+        # content: neither may poison the other.
+        entries = [
+            _entry(True, 1.0, sid="run", aid="team_a_content"),
+            _entry(False, None, sid="run", aid="team_b_content"),
+        ]
+        result = pass_at_k(entries, 1, ruler_id="r1", contract=_binary_contract(), domain="coding")
+        assert result is not None
+        value, n, c = result
+        assert (n, c) == (2, 1)
+
+    def test_legacy_rows_without_identity_are_never_samples(self) -> None:
+        entries = [_entry(True, 1.0, aid=None) for _ in range(5)]
+        assert (
+            pass_at_k(entries, 1, ruler_id="r1", contract=_binary_contract(), domain="coding")
+            is None
+        )
 
     def test_disagreeing_rescore_rows_fail_closed(self) -> None:
         # A deterministic judge produces agreeing rows; if rescoring rows
         # for one attempt disagree, the attempt is never counted as a pass.
         entries = [
-            _entry(True, 1.0, sid="flaky"),
-            _entry(False, None, sid="flaky"),
-            _entry(True, 1.0, sid="solid"),
+            _entry(True, 1.0, aid="flaky"),
+            _entry(False, None, aid="flaky"),
+            _entry(True, 1.0, aid="solid"),
         ]
-        result = pass_at_k(entries, 1, ruler_id="r1", domain="coding")
+        result = pass_at_k(entries, 1, ruler_id="r1", contract=_binary_contract(), domain="coding")
         assert result is not None
         value, n, c = result
         assert (n, c) == (2, 1)
@@ -210,7 +267,7 @@ class TestPassAtK:
         entries = [_entry(True, 1.0, ruler="old") for _ in range(5)] + [
             _entry(False, None, ruler="r1") for _ in range(2)
         ]
-        result = pass_at_k(entries, 1, ruler_id="r1", domain="coding")
+        result = pass_at_k(entries, 1, ruler_id="r1", contract=_binary_contract(), domain="coding")
         assert result is not None
         value, n, c = result
         assert (n, c) == (2, 0)
@@ -226,17 +283,44 @@ class TestPassAtK:
             breakdown={"pass_rate": 0.0},
             gates={"tests_all_pass": True},
             ruler_id="r1",
+            attempt_id="forged_content",
         )
-        result = pass_at_k([forged], 1, ruler_id="r1", domain="coding")
+        result = pass_at_k([forged], 1, ruler_id="r1", contract=_binary_contract(), domain="coding")
         assert result is not None
         value, n, c = result
         assert (value, n, c) == (0.0, 1, 0)
 
     def test_all_pass_short_circuit(self) -> None:
         entries = [_entry(True, 1.0) for _ in range(4)]
-        result = pass_at_k(entries, 3, ruler_id="r1", domain="coding")
+        result = pass_at_k(entries, 3, ruler_id="r1", contract=_binary_contract(), domain="coding")
         assert result is not None
         assert result[0] == 1.0
+
+    def test_attempt_id_stamped_by_content(self, tmp_path: Path) -> None:
+        # score_submission stamps the content identity: identical content
+        # under different basenames -> same attempt_id; changed content ->
+        # different attempt_id.
+        import json
+
+        from cfdb.agentbench.scorer import score_submission
+
+        registry, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        contract = init_contract("csv_field_extract", registry)
+        case = registry.load("csv_field_extract")
+        expected = (case_dir / "reference" / "expected.json").read_text(encoding="utf-8")
+        sub_a = tmp_path / "team_a" / "run"
+        sub_b = tmp_path / "team_b" / "run"
+        for sub in (sub_a, sub_b):
+            sub.mkdir(parents=True)
+            (sub / "summary.json").write_text(expected, encoding="utf-8")
+        score_a = score_submission(contract, case, case_dir, sub_a)
+        score_b = score_submission(contract, case, case_dir, sub_b)
+        assert score_a.attempt_id is not None
+        assert score_a.attempt_id == score_b.attempt_id  # same content, one attempt
+
+        (sub_b / "summary.json").write_text(json.dumps({"different": True}), encoding="utf-8")
+        score_b2 = score_submission(contract, case, case_dir, sub_b)
+        assert score_b2.attempt_id != score_a.attempt_id  # content changed
 
 
 # ============================================================================

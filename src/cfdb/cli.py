@@ -1459,25 +1459,28 @@ def agent_eval_passk_cmd(
 ) -> None:
     """Compute unbiased pass@k over the case ledger (current ruler only).
 
-    Samples are UNIQUE submissions under the CURRENT ruler lineage
-    (rescoring events collapse into their attempt); an attempt passes only
-    if every one of its rows is rankable. Only domains with a binary
-    success signal (coding/agentic) are accepted — for cfd, rankable does
-    not mean correct, and a fabricated pass rate is refused. Exits 1 when
-    not honestly computable.
+    Samples are unique attempts identified by submission CONTENT (never by
+    directory basename); rescoring identical content collapses into one
+    attempt, and an attempt passes only if every row is rankable AND
+    carries the domain's binary success gate True. The frozen ruler is
+    verified against the live case tree BEFORE its domain is trusted —
+    a drifted case.yaml (e.g. relabeled to a pass@k-capable domain) is
+    refused with exit 3, never used to legitimize the metric. Exits 1 when
+    not honestly computable (non-binary ruler, or fewer than k attempts —
+    never extrapolated).
     """
     import hashlib
 
-    from cfdb.agentbench import read_ledger
+    from cfdb.agentbench import (
+        EXIT_FROZEN_DRIFT,
+        load_contract,
+        read_ledger,
+        verify_frozen,
+    )
+    from cfdb.agentbench.contract import missing_required_anchors
     from cfdb.agentbench.scorer import pass_at_k
 
     registry = CaseRegistry(cases_dir)
-    try:
-        spec = registry.load(case)
-    except (KeyError, ValueError, FileNotFoundError) as e:
-        typer.echo(f"[FAIL] {e}", err=True)
-        raise typer.Exit(code=1) from e
-
     contract_path = agentbench_dir / case / "contract.json"
     if not contract_path.exists():
         typer.echo(
@@ -1486,6 +1489,32 @@ def agent_eval_passk_cmd(
             err=True,
         )
         raise typer.Exit(code=1)
+
+    try:
+        contract = load_contract(contract_path)
+        spec = registry.load(case)
+        case_dir = registry.get_case_dir(case)
+    except (KeyError, ValueError, FileNotFoundError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # Bind the domain decision to the FROZEN ruler (Codex R6-R1 P1): only a
+    # case tree that still matches the anchored case.yaml (and carries every
+    # mandatory anchor) may tell us its domain — otherwise a drifted
+    # `domain:` line could turn continuous scores into fabricated "passes".
+    drifted = verify_frozen(contract, case_dir)
+    if len(drifted) > 0:
+        typer.echo("[FAIL] Frozen ruler drifted — pass@k refused (exit 3):", err=True)
+        for key in drifted:
+            typer.echo(f"  drifted: {key}", err=True)
+        raise typer.Exit(code=EXIT_FROZEN_DRIFT)
+    missing = missing_required_anchors(contract, spec, case_dir)
+    if len(missing) > 0:
+        typer.echo("[FAIL] Ruler incomplete — pass@k refused (exit 3):", err=True)
+        for key in missing:
+            typer.echo(f"  missing anchor: {key}", err=True)
+        raise typer.Exit(code=EXIT_FROZEN_DRIFT)
+
     current_ruler = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
 
     ledger_path = agentbench_dir / case / "ledger.jsonl"
@@ -1496,16 +1525,26 @@ def agent_eval_passk_cmd(
         raise typer.Exit(code=1) from e
 
     try:
-        result = pass_at_k(entries, k, ruler_id=current_ruler, domain=spec.domain)
+        result = pass_at_k(
+            entries, k, ruler_id=current_ruler, contract=contract, domain=spec.domain
+        )
     except ValueError as e:
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
+
+    in_lineage = [e for e in entries if e.ruler_id == current_ruler]
+    legacy = sum(1 for e in in_lineage if e.attempt_id is None)
     if result is None:
-        unique = len({e.submission_id for e in entries if e.ruler_id == current_ruler})
+        unique = len({e.attempt_id for e in in_lineage if e.attempt_id is not None})
         typer.echo(
             f"[FAIL] pass@{k} not computable for '{case}': {unique} unique "
             f"attempt(s) under current ruler #{current_ruler}, need at least {k} "
-            "(never extrapolated).",
+            "(never extrapolated)."
+            + (
+                f" {legacy} row(s) lack a content identity (legacy) and cannot be samples."
+                if legacy > 0
+                else ""
+            ),
             err=True,
         )
         raise typer.Exit(code=1)
@@ -1513,14 +1552,15 @@ def agent_eval_passk_cmd(
     value, n, c = result
     typer.echo(f"pass@{k} for '{case}' under ruler #{current_ruler}: {value:.6g}")
     typer.echo(f"  samples: {n} unique attempt(s) in current lineage, {c} pass(es)")
-    in_lineage_events = sum(1 for e in entries if e.ruler_id == current_ruler)
-    collapsed = in_lineage_events - n
+    collapsed = len(in_lineage) - legacy - n
     if collapsed > 0:
         typer.echo(
-            f"  collapsed: {collapsed} rescoring event(s) folded into their attempt "
-            "(samples must be independent)"
+            f"  collapsed: {collapsed} rescoring event(s) of identical content folded "
+            "into their attempt (samples must be independent)"
         )
-    excluded = len(entries) - in_lineage_events
+    if legacy > 0:
+        typer.echo(f"  excluded: {legacy} legacy row(s) without content identity (never samples)")
+    excluded = len(entries) - len(in_lineage)
     if excluded > 0:
         typer.echo(f"  excluded: {excluded} row(s) from older/unknown rulers (like-with-like only)")
 

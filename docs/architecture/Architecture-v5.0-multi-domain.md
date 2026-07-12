@@ -388,3 +388,15 @@ cases/coding_tasks/<id>/
   （复打不一致=fail-closed 不算过），CLI 如实播报 collapsed 行数。
   smoke 再重锚 #42638717→#af8b8d91；golden 按不可变 ID 真容器判卷 1.0。
   1166 绿。
+- **R6-R1 复审（同日，审 2fc11d8）：3P1（镜像修复获认可，pass@k 三连咬）即修**——
+  ①二元信号=冻结 gate 集非 domain 标签（自定义 coding ruler 可省略 tests_all_pass
+  →部分失败也 rankable）——修复：PASS_AT_K_BINARY_GATES（coding→tests_all_pass/
+  agentic→checker_ok），gate 不在冻结 validity_gates 即拒算，且 pass 要求该 gate
+  在行内记录为 True；②submission_id=目录 basename 调用方可控（撞名毒化/换名灌水
+  双向可攻）——修复：`attempt_id` 内容身份（提交树 (路径,sha256) 对的 canonical
+  digest，判卷前盖章入账本），pass@k 按内容分组，legacy 无身份行永不为样本；
+  ③domain 从活体 cases-dir 读、未绑冻结尺——修复：passk 先 verify_frozen+
+  missing_required_anchors（漂移/缺锚→exit 3）再信 spec.domain。
+  scorer.py 属未锚编排层，契约无需重锚（抽取批红利首次兑现）。
+  实况：真账本 attempt_id 盖章、legacy 行如实排除播报、篡改 case.yaml
+  domain→exit 3 点名 case.yaml、还原即恢复。见证 20 条（本文件），1171 绿。

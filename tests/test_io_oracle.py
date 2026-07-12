@@ -429,15 +429,18 @@ class TestResultArtifactGuard:
         assert any("regular file" in n for n in notes)
 
     def test_symlink_results_file_rejected(self, tmp_path: Path) -> None:
-        # Even a symlink pointing at a VALID payload is rejected (lstat does
-        # not follow) — the submission could aim it at /dev/zero or a huge file.
+        # Even a symlink pointing at a VALID payload is rejected — the
+        # submission could aim it at /dev/zero or a huge file. Post-hardening
+        # the open() itself refuses it via O_NOFOLLOW (ELOOP), so the inode
+        # that is size-checked and read is guaranteed to be the non-symlink
+        # file the open resolved — no lstat-then-read straddle.
         target = tmp_path / "real.json"
         target.write_text(json.dumps([{"index": 0, "ok": True, "result": 9}]), encoding="utf-8")
         link = tmp_path / IO_RESULTS_FILENAME
         os.symlink(target, link)
         notes: list[str] = []
         assert _reconcile_io(link, [9], notes) == 0.0
-        assert any("regular file" in n for n in notes)
+        assert any("symlink" in n for n in notes)
 
     def test_oversized_results_file_rejected(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr(ss, "IO_RESULTS_MAX_BYTES", 8)  # tiny cap for the test
@@ -737,9 +740,7 @@ class TestShippedIoOracleCases:
 
     def test_all_shipped_io_cases_admit_with_gate(self) -> None:
         registry = CaseRegistry(PROJECT_CASES)
-        io_cases = sorted(
-            c.id for c in registry.list_all() if c.execution.io_oracle is not None
-        )
+        io_cases = sorted(c.id for c in registry.list_all() if c.execution.io_oracle is not None)
         # the R9 pilot plus the real coding tasks the oracle rolled out to
         assert set(io_cases) >= {
             "smoke_add_two_io",

@@ -400,28 +400,46 @@ def _reconcile_io(results_path: Path, expected: list, notes: list[str]) -> float
         1.0 only if every input produced the strictly-equal expected value.
     """
     # The result file sits in a container-writable dir, so a hostile
-    # submission may pre-create it as a FIFO (host read blocks forever,
-    # outside the container timeout), a symlink (host follows it — /dev/zero
-    # exhausts memory), or an oversized regular file. lstat WITHOUT following
-    # symlinks, require a bounded regular file, THEN read (Codex R9-R0 P1).
+    # submission may pre-create it as a FIFO (a plain open would block
+    # forever, past the container timeout), a symlink (aimed at /dev/zero or
+    # a huge file), or an oversized regular file. Open it ONCE with
+    # O_NOFOLLOW (a symlink at the path is refused at open, ELOOP) and
+    # O_NONBLOCK (a FIFO open returns a fd instead of blocking on a writer),
+    # then decide S_ISREG + size on the SAME inode via fstat and read that
+    # exact descriptor — so the guard and the read cannot straddle a swapped
+    # inode. (Codex R9-R0 P1 hardened per the R9 loop-auditor: the prior
+    # lstat-then-read_text split was the textbook TOCTOU shape — not
+    # exploitable here because the oracle container is already gone by this
+    # point, but the single-open idiom is the correct primitive for a
+    # checked read and removes the shape entirely.)
     try:
-        st = os.lstat(results_path)
+        fd = os.open(results_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as e:
-        notes.append(f"io oracle: results file not present: {e} (invalid)")
-        return 0.0
-    if not stat.S_ISREG(st.st_mode):
-        notes.append("io oracle: results file is not a regular file (FIFO/symlink?) (invalid)")
-        return 0.0
-    if st.st_size > IO_RESULTS_MAX_BYTES:
         notes.append(
-            f"io oracle: results file {st.st_size} B exceeds cap {IO_RESULTS_MAX_BYTES} B (invalid)"
+            f"io oracle: results file not present or not a regular non-symlink file: {e} (invalid)"
         )
         return 0.0
     try:
-        results = json.loads(results_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            notes.append("io oracle: results file is not a regular file (FIFO/device?) (invalid)")
+            return 0.0
+        if st.st_size > IO_RESULTS_MAX_BYTES:
+            notes.append(
+                f"io oracle: results file {st.st_size} B exceeds "
+                f"cap {IO_RESULTS_MAX_BYTES} B (invalid)"
+            )
+            return 0.0
+        with os.fdopen(fd, "rb") as f:
+            fd = -1  # fdopen owns the descriptor now; its context manager closes it
+            raw = f.read(IO_RESULTS_MAX_BYTES + 1)
+        results = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         notes.append(f"io oracle: results unreadable/unparseable: {e} (invalid)")
         return 0.0
+    finally:
+        if fd >= 0:
+            os.close(fd)
     if not isinstance(results, list) or len(results) != len(expected):
         got = len(results) if isinstance(results, list) else "not-a-list"
         notes.append(f"io oracle: result count {got} != expected {len(expected)} (invalid)")

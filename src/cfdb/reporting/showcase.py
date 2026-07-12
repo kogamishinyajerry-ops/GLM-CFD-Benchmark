@@ -230,9 +230,7 @@ def _collect_failures(repo_root: Path) -> dict[str, Any]:
             continue
         count = sum(r.count for r in records)
         total += count
-        buckets.append(
-            {"mode": mode, "count": count, "records": [r.model_dump() for r in records]}
-        )
+        buckets.append({"mode": mode, "count": count, "records": [r.model_dump() for r in records]})
     return {"buckets": buckets, "total": total, "error": None}
 
 
@@ -281,9 +279,7 @@ def _collect_regression(repo_root: Path) -> dict[str, Any]:
         candidates = [
             m
             for m in repo.list_runs(case_id=entry.case_id)
-            if m.solver == entry.solver
-            and m.run_id != entry.run_id
-            and m.status == "success"
+            if m.solver == entry.solver and m.run_id != entry.run_id and m.status == "success"
         ]
         if len(candidates) == 0:
             row["reasons"] = [NO_CANDIDATE_COPY]
@@ -337,6 +333,7 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
             "n_events": 0,
             "n_unique_submissions": 0,
             "n_valid": 0,
+            "n_invalid": 0,
             "best_score": None,
             "error": None,
             "ledger_error": None,
@@ -373,12 +370,14 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
         row["n_events"] = len(entries)
         row["n_unique_submissions"] = len({e.submission_id for e in entries})
         row["n_valid"] = sum(1 for e in entries if e.valid is True)
+        # INVALID disclosure (v5.0 §7 backlog, landed R6): invalid samples
+        # are ledgered but never ranked — hiding their volume would make a
+        # leaderboard of survivors look like a leaderboard of attempts.
+        row["n_invalid"] = sum(1 for e in entries if e.valid is not True)
         # Like-with-like only: rows scored under an older/unknown ruler
         # never drive best_score (Codex R1 P2 — stale-ruler leaderboard).
         best = ranked(entries, ruler_id=row["ruler_id"])
-        row["n_stale_ruler"] = sum(
-            1 for e in entries if e.ruler_id != row["ruler_id"]
-        )
+        row["n_stale_ruler"] = sum(1 for e in entries if e.ruler_id != row["ruler_id"])
         row["best_score"] = best[0].score if len(best) > 0 else None
         contracts.append(row)
     return {"contracts": contracts}

@@ -1450,6 +1450,60 @@ def agent_eval_ledger_cmd(
         )
 
 
+@agent_eval_app.command("passk")
+def agent_eval_passk_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Case ID whose ledger to analyze.")],
+    k: Annotated[int, typer.Option("--k", "-k", help="Number of draws for pass@k.")] = 1,
+    agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
+) -> None:
+    """Compute unbiased pass@k over the case ledger (current ruler only).
+
+    Samples are scoring events under the CURRENT ruler lineage; a sample
+    passes only if it is rankable (valid, finite, internally consistent).
+    Refuses (exit 1) when fewer than k samples exist — pass@k is never
+    extrapolated from insufficient data.
+    """
+    import hashlib
+
+    from cfdb.agentbench import read_ledger
+    from cfdb.agentbench.scorer import pass_at_k
+
+    contract_path = agentbench_dir / case / "contract.json"
+    if not contract_path.exists():
+        typer.echo(
+            f"[FAIL] No contract at {contract_path} — pass@k is only meaningful "
+            "against a frozen ruler.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    current_ruler = hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8]
+
+    ledger_path = agentbench_dir / case / "ledger.jsonl"
+    try:
+        entries = read_ledger(ledger_path)
+    except ValueError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    result = pass_at_k(entries, k, ruler_id=current_ruler)
+    if result is None:
+        in_lineage = sum(1 for e in entries if e.ruler_id == current_ruler)
+        typer.echo(
+            f"[FAIL] pass@{k} not computable for '{case}': {in_lineage} sample(s) "
+            f"under current ruler #{current_ruler}, need at least {k} "
+            "(never extrapolated).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    value, n, c = result
+    typer.echo(f"pass@{k} for '{case}' under ruler #{current_ruler}: {value:.6g}")
+    typer.echo(f"  samples: {n} scoring event(s) in current lineage, {c} rankable pass(es)")
+    excluded = len(entries) - n
+    if excluded > 0:
+        typer.echo(f"  excluded: {excluded} row(s) from older/unknown rulers (like-with-like only)")
+
+
 @app.command("showcase")
 def showcase_cmd(
     out: Annotated[

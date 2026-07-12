@@ -39,7 +39,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cfdb.agentbench.contract import FrozenDriftError, ScoringContract, verify_frozen
+from cfdb.agentbench.contract import (
+    JUDGE_IMAGE_KEY,
+    FrozenDriftError,
+    ScoringContract,
+    resolve_judge_image_id,
+    verify_frozen,
+)
 from cfdb.agentbench.judge_policy import assemble_score, evaluate_gates
 from cfdb.agentbench.scorer import SubmissionScore, WallTimeRecord
 from cfdb.schema import CaseSpec
@@ -224,6 +230,26 @@ def score_coding(
             (checked here as defense-in-depth on top of the caller's
             pre-flight check) — exit 3, nothing is ledgered.
     """
+    if backend_factory is None:
+        # Real judging path only: the anchored judge image identity must
+        # match the LIVE daemon's image before anything runs (backlog item,
+        # R6 batch). A rebuilt image under the same tag is a changed judge
+        # environment — different verdict semantics must never share a
+        # ruler ID. Stub-backend tests never touch Docker; the anchored key
+        # itself is still mandatory for coding contracts
+        # (missing_required_anchors) and this comparison is E2E-verified.
+        anchored_image_id = contract.frozen.get(JUDGE_IMAGE_KEY)
+        image_ref = os.environ.get("CFDB_JUDGE_IMAGE", "cfdb-judge:py312")
+        live_image_id = resolve_judge_image_id(image_ref)
+        if live_image_id != anchored_image_id:
+            raise FrozenDriftError(
+                [
+                    f"{JUDGE_IMAGE_KEY} (live image '{image_ref}' is "
+                    f"{live_image_id[:19]}..., contract anchored "
+                    f"{str(anchored_image_id)[:19]}...)"
+                ]
+            )
+
     factory = backend_factory if backend_factory is not None else _default_backend_factory
     backend = factory(case_dir, submission_dir)
 

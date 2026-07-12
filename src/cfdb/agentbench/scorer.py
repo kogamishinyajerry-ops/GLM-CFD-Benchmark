@@ -333,6 +333,50 @@ def _is_rankable(entry: SubmissionScore) -> bool:
     return True
 
 
+def pass_at_k(
+    entries: list[SubmissionScore],
+    k: int,
+    ruler_id: str | None = None,
+) -> tuple[float, int, int] | None:
+    """Unbiased pass@k over ledger entries (Chen et al. 2021 estimator).
+
+    Each ledger entry is one independent attempt (n samples total); an
+    attempt counts as a pass only if it is rankable (:func:`_is_rankable` —
+    valid, finite, internally consistent). pass@k = 1 - C(n-c, k)/C(n, k),
+    computed with the numerically stable product form.
+
+    Fail-closed rules: fewer samples than ``k`` (or k < 1) returns None —
+    the metric is never extrapolated from insufficient data. When
+    ``ruler_id`` is given, only entries scored under that exact ruler are
+    samples (like-with-like: attempts against an older ruler are neither
+    passes nor failures of the current one).
+
+    Args:
+        entries: Ledger entries.
+        k: Number of draws.
+        ruler_id: When given, restrict samples to this ruler lineage.
+
+    Returns:
+        ``(pass_at_k, n_samples, n_passes)``, or None when not honestly
+        computable.
+    """
+    if k < 1:
+        return None
+    samples = entries
+    if ruler_id is not None:
+        samples = [e for e in samples if e.ruler_id == ruler_id]
+    n = len(samples)
+    if n < k:
+        return None
+    c = sum(1 for e in samples if _is_rankable(e) is True)
+    if n - c < k:
+        return 1.0, n, c
+    estimate = 1.0
+    for i in range(k):
+        estimate *= (n - c - i) / (n - i)
+    return 1.0 - estimate, n, c
+
+
 def ranked(
     entries: list[SubmissionScore],
     ruler_id: str | None = None,

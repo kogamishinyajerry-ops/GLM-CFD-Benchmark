@@ -206,6 +206,12 @@ cases/coding_tasks/<id>/
 
 ## 7. 显式不做清单（防 scope 漂移）
 
+> R6 批（2026-07-12）已从本清单收走三项：pass@k 聚合层（无偏估计器+`agent-eval
+> passk`，仅当前尺样本、n<k 拒算不外推）、INVALID 率展示（showcase ⑥ 表新列
+> data-invalid，含占比）、判卷镜像身份入锚（`__judge_image__`：init 时 docker
+> inspect 解析、判卷前对活体 daemon 复核、verify 层显式跳过以免拖 Docker 依赖进
+> showcase——三点权衡见 contract.py 该键 docstring）。
+
 - pass@k 聚合层（k/n 冻结语义独立工程）；LLM-judge 弱信号槽位的实现（只留位）；
 - POSIX rlimit 进程级沙箱（虚假隔离感）；Windows 沙箱支持（未侦察）；
 - 轨迹级 grounding 判定；canary/时间切分防污染（启发式证据不可做硬 gate，
@@ -217,8 +223,7 @@ cases/coding_tasks/<id>/
 - golden 准入 3 次复跑的系统化留痕（v5.0 允许 case 作者本地跑+摘要入仓，
   自动化准入 runner 记 backlog——账实对齐弱点如实声明）；
 - checker 读产物目录的防护性编码契约（大文件/反序列化上限）；
-- showcase/报告层显式披露各提交者 INVALID 率（堵「故意搞崩容器逃避诚实 FAIL」的
-  动机面——R2 审计操作性建议，INVALID 已照常入账，只差展示层）。
+- ~~showcase/报告层显式披露各提交者 INVALID 率~~（R6 批已落地，见本节顶部注记）。
 
 ## 8. 风险与残差（如实）
 
@@ -234,11 +239,18 @@ cases/coding_tasks/<id>/
   自动带极曲线能力。
 - 外部调研中 BenchJack/RewardHackingAgents 关键数字为摘要级转述（declared-not-verified），
   正式对外引用前需原文复核；本蓝图只采其机制结论（checker 入锚），不背书具体数字。
-- **同进程判卷颠覆残差（Codex R0 P1 族，如实声明）**：提交代码被隐藏测试 import 后与
-  报告写出方同进程运行——`python -I` 启动隔离封死 sitecustomize/PYTHONPATH/pytest 影子
-  劫持，skipped=0 与收集计数对账封死懒作弊，但进程内 monkeypatch/伪造 report.xml 在
-  单进程 pytest 模型下无法机械排除（进程内无秘密可依）。v5.0 coding 判决的可信范围 =
-  非对抗提交；对抗强化路线 = 逐测试进程隔离 / 带外观察（backlog）。README 验证边界同步声明。
+- **同进程判卷颠覆残差（Codex R0 P1 族，如实声明；R6 批对抗分析后修订路线）**：
+  提交代码被隐藏测试 import 后与报告写出方同进程运行——`python -I` 启动隔离封死
+  sitecustomize/PYTHONPATH/pytest 影子劫持，skipped=0 与收集计数对账封死懒作弊，
+  但进程内 monkeypatch/伪造 report.xml 在单进程 pytest 模型下无法机械排除（进程内
+  无秘密可依）。v5.0 coding 判决的可信范围 = 非对抗提交。**R6 批把原路线「逐测试
+  进程隔离」做了对抗分析后降级撤销**：测试必须 import 提交代码，因此任何承载单测
+  的进程同样被敌意代码占据、其单测报告片段同样可被进程内伪造——逐测试隔离只缩小
+  单点爆炸半径，不改变「每份报告都出自被占领进程」的本质，实现它而宣称加固 =
+  安全剧场（假绿）。诚实的强化选项重述为：①canary 哨兵测试（判卷时注入必败
+  哨兵，空白伪造「全过」必被咬——只抬成本不成边界，且需重排 coding 测试床，另立
+  批次）；②受信重执行 oracle（judge 持外部预期输出复跑对账，改变任务形态）。
+  残差维持声明，README 验证边界不变。
 - **NACA cp_curve/CSV 参考映射递延（Codex R0 P2）**：naca0012 的 curve 参考键名
   （cp_curve）与 outputs.curves 名（cp_distribution）不一致且为 CSV 格式，engine 的
   curve 判定当前对其保持 fail-closed incomplete（adapters 尚未产 curves 数据，实际 inert）；
@@ -353,3 +365,15 @@ cases/coding_tasks/<id>/
   `assemble_cfd` 整体迁入 judge_policy（与 assemble_agentic 对称），cfd 编排分支
   收缩为纯接线；组装见证补入 extraction witness 文件；三契约再重锚
   （smoke #064935ae→#af3e3a04）。编排零漂移旗舰见证复跑通过。1151 绿。
+- **R6 批（同日，用户「完成剩余优化建议」授权，backlog 三项落地+一项诚实撤销）**：
+  ①`__judge_image__` 镜像身份入锚（init 解析 docker inspect/CFDB_JUDGE_IMAGE_ID，
+  coding 契约必备锚，判卷前对活体 daemon 复核，verify 层显式跳过——权衡入
+  docstring）；②INVALID 率入 showcase ⑥ 表（含占比，堵「搞崩容器逃避诚实 FAIL」
+  动机面）；③pass@k（Chen et al. 无偏估计器，仅当前尺样本、伪造分不算 pass、
+  n<k 拒算，CLI `agent-eval passk`）；④「逐测试进程隔离」经对抗分析降级撤销
+  （见 §8 修订——被 import 即被占领，逐测试隔离=剧场）。见证=
+  tests/test_backlog_r6_batch.py（12 条）；真环境实况：真 docker id 入锚
+  （smoke #af3e3a04→#42638717，12 冻结项）、golden 过活体镜像门 1.0、
+  CFDB_JUDGE_IMAGE 指向 ubuntu:22.04→exit 3 双 id 点名、镜像不存在→init/score
+  结构化拒、pass@1=1（16 旧尺行如实排除）+pass@99 拒算、showcase 渲出
+  data-invalid 列。1163 绿。

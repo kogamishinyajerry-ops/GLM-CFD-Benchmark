@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,14 @@ from cfdb.schema import CaseSpec
 _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+# Hermetic judge-image identity for the unit suite: coding-contract init
+# anchors __judge_image__ (R6 batch), and the suite must run without a
+# Docker daemon. This is the documented CFDB_JUDGE_IMAGE_ID escape hatch,
+# not a monkeypatch — witnesses that exercise the no-env/daemon paths
+# explicitly delenv it, and the real resolution + live-daemon comparison
+# is covered by the real-container E2E acceptance run.
+os.environ.setdefault("CFDB_JUDGE_IMAGE_ID", "sha256:" + "0" * 64)
 
 
 # ============================================================================
@@ -95,9 +104,7 @@ def tmp_cases_root(tmp_path: Path, sample_case_spec_data: dict) -> Path:
 
     ref_dir = case_dir / "reference"
     ref_dir.mkdir()
-    (ref_dir / "qoi.json").write_text(
-        json.dumps({"centerline_umax": 0.371}), encoding="utf-8"
-    )
+    (ref_dir / "qoi.json").write_text(json.dumps({"centerline_umax": 0.371}), encoding="utf-8")
 
     run_sh = case_dir / "run.sh"
     run_sh.write_text(
@@ -171,11 +178,15 @@ def _build_naca_casespec(
         name="NACA0012 Alpha=5",
         category="validation",
         physics=PhysicsSpec(
-            flow="compressible", turbulence="rans_sa",
-            dimensionality="2d", steady=True,
+            flow="compressible",
+            turbulence="rans_sa",
+            dimensionality="2d",
+            steady=True,
         ),
         conditions=ConditionsSpec(
-            reynolds=reynolds, mach=mach, alpha_deg=alpha_deg,
+            reynolds=reynolds,
+            mach=mach,
+            alpha_deg=alpha_deg,
         ),
         solvers=[solver_config],
         outputs=OutputSpec(fields=["velocity", "p"], qoi=["cl", "cd"]),
@@ -223,8 +234,10 @@ def starccm_case() -> CaseSpec:
         name="Flat Plate StarCCM",
         category="smoke",
         physics=PhysicsSpec(
-            flow="compressible", turbulence="rans_sa",
-            dimensionality="2d", steady=True,
+            flow="compressible",
+            turbulence="rans_sa",
+            dimensionality="2d",
+            steady=True,
         ),
         conditions=ConditionsSpec(reynolds=1_000_000, alpha_deg=0.0),
         solvers=[solver],
@@ -256,8 +269,10 @@ def starccm_case_no_steps() -> CaseSpec:
         name="Flat Plate No Steps",
         category="smoke",
         physics=PhysicsSpec(
-            flow="compressible", turbulence="rans_sa",
-            dimensionality="2d", steady=True,
+            flow="compressible",
+            turbulence="rans_sa",
+            dimensionality="2d",
+            steady=True,
         ),
         conditions=ConditionsSpec(reynolds=1_000_000, alpha_deg=0.0),
         solvers=[solver],
@@ -362,10 +377,7 @@ def starccm_naca_prepared(
 @pytest.fixture
 def starccm_stdout_version() -> str:
     """Mock Star-CCM+ stdout containing version banner."""
-    return (
-        "STAR-CCM+ 19.02.009 (windows/intel18.3-r8)\n"
-        "License build date: 19 March 2025\n"
-    )
+    return "STAR-CCM+ 19.02.009 (windows/intel18.3-r8)\nLicense build date: 19 March 2025\n"
 
 
 @pytest.fixture

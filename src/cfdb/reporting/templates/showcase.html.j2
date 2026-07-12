@@ -204,7 +204,7 @@ footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
   {% if agentbench.contracts %}
   <table>
     <thead><tr><th>Case</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th>
-      <th>打分事件</th><th>唯一 submission</th><th>valid</th><th>best score</th><th>备注</th></tr></thead>
+      <th>打分事件</th><th>唯一 submission</th><th>valid</th><th>INVALID</th><th>best score</th><th>备注</th></tr></thead>
     <tbody>
     {% for c in agentbench.contracts %}
     <tr>
@@ -215,6 +215,7 @@ footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
       <td class="mono" data-events="{{ c.n_events }}">{{ c.n_events }}</td>
       <td class="mono" data-unique="{{ c.n_unique_submissions }}">{{ c.n_unique_submissions }}</td>
       <td class="mono">{{ c.n_valid }}</td>
+      <td class="mono" data-invalid="{{ c.n_invalid }}">{{ c.n_invalid }}{% if c.n_events %} ({{ "%.0f"|format(100 * c.n_invalid / c.n_events) }}%){% endif %}</td>
       <td class="mono">{% if c.best_score is not none %}{{ "%.6g"|format(c.best_score) }}{% else %}—{% endif %}</td>
       <td class="notes">
         {% if c.error %}<div class="risk">{{ c.error }}</div>{% endif %}

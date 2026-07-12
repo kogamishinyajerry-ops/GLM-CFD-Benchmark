@@ -62,6 +62,20 @@ the checker-derived expected layout) would otherwise verify clean. The
 manifest makes any addition, deletion, or rename in those trees drift the
 ruler."""
 
+JUDGE_IMAGE_KEY = "__judge_image__"
+"""Frozen-map key anchoring the coding judge container image identity
+(backlog item landed in the R6 batch). The judge environment — pytest
+version, stdlib, interpreter — is judging material: image contents drifting
+under an unchanged tag (e.g. a rebuilt ``cfdb-judge:py312``) would change
+verdict semantics with an unchanged ruler ID. Anchored at init from the
+local image ID (``docker image inspect``, overridable for hermetic tests
+via ``CFDB_JUDGE_IMAGE_ID``); re-verified against the LIVE daemon by
+``sandbox_scorer`` immediately before judging (mismatch = FrozenDriftError,
+exit-3 family, zero ledger). :func:`verify_frozen` deliberately skips this
+key — it is not derivable from the case directory, and dragging a Docker
+daemon dependency into every verify/showcase pass would be a worse
+trade-off than checking at the moment the image is actually used."""
+
 JUDGE_SOURCE_PREFIX = "judge_source:"
 """Frozen-map key prefix anchoring the sha256 of a domain judge module's
 source (Codex R1 P1). The judge's pass/fail policy (skipped-test rejection,
@@ -246,6 +260,59 @@ def _normalize_source_digest() -> str:
     from cfdb.agentbench import normalize
 
     return sha256_file(Path(normalize.__file__))
+
+
+def resolve_judge_image_id(image_ref: str) -> str:
+    """Resolve a judge image reference to its content identity (local ID).
+
+    Args:
+        image_ref: Image name[:tag] as configured via ``CFDB_JUDGE_IMAGE``.
+
+    Returns:
+        The Docker image ID (``sha256:...``) of the locally present image.
+
+    Raises:
+        ValueError: If the image cannot be resolved (daemon unreachable,
+            image not built/pulled) — fail-closed: an unresolvable judge
+            environment can neither be anchored nor judged against.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image_ref],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError(f"cannot resolve judge image '{image_ref}': {e}") from e
+    if proc.returncode != 0:
+        raise ValueError(
+            f"cannot resolve judge image '{image_ref}': docker inspect exited "
+            f"{proc.returncode} ({proc.stderr.strip()[:200]})"
+        )
+    image_id = proc.stdout.strip()
+    if not image_id.startswith("sha256:"):
+        raise ValueError(f"judge image '{image_ref}' resolved to unexpected id {image_id!r}")
+    return image_id
+
+
+def _judge_image_identity() -> str:
+    """Judge image identity for anchoring at init time.
+
+    ``CFDB_JUDGE_IMAGE_ID`` (explicit operator/test-supplied identity) wins;
+    otherwise the configured ``CFDB_JUDGE_IMAGE`` reference is resolved
+    against the local Docker daemon. Scoring-time re-verification always
+    uses the live daemon (:func:`resolve_judge_image_id`) — an identity lied
+    into the anchor simply drifts at first use.
+    """
+    import os
+
+    explicit = os.environ.get("CFDB_JUDGE_IMAGE_ID")
+    if explicit is not None and explicit != "":
+        return explicit
+    return resolve_judge_image_id(os.environ.get("CFDB_JUDGE_IMAGE", "cfdb-judge:py312"))
 
 
 def _judge_source_digest(shortname: str) -> str:
@@ -486,6 +553,8 @@ def init_contract(
     frozen[FILE_MANIFEST_KEY] = canonical_digest(_tree_manifest(case_dir))
     for judge_module in _DOMAIN_JUDGE_MODULES.get(case.domain, ()):
         frozen[f"{JUDGE_SOURCE_PREFIX}{judge_module}"] = _judge_source_digest(judge_module)
+    if case.domain == "coding":
+        frozen[JUDGE_IMAGE_KEY] = _judge_image_identity()
     if case.domain == "agentic":
         frozen[NORMALIZE_SOURCE_KEY] = _normalize_source_digest()
 
@@ -509,6 +578,8 @@ def required_domain_anchors(domain: str) -> tuple[str, ...]:
         plus the normalize-source anchor for agentic).
     """
     keys = [f"{JUDGE_SOURCE_PREFIX}{module}" for module in _DOMAIN_JUDGE_MODULES.get(domain, ())]
+    if domain == "coding":
+        keys.append(JUDGE_IMAGE_KEY)
     if domain == "agentic":
         keys.append(NORMALIZE_SOURCE_KEY)
     return tuple(keys)
@@ -579,6 +650,12 @@ def verify_frozen(contract: ScoringContract, case_dir: Path) -> list[str]:
             actual = _normalize_source_digest()
         elif key == FILE_MANIFEST_KEY:
             actual = canonical_digest(_tree_manifest(case_dir))
+        elif key == JUDGE_IMAGE_KEY:
+            # Not derivable from the case directory; re-verified against the
+            # LIVE daemon by sandbox_scorer immediately before judging (see
+            # the key's docstring). Skipping here keeps verify/showcase free
+            # of a Docker dependency without weakening the scoring path.
+            continue
         elif key.startswith(JUDGE_SOURCE_PREFIX):
             shortname = key[len(JUDGE_SOURCE_PREFIX) :]
             if shortname not in _JUDGE_SOURCE_MODULES:

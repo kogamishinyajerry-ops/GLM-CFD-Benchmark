@@ -26,3 +26,11 @@ budget:
 execution:
   requires_sandbox: true
   expected_test_count: 5
+  # R9 rollout: trusted re-execution oracle. Held-out inputs are disjoint from
+  # the hidden-test inputs (verified by the admission disjointness lint), so a
+  # submission cannot replay a harvested assertion — it must actually compute
+  # split_csv_line correctly on inputs it has never seen. The 'io_oracle_pass'
+  # gate is implied by this declaration (auto-added at contract init).
+  io_oracle:
+    entry: "solution:split_csv_line"
+    cases_file: "reference/held_out_io.json"

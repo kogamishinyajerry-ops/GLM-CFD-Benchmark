@@ -1,0 +1,32 @@
+[
+  {
+    "args": [
+      "(()())"
+    ],
+    "expected": -1
+  },
+  {
+    "args": [
+      "([{}])"
+    ],
+    "expected": -1
+  },
+  {
+    "args": [
+      "((()"
+    ],
+    "expected": 0
+  },
+  {
+    "args": [
+      "a[b]c}"
+    ],
+    "expected": 5
+  },
+  {
+    "args": [
+      "x(y[z]"
+    ],
+    "expected": 1
+  }
+]

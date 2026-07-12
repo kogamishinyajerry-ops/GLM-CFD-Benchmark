@@ -1,48 +1,30 @@
 # Admission evidence -- balanced_brackets
 
-Per Architecture-v5.0-multi-domain.md §3.4: the golden solution must run
-deterministically (3/3 identical results) against `reference/hidden_tests/`
-before a coding-domain case may be admitted.
+Per Architecture-v5.0-multi-domain.md §3.1/§3.4: the golden solution must run
+deterministically (3/3 identical valid results) against the frozen judging
+material before a coding-domain case may be admitted.
 
-**Honest disclosure**: this is a **local, non-sandboxed** pre-run on the
-developer machine (`.venv/bin/python -m pytest`), not a run through the
-Docker sandbox profile (§3.2). Sandboxed admission verification is not yet
-automated -- see Architecture §7 backlog item "golden 准入 3 次复跑的系统化
-留痕". This file is the manual admission record the architecture explicitly
-allows for v5.0 ("case 作者本地跑+摘要入仓").
+**This record is a REAL sandboxed admission**, produced by the automated
+`cfdb agent-eval admit` workflow: it runs the golden solution N times through
+the Docker sandbox profile (§3.2) against the immutable judge image, and — as
+an R9-rollout io-oracle case — through **both** judging signals: the hidden-test
+suite AND the trusted re-execution IO oracle (`first_unbalanced_index` over a held-out input
+set disjoint from the hidden tests, §9). The machine-authored `admission.json`
+beside this file is the authoritative evidence; this file is its disclosure.
 
 ## Command
 
-```bash
-PYTHONPATH=<scratch-submission-dir-with-golden/solution.py-copied-in> \
-  .venv/bin/python -m pytest reference/hidden_tests \
-  --no-cov -p no:cacheprovider -q --rootdir=reference/hidden_tests
+```
+cfdb agent-eval admit -c balanced_brackets --runs 3
 ```
 
-## Result (run 2026-07-11, 3/3 consistent)
+## Result
 
-| Run | Result |
-|-----|--------|
-| 1   | `5 passed in 0.01s` |
-| 2   | `5 passed in 0.01s` |
-| 3   | `5 passed in 0.01s` |
+- **3/3 golden runs valid**, score 1.0 each (both `tests_all_pass` and
+  `io_oracle_pass` green on every run).
+- Golden content id: `9312ab1943e6d56e1c77469635d102bccc96ae2ea1d2987fada862b49dd8ed0b`
+- Judge image: `sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09`
+- `all_passed: true` (see `admission.json` for per-run timestamps and notes).
 
-`execution.expected_test_count: 5` matches the collected test count in
-every run (3 FAIL_TO_PASS + 2 PASS_TO_PASS).
-
-## Stub sanity check (visible/solution.py, not part of admission gate)
-
-Running the same hidden tests against the unmodified `visible/solution.py`
-count-only stub confirms the FAIL_TO_PASS/PASS_TO_PASS split is real:
-
-```
-FAILED reference/hidden_tests/test_fail_to_pass.py::test_wrong_nesting_type
-FAILED reference/hidden_tests/test_fail_to_pass.py::test_wrong_close_type
-FAILED reference/hidden_tests/test_fail_to_pass.py::test_unclosed_open_at_end
-3 failed, 2 passed in 0.02s
-```
-
-- All 3 FAIL_TO_PASS tests fail on the count-only stub, as required.
-- Both PASS_TO_PASS tests (fully-balanced / empty string, where the
-  count-only heuristic coincidentally agrees with the correct answer)
-  already pass on the stub, as required.
+The admission record lives outside the frozen tree (case root, not
+`reference/`/`visible/`), so writing it never drifts the ruler.

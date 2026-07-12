@@ -1,0 +1,47 @@
+[
+  {
+    "args": [
+      "p,q,r"
+    ],
+    "expected": [
+      "p",
+      "q",
+      "r"
+    ]
+  },
+  {
+    "args": [
+      "\"hello world\",42"
+    ],
+    "expected": [
+      "hello world",
+      "42"
+    ]
+  },
+  {
+    "args": [
+      " pad "
+    ],
+    "expected": [
+      " pad "
+    ]
+  },
+  {
+    "args": [
+      "\"comma,here\",tail"
+    ],
+    "expected": [
+      "comma,here",
+      "tail"
+    ]
+  },
+  {
+    "args": [
+      "\"quote\"\"inside\"\"\",end"
+    ],
+    "expected": [
+      "quote\"inside\"",
+      "end"
+    ]
+  }
+]

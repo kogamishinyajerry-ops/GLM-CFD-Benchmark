@@ -1,0 +1,27 @@
+{
+  "contract_version": "2",
+  "case_id": "balanced_brackets",
+  "frozen": {
+    "case.yaml": "cc6eb1b6a237f90f48a65f3d2014e43ec87717672684d3f77cf37654f233028b",
+    "reference/golden/solution.py": "f706cc728ded4fb43d4844e3070d5948b51b9ce65d73904fac2ab8c86f99705f",
+    "reference/held_out_io.json": "4e50fbc1ae8c67a361447e549856ba3c6f0bb8951a4be5dbd0777789c2d7a7bd",
+    "reference/hidden_tests/test_fail_to_pass.py": "fa22afb222b8bfb77878575083b007eaee50ecddc9d3c5a2388b7cfaf9895de2",
+    "reference/hidden_tests/test_pass_to_pass.py": "de95c124db2a9ed2dcef7af2273a0dd53a94b2169d246c8e922e122f6823af4d",
+    "visible/README.md": "f355a380941d22172420025b36e0752e591520b8992d02c194f2d2cb768602e0",
+    "visible/solution.py": "9c586be7b1e7421e8c6d024501eb5150664781e29fa2de11ad7cb27b5b7342d5",
+    "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
+    "__validity_gates__": "975c64ef020beea4c2bd85f84a9e82a94c7f99074fffbb8d7aee2ffa3d763b6e",
+    "__file_manifest__": "679f2893c414c850b9406881cef4a722f233e532175d800165a5560cf86120b0",
+    "judge_source:sandbox_scorer": "64ef6e2c7a90444a736dd6bde9574f15f04376b521f1a0bf554b8ef8057d30d9",
+    "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
+    "__judge_image__": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+  },
+  "weights": {
+    "pass_rate": 1.0
+  },
+  "validity_gates": [
+    "tests_all_pass",
+    "sandbox_used",
+    "io_oracle_pass"
+  ]
+}

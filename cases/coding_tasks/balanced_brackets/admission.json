@@ -1,0 +1,34 @@
+{
+  "case_id": "balanced_brackets",
+  "runs": 3,
+  "all_passed": true,
+  "golden_attempt_id": "9312ab1943e6d56e1c77469635d102bccc96ae2ea1d2987fada862b49dd8ed0b",
+  "judge_image_id": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09",
+  "verdicts": [
+    {
+      "valid": true,
+      "score": 1.0,
+      "scored_at": "2026-07-12T16:40:19.469666+00:00",
+      "notes": [
+        "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+      ]
+    },
+    {
+      "valid": true,
+      "score": 1.0,
+      "scored_at": "2026-07-12T16:40:20.577719+00:00",
+      "notes": [
+        "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+      ]
+    },
+    {
+      "valid": true,
+      "score": 1.0,
+      "scored_at": "2026-07-12T16:40:21.493636+00:00",
+      "notes": [
+        "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+      ]
+    }
+  ],
+  "created_at": "2026-07-12T16:40:21.494273+00:00"
+}

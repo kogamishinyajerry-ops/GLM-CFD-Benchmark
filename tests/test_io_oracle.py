@@ -725,3 +725,27 @@ class TestResultCapAnchoring:
         assert (
             hashlib.sha256(src.encode()).hexdigest() != hashlib.sha256(mutated.encode()).hexdigest()
         )
+
+
+class TestShippedIoOracleCases:
+    """R9 rollout regression guard: every shipped coding case that declares an
+    io_oracle must still init cleanly with the io_oracle_pass gate. This runs
+    the REAL admission validation (disjointness / satisfiability / float / path
+    checks) against the committed cases, so an author who later breaks a
+    held-out set — e.g. edits an input to overlap a hidden test — turns this
+    red instead of shipping a silently-degraded oracle."""
+
+    def test_all_shipped_io_cases_admit_with_gate(self) -> None:
+        registry = CaseRegistry(PROJECT_CASES)
+        io_cases = sorted(
+            c.id for c in registry.list_all() if c.execution.io_oracle is not None
+        )
+        # the R9 pilot plus the two real coding tasks the oracle rolled out to
+        assert set(io_cases) >= {
+            "smoke_add_two_io",
+            "balanced_brackets",
+            "csv_field_splitter",
+        }, io_cases
+        for case_id in io_cases:
+            contract = init_contract(case_id, registry)  # runs io-oracle admission
+            assert "io_oracle_pass" in contract.validity_gates, case_id

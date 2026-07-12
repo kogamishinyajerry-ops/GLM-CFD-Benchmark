@@ -623,3 +623,15 @@ cases/coding_tasks/<id>/
   canon 47。全套 1289 绿。**用户裁决直接 push（不再加审轮）**——R9 三轮审同主题（判卷
   完整性+宿主侧攻击面）逐层收窄，从 R0 的 3 宽 P1 收敛到 R2 的 1 自伤回归+1 类型残留，
   条条为真且修复非争议，收敛可宣称。
+- **R9 rollout：IO oracle 从试点推广到两个真 coding case（数据批，机制已三轮审定，无边界
+  码改动）**——试点 smoke_add_two_io 证完机制后，把受信重执行推到实际任务
+  `balanced_brackets`（entry `first_unbalanced_index`，held-out 5 例 int）+
+  `csv_field_splitter`（entry `split_csv_line`，held-out 5 例 list[str]），held-out 输入
+  全经准入 disjoint lint 核实与 hidden 不相交（脚本先算 golden 真值+子串核验再落地；
+  csv `single` 撞 hidden 测试名 `test_single_field` 被 lint 咬→换 ` pad ` 空格保留边界）。
+  两 case 首次 init 契约（#7274ee8c/#7af65fbc，io_oracle_pass gate 自动补）+ admit 真容器
+  3/3 双信号全绿。**真容器 E2E 铁证**：各造「硬编码 harvested hidden 答案」伪造提交→
+  **pytest 全过但 io_oracle 咬红→invalid**（bb 咬 input2 `((()`→期望 0 返 -1；csv 咬
+  input0 `p,q,r`→期望三段返整串）。回归守卫 TestShippedIoOracleCases 枚举全部 shipped
+  io case 逐个跑真准入校验+断言 gate（tamper：把 bb held-out 改成与 hidden 重叠→守卫翻红）。
+  bundled 契约从 4 增至 6，canon-47 守卫全覆盖；全套 1290 绿。

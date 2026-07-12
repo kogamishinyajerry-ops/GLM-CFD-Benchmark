@@ -1,0 +1,27 @@
+{
+  "contract_version": "2",
+  "case_id": "csv_field_splitter",
+  "frozen": {
+    "case.yaml": "5135f47bc1950bfaa427ea1a426a4eaeb151346cf8f8b6ae4b98a59e8eb2d412",
+    "reference/golden/solution.py": "0fd12c4f247408eeec39ac7aee57590589170a69989545d7aa5ab45b536a7beb",
+    "reference/held_out_io.json": "530cb1d43dd66726f4c0ea15cea04ed6f3ab79e0d51bcfccff76c5ba52083f18",
+    "reference/hidden_tests/test_fail_to_pass.py": "461070a2b179cd8751b66cb5b816157a205a0ce2d4c4dc3f0ffae3a3b4fc9470",
+    "reference/hidden_tests/test_pass_to_pass.py": "1e7bf628252dc6e4c36a7f5e6daba24524a7505f7398fe91c1634e53f0215f1b",
+    "visible/README.md": "60a5eccb05492b57bd72a1b0566069e72ad31821295a8d75ade40d9eb3207809",
+    "visible/solution.py": "ba8156f0840104370e52ea78778efd8b19990078ed061b1c1e2a08731e6f1a66",
+    "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
+    "__validity_gates__": "975c64ef020beea4c2bd85f84a9e82a94c7f99074fffbb8d7aee2ffa3d763b6e",
+    "__file_manifest__": "679f2893c414c850b9406881cef4a722f233e532175d800165a5560cf86120b0",
+    "judge_source:sandbox_scorer": "64ef6e2c7a90444a736dd6bde9574f15f04376b521f1a0bf554b8ef8057d30d9",
+    "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
+    "__judge_image__": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+  },
+  "weights": {
+    "pass_rate": 1.0
+  },
+  "validity_gates": [
+    "tests_all_pass",
+    "sandbox_used",
+    "io_oracle_pass"
+  ]
+}

@@ -44,7 +44,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cfdb.agentbench.contract import (
-    IO_RESULTS_MAX_BYTES,
     JUDGE_IMAGE_KEY,
     FrozenDriftError,
     ScoringContract,
@@ -75,8 +74,12 @@ IO_DRIVER_FILENAME = "driver.py"
 IO_RESULTS_FILENAME = "io_results.json"
 # The oracle result file lands in a container-WRITABLE work zone, so the
 # submission can plant a FIFO / symlink / oversized file there (Codex R9-R0
-# P1). The host reader requires a bounded regular non-symlink file; the cap is
-# defined in contract.py (SSOT) so admission proves the golden result fits it.
+# P1). The host reader requires a bounded regular non-symlink file; 8 MiB is
+# far above any legitimate result set. This is a RUNTIME judging constant, so
+# it lives in this anchored module (judge_source:sandbox_scorer) — changing it
+# changes the ruler id (Codex R9-R2 P1); admission imports it locally to prove
+# the golden result fits under it.
+IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024
 WORK_REPORT = "/work/report.xml"
 WORK_BASETEMP = "/work/pytest-tmp"
 WORK_TMPDIR = "/work/tmp"
@@ -283,44 +286,53 @@ def _io_driver_source(entry_module: str, entry_func: str) -> str:
     the advertised strict typing. Values that round-trip JSON losslessly
     (None/bool/int/float/str/list/str-keyed dict) are preserved and left for
     the host to compare exactly.
+
+    The whole driver runs inside a function ``_drive`` (Codex R9-R2 P2): the
+    validator captures EXACT type primitives (and open/json/traceback) as
+    FUNCTION LOCALS before importing the submission. driver.py executes as
+    ``__main__``, so module-level captures would be reachable — and rebindable
+    — via ``import __main__; __main__._list = tuple``; locals are not in any
+    submission-visible namespace. Combined with exact ``is`` identity (never
+    ``isinstance``), a submission can neither swap the primitives nor sneak an
+    int/list/dict SUBCLASS past the coercion check.
     """
     return (
         "import sys, json, traceback, importlib\n"
-        # Capture EXACT type primitives before the submission import can run
-        # (Codex R9-R1 P2): `_type` and the type objects are bound here, so a
-        # submission that rebinds builtins.isinstance/type at import time cannot
-        # reach them, and exact `is` identity (not isinstance) rejects int/list/
-        # dict SUBCLASSES that json.dump would collapse to the base type.
-        "_type = type\n"
-        "_bool, _int, _float, _str, _list, _dict = bool, int, float, str, list, dict\n"
-        f"with open({JUDGE_IO_INPUTS!r}, encoding='utf-8') as _f:\n"
-        "    _inputs = json.load(_f)\n"
-        f"sys.path.insert(0, {JUDGE_SUBMISSION!r})\n"
-        f"_mod = importlib.import_module({entry_module!r})\n"
-        f"_fn = getattr(_mod, {entry_func!r})\n"
-        "def _native(_v):\n"
-        "    _t = _type(_v)\n"
-        "    if _v is None or _t is _bool or _t is _int or _t is _float or _t is _str:\n"
-        "        return True\n"
-        "    if _t is _list:\n"
-        "        return all(_native(_x) for _x in _v)\n"
-        "    if _t is _dict:\n"
-        "        return all(_type(_k) is _str and _native(_x) for _k, _x in _v.items())\n"
-        "    return False\n"
-        "_out = []\n"
-        "for _item in _inputs:\n"
-        "    try:\n"
-        "        _r = _fn(*_item['args'])\n"
-        "        if not _native(_r):\n"
-        "            _out.append({'index': _item['index'], 'ok': False, "
+        "def _drive():\n"
+        "    _type = type\n"
+        "    _open = open\n"
+        "    _json_load, _json_dump = json.load, json.dump\n"
+        "    _fmt_exc = traceback.format_exc\n"
+        "    _bool, _int, _float, _str, _list, _dict = bool, int, float, str, list, dict\n"
+        f"    with _open({JUDGE_IO_INPUTS!r}, encoding='utf-8') as _f:\n"
+        "        _inputs = _json_load(_f)\n"
+        f"    sys.path.insert(0, {JUDGE_SUBMISSION!r})\n"
+        f"    _mod = importlib.import_module({entry_module!r})\n"
+        f"    _fn = getattr(_mod, {entry_func!r})\n"
+        "    def _native(_v):\n"
+        "        _t = _type(_v)\n"
+        "        if _v is None or _t is _bool or _t is _int or _t is _float or _t is _str:\n"
+        "            return True\n"
+        "        if _t is _list:\n"
+        "            return all(_native(_x) for _x in _v)\n"
+        "        if _t is _dict:\n"
+        "            return all(_type(_k) is _str and _native(_x) for _k, _x in _v.items())\n"
+        "        return False\n"
+        "    _out = []\n"
+        "    for _item in _inputs:\n"
+        "        try:\n"
+        "            _r = _fn(*_item['args'])\n"
+        "            if not _native(_r):\n"
+        "                _out.append({'index': _item['index'], 'ok': False, "
         "'error': 'non-JSON-native return type (would coerce): ' + _type(_r).__name__})\n"
-        "        else:\n"
-        "            _out.append({'index': _item['index'], 'ok': True, 'result': _r})\n"
-        "    except Exception:\n"
-        "        _out.append({'index': _item['index'], 'ok': False, "
-        "'error': traceback.format_exc()[-400:]})\n"
-        f"with open({IO_RESULTS_CONTAINER!r}, 'w', encoding='utf-8') as _f:\n"
-        "    json.dump(_out, _f)\n"
+        "            else:\n"
+        "                _out.append({'index': _item['index'], 'ok': True, 'result': _r})\n"
+        "        except Exception:\n"
+        "            _out.append({'index': _item['index'], 'ok': False, "
+        "'error': _fmt_exc()[-400:]})\n"
+        f"    with _open({IO_RESULTS_CONTAINER!r}, 'w', encoding='utf-8') as _f:\n"
+        "        _json_dump(_out, _f)\n"
+        "_drive()\n"
     )
 
 

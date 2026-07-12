@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 from test_agentbench_coding import StubBackend, _junit_xml
 
+import cfdb.agentbench.contract as ct
 import cfdb.agentbench.sandbox_scorer as ss
 from cfdb.adapters.base import RunResult
 from cfdb.agentbench.contract import FrozenDriftError, init_contract, verify_frozen
@@ -649,6 +650,22 @@ class TestDriverNativeTypes:
         assert src.index("_type = type") < src.index("import_module")
         assert "isinstance" not in src
 
+    def test_validator_primitives_are_function_locals(self) -> None:
+        # R9-R2 P2: driver.py runs as __main__, so a module-level `_list = list`
+        # would be rebindable via `import __main__; __main__._list = tuple`.
+        # Wrapping the whole driver in `_drive()` makes every primitive a
+        # function LOCAL — nothing but the imports and the _drive() call sits at
+        # module level, so there is no submission-reachable name to swap.
+        src = _io_driver_source("m", "f")
+        assert "def _drive():" in src
+        assert "\n    _type = type\n" in src  # captured, indented under _drive
+        toplevel = [ln for ln in src.split("\n") if ln and not ln.startswith((" ", "\t"))]
+        assert toplevel == [
+            "import sys, json, traceback, importlib",
+            "def _drive():",
+            "_drive()",
+        ]
+
 
 class TestOracleSatisfiability:
     """R9-R1 P2: admission must refuse a held-out set whose correct-solution
@@ -679,3 +696,32 @@ class TestOracleSatisfiability:
         )
         with pytest.raises(ValueError, match="unsatisfiable|exceed the runtime cap"):
             init_contract("smoke_add_two_io", registry)
+
+
+class TestResultCapAnchoring:
+    """R9-R2 P1: the runtime result-size cap decides accept/reject in
+    _reconcile_io, so it is a judging constant and must live on the frozen
+    ruler surface (the anchored sandbox_scorer module) — not in the unanchored
+    contract.py, where changing it would silently re-decide verdicts while
+    verify_frozen stays clean."""
+
+    def test_cap_lives_in_anchored_module_not_contract(self) -> None:
+        assert hasattr(ss, "IO_RESULTS_MAX_BYTES")
+        assert not hasattr(ct, "IO_RESULTS_MAX_BYTES")  # moved out of unanchored module
+
+    def test_changing_cap_would_drift_the_ruler(self) -> None:
+        # judge_source:sandbox_scorer anchors this module's source bytes, so a
+        # change to the constant flips the source hash -> new ruler id. Prove
+        # the constant is actually in those hashed bytes.
+        import hashlib
+        import inspect
+
+        src = inspect.getsource(ss)
+        assert "IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024" in src
+        mutated = src.replace(
+            "IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024",
+            "IO_RESULTS_MAX_BYTES = 16 * 1024 * 1024",
+        )
+        assert (
+            hashlib.sha256(src.encode()).hexdigest() != hashlib.sha256(mutated.encode()).hexdigest()
+        )

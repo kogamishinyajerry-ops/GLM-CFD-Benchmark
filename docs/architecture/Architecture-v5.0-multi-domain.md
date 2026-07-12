@@ -602,3 +602,24 @@ cases/coding_tasks/<id>/
   →smoke/smoke_io 双 coding 尺再重锚（#1b5aaf53→#254377fc / #26a85b2a→#383f8d36），
   admission 在新尺下重跑 3/3。+6 见证（47 条）三点 tamper 全翻红；真容器 E2E golden
   新尺双信号仍过。字节定稿在前重锚在后=canon 47。全套 1286 绿。
+- **R9-R2 终审（审 d8c98e6，86gs sol ultra；第 3/终轮，用户裁决「修两条直接 push」）：
+  1P1+1P2 全坐实即修**——终轮咬中 R1 修复的两处更深自伤/残留：①**P1 运行时 cap
+  移出锚面（R1 自伤回归）**：R1 为破环把 `IO_RESULTS_MAX_BYTES` 挪进 contract.py，
+  但 contract.py **刻意不入锚**——`_reconcile_io` 用它判 accept/reject=运行时判卷常量
+  却离开了 ruler 血统，后续改它可静默改判而 verify_frozen 清白——修复：常量移回锚定
+  judge 模块 sandbox_scorer.py（judge_source:sandbox_scorer，改它即改 ruler id），
+  准入侧 `_validate_io_oracle` **函数内局部 import**取值（模块级 import 会成环：
+  sandbox_scorer→contract）；MAX_IO_ORACLE_CASES 属纯准入策略（不再判运行时）留
+  contract.py（见证：常量在锚模块不在 contract + 改常量必改源哈希）。②**P2 类型原语
+  在 `__main__` 全局可被提交改写**：driver.py 以 `python -I driver.py` 跑=`__main__`，
+  R1 的 `_type/_list=...` 是**模块级**绑定→提交可 `import __main__; __main__._list=tuple`
+  令 `_native` 认 tuple 再被 json.dump 塌成 list（**注：仅破类型严格性，值仍须真算对
+  =期望保密，不让错值提交蒙混**）——修复：整个 driver 体包进 `def _drive()`，类型原语
+  +open/json/traceback 全captured 为**函数局部**（不在任何提交可见命名空间），配精确
+  `is` 恒等双重堵死（见证：源顶层仅 imports+`_drive()`，无模块级原语可被 __main__ 抓）。
+  sandbox_scorer 改→smoke/smoke_io 双 coding 尺三度重锚（#254377fc→#b1d9816b /
+  #383f8d36→#b4f71e03），admission 三跑 3/3。+3 见证（50 条）两点 tamper 全翻红；
+  真容器 E2E 三场（golden 过/伪造咬红/tuple 咬红）新尺全对。字节定稿在前重锚在后=
+  canon 47。全套 1289 绿。**用户裁决直接 push（不再加审轮）**——R9 三轮审同主题（判卷
+  完整性+宿主侧攻击面）逐层收窄，从 R0 的 3 宽 P1 收敛到 R2 的 1 自伤回归+1 类型残留，
+  条条为真且修复非争议，收敛可宣称。

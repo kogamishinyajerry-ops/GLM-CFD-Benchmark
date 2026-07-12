@@ -484,17 +484,14 @@ gates nothing' principle as :meth:`ScoringContract._validate_frozen_nonempty`.
 Three mirrors the golden-admission repeat-count floor."""
 
 MAX_IO_ORACLE_CASES = 10_000
-"""Upper bound on held-out IO cases (Codex R9-R1 P2). Together with
-:data:`IO_RESULTS_MAX_BYTES` this keeps a frozen oracle SATISFIABLE: admission
-rejects any held-out set whose correct-solution result file would exceed the
-runtime cap, so init never freezes a ruler that fails every correct submission."""
-
-IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024
-"""Runtime cap on the oracle result file the driver writes into a container-
-writable work zone (Codex R9-R0 P1). The host reader (sandbox_scorer) requires
-a bounded regular file; admission (below) proves the golden result stays under
-it, so the same constant governs both ends (SSOT here — sandbox_scorer imports
-it — because contract.py is the lower module and cannot import from it)."""
+"""Upper bound on held-out IO cases (Codex R9-R1 P2 / R9-R2 P1). Together with
+``sandbox_scorer.IO_RESULTS_MAX_BYTES`` this keeps a frozen oracle SATISFIABLE:
+admission rejects any held-out set whose correct-solution result file would
+exceed the runtime cap, so init never freezes a ruler that fails every correct
+submission. This bound is an admission-time policy (it never re-decides a
+runtime verdict), so — unlike the runtime byte cap — it does not need to live
+in the anchored judge module; the byte cap does, and is imported locally where
+admission needs it (see :func:`_validate_io_oracle`)."""
 
 IO_ORACLE_GATE = "io_oracle_pass"
 """Validity-gate name the IO oracle drives. Presence of the gate and of
@@ -614,9 +611,17 @@ def _validate_io_oracle(case: CaseSpec, case_dir: Path, final_gates: list[str]) 
     # writes one {index, ok, result} row per case; a CORRECT submission's
     # result IS the held-out expected value, so the row shape below is exactly
     # what a correct solution produces. If that projected file already exceeds
-    # IO_RESULTS_MAX_BYTES, the runtime cap would reject the golden and every
-    # correct submission — an unsatisfiable ruler. Refuse to freeze it here
-    # instead of shipping a contract no one can pass.
+    # the runtime cap, the cap would reject the golden and every correct
+    # submission — an unsatisfiable ruler. Refuse to freeze it here.
+    #
+    # The runtime byte cap is imported LOCALLY from the anchored judge module
+    # (Codex R9-R2 P1): it is a runtime judging constant, so it must live on
+    # the frozen ruler surface (judge_source:sandbox_scorer) — changing it
+    # changes the ruler id. contract.py is deliberately unanchored, so it reads
+    # the value here rather than owning it (a module-level import would be a
+    # cycle: sandbox_scorer imports contract).
+    from cfdb.agentbench.sandbox_scorer import IO_RESULTS_MAX_BYTES
+
     projected = [
         {"index": i, "ok": True, "result": item["expected"]} for i, item in enumerate(data)
     ]

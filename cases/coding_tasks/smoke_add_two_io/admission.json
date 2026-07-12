@@ -8,7 +8,7 @@
     {
       "valid": true,
       "score": 1.0,
-      "scored_at": "2026-07-12T15:17:26.843634+00:00",
+      "scored_at": "2026-07-12T15:51:12.770325+00:00",
       "notes": [
         "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
       ]
@@ -16,7 +16,7 @@
     {
       "valid": true,
       "score": 1.0,
-      "scored_at": "2026-07-12T15:17:27.630940+00:00",
+      "scored_at": "2026-07-12T15:51:13.596085+00:00",
       "notes": [
         "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
       ]
@@ -24,11 +24,11 @@
     {
       "valid": true,
       "score": 1.0,
-      "scored_at": "2026-07-12T15:17:28.511241+00:00",
+      "scored_at": "2026-07-12T15:51:14.407045+00:00",
       "notes": [
         "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
       ]
     }
   ],
-  "created_at": "2026-07-12T15:17:28.511860+00:00"
+  "created_at": "2026-07-12T15:51:14.407659+00:00"
 }

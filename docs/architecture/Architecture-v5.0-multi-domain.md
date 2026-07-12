@@ -581,3 +581,24 @@ cases/coding_tasks/<id>/
   sandbox_scorer.py 改（判卷源锚）→smoke/smoke_io 双 coding 尺重锚
   （#bc9dca2b→#1b5aaf53 / #923cd295→#26a85b2a；csv/cavity 锚 judge_policy 未动不漂）。
   +13 见证（41 条）六点 tamper 全翻红实证；字节定稿在前重锚在后=canon 47。全套 1280 绿。
+- **R9-R1 复审（审 083b6bb，86gs sol ultra）：1P1+2P2——R0 修复的更深绕过，全坐实即修（本批）**——
+  异源审对 R0 的加固再施压，三条均为真绕过路径：①**P1 cases_file 仅查 resolve 目标、
+  未禁 symlink 组件**：`reference/` 下的目录-symlink 组件，`_collect_frozen_files` 的
+  rglob 锚的是 symlink 目标、不下探/记录目录 symlink 本身，而 `_run_io_oracle` 按字面
+  路径重新跟随——init 后把 link 重指向 reference/ 外即换掉可信答案而 verify_frozen
+  不报漂——修复：准入强制 cases_file 为 reference/ 下**逐组件无 symlink**的规范相对
+  路径（case_dir 起逐级 `is_symlink` 检查），保证运行时读的就是被锚的那个真实文件
+  （见证：目录-symlink + 文件-symlink 双拒）。②**P2 `_native` 用 isinstance 认子类且
+  可被提交替换**：`isinstance(_v,(int,...))` 收 `class MyInt(int)` 子类而 json.dump
+  塌成基类→骗过；且被 import 的提交可在 driver 循环前替换 `builtins.isinstance` 让
+  tuple 走标量分支——修复：driver 在提交 import **之前**捕获可信类型原语（`_type=type`
+  + 各类型对象绑定），改用精确 `_type(_v) is _int` 恒等（拒子类、不碰 isinstance），
+  提交无法触及本地绑定（见证：int 子类拒 + 源序断言原语在 import 前捕获且全程无
+  isinstance）。③**P2 固定 8MiB cap 可造不可满足契约**：held-out 集若够大（大字符串/
+  大列表/够多 case），正确解的结果文件超 8MiB→运行时 cap 反把 golden 与一切正确提交
+  判废=冻结了没人能过的尺——修复：cap 常量移入 contract.py（SSOT，sandbox_scorer 反
+  向 import），准入按正确解结果行形状投影序列化，超 cap 即拒 + case 数 ≤MAX_IO_ORACLE_CASES
+  （1万），init 绝不冻结不可满足尺（见证：case 数超限 + 超大结果双拒）。sandbox_scorer 改
+  →smoke/smoke_io 双 coding 尺再重锚（#1b5aaf53→#254377fc / #26a85b2a→#383f8d36），
+  admission 在新尺下重跑 3/3。+6 见证（47 条）三点 tamper 全翻红；真容器 E2E golden
+  新尺双信号仍过。字节定稿在前重锚在后=canon 47。全套 1286 绿。

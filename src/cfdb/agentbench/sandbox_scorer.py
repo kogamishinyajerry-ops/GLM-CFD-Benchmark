@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cfdb.agentbench.contract import (
+    IO_RESULTS_MAX_BYTES,
     JUDGE_IMAGE_KEY,
     FrozenDriftError,
     ScoringContract,
@@ -74,9 +75,8 @@ IO_DRIVER_FILENAME = "driver.py"
 IO_RESULTS_FILENAME = "io_results.json"
 # The oracle result file lands in a container-WRITABLE work zone, so the
 # submission can plant a FIFO / symlink / oversized file there (Codex R9-R0
-# P1). The host reader requires a bounded regular non-symlink file; 8 MiB is
-# far above any legitimate result set (a few rows of small JSON scalars).
-IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024
+# P1). The host reader requires a bounded regular non-symlink file; the cap is
+# defined in contract.py (SSOT) so admission proves the golden result fits it.
 WORK_REPORT = "/work/report.xml"
 WORK_BASETEMP = "/work/pytest-tmp"
 WORK_TMPDIR = "/work/tmp"
@@ -286,18 +286,26 @@ def _io_driver_source(entry_module: str, entry_func: str) -> str:
     """
     return (
         "import sys, json, traceback, importlib\n"
+        # Capture EXACT type primitives before the submission import can run
+        # (Codex R9-R1 P2): `_type` and the type objects are bound here, so a
+        # submission that rebinds builtins.isinstance/type at import time cannot
+        # reach them, and exact `is` identity (not isinstance) rejects int/list/
+        # dict SUBCLASSES that json.dump would collapse to the base type.
+        "_type = type\n"
+        "_bool, _int, _float, _str, _list, _dict = bool, int, float, str, list, dict\n"
         f"with open({JUDGE_IO_INPUTS!r}, encoding='utf-8') as _f:\n"
         "    _inputs = json.load(_f)\n"
         f"sys.path.insert(0, {JUDGE_SUBMISSION!r})\n"
         f"_mod = importlib.import_module({entry_module!r})\n"
         f"_fn = getattr(_mod, {entry_func!r})\n"
         "def _native(_v):\n"
-        "    if _v is None or isinstance(_v, (bool, int, float, str)):\n"
+        "    _t = _type(_v)\n"
+        "    if _v is None or _t is _bool or _t is _int or _t is _float or _t is _str:\n"
         "        return True\n"
-        "    if isinstance(_v, list):\n"
+        "    if _t is _list:\n"
         "        return all(_native(_x) for _x in _v)\n"
-        "    if isinstance(_v, dict):\n"
-        "        return all(isinstance(_k, str) and _native(_x) for _k, _x in _v.items())\n"
+        "    if _t is _dict:\n"
+        "        return all(_type(_k) is _str and _native(_x) for _k, _x in _v.items())\n"
         "    return False\n"
         "_out = []\n"
         "for _item in _inputs:\n"
@@ -305,7 +313,7 @@ def _io_driver_source(entry_module: str, entry_func: str) -> str:
         "        _r = _fn(*_item['args'])\n"
         "        if not _native(_r):\n"
         "            _out.append({'index': _item['index'], 'ok': False, "
-        "'error': 'non-JSON-native return type (would coerce): ' + type(_r).__name__})\n"
+        "'error': 'non-JSON-native return type (would coerce): ' + _type(_r).__name__})\n"
         "        else:\n"
         "            _out.append({'index': _item['index'], 'ok': True, 'result': _r})\n"
         "    except Exception:\n"

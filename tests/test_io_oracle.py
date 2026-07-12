@@ -500,6 +500,31 @@ class TestCasesFileAnchoring:
         with pytest.raises(ValueError, match="reference/ tree"):
             init_contract("smoke_add_two_io", registry)
 
+    def test_symlink_dir_component_rejected(self, tmp_path: Path) -> None:
+        # R9-R1 P1: a directory-symlink component would let the target be
+        # retargeted outside reference/ without tripping verify_frozen.
+        registry, case_dir = _tmp_smoke(tmp_path)
+        ref = case_dir / "reference"
+        (ref / "real_io").mkdir()
+        (ref / "real_io" / "held.json").write_text(
+            json.dumps([{"args": [7], "expected": 9}] * 3), encoding="utf-8"
+        )
+        os.symlink(ref / "real_io", ref / "link")
+        self._set_cases_file(case_dir, "reference/link/held.json")
+        with pytest.raises(ValueError, match="traverses a symlink"):
+            init_contract("smoke_add_two_io", registry)
+
+    def test_symlink_file_component_rejected(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        ref = case_dir / "reference"
+        (ref / "real_held.json").write_text(
+            json.dumps([{"args": [7], "expected": 9}] * 3), encoding="utf-8"
+        )
+        os.symlink(ref / "real_held.json", ref / "held_link.json")
+        self._set_cases_file(case_dir, "reference/held_link.json")
+        with pytest.raises(ValueError, match="traverses a symlink"):
+            init_contract("smoke_add_two_io", registry)
+
 
 class TestNonCodingOracleRejected:
     """P2: an io_oracle on a non-coding case would be silently ignored (its
@@ -605,3 +630,52 @@ class TestDriverNativeTypes:
         out = self._run_driver(tmp_path, monkeypatch, [1, 2])
         assert out[0]["ok"] is True
         assert out[0]["result"] == [1, 2]
+
+    def test_int_subclass_rejected(self, tmp_path: Path, monkeypatch) -> None:
+        # R9-R1 P2: exact-type identity rejects an int subclass that json.dump
+        # would silently collapse to a plain int (isinstance would accept it).
+        class _MyInt(int):
+            pass
+
+        out = self._run_driver(tmp_path, monkeypatch, _MyInt(9))
+        assert out[0]["ok"] is False
+        assert "non-JSON-native" in out[0]["error"]
+
+    def test_primitives_captured_before_submission_import(self) -> None:
+        # R9-R1 P2: the trusted type primitives must be bound BEFORE the
+        # submission is imported, so import-time builtin rebinding cannot reach
+        # them. (isinstance is not used at all — exact `is` identity instead.)
+        src = _io_driver_source("m", "f")
+        assert src.index("_type = type") < src.index("import_module")
+        assert "isinstance" not in src
+
+
+class TestOracleSatisfiability:
+    """R9-R1 P2: admission must refuse a held-out set whose correct-solution
+    result file would exceed the runtime cap — else init freezes an
+    unsatisfiable ruler that fails the golden and every correct submission."""
+
+    def _set_io(self, case_dir: Path, cases: list) -> None:
+        (case_dir / "reference" / "held_out_io.json").write_text(
+            json.dumps(cases), encoding="utf-8"
+        )
+
+    def test_too_many_cases_rejected(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        self._set_io(case_dir, [{"args": [i], "expected": i} for i in range(10_001)])
+        with pytest.raises(ValueError, match="10000"):
+            init_contract("smoke_add_two_io", registry)
+
+    def test_oversized_result_rejected(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        big = "x" * (5 * 1024 * 1024)  # 3 * 5 MiB projected > 8 MiB cap
+        self._set_io(
+            case_dir,
+            [
+                {"args": [7], "expected": big},
+                {"args": [-3], "expected": big},
+                {"args": [0], "expected": big},
+            ],
+        )
+        with pytest.raises(ValueError, match="unsatisfiable|exceed the runtime cap"):
+            init_contract("smoke_add_two_io", registry)

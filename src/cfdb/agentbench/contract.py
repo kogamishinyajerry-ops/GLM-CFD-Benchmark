@@ -483,6 +483,19 @@ oracle gates nothing / is trivially guessable — the same 'an empty ruler
 gates nothing' principle as :meth:`ScoringContract._validate_frozen_nonempty`.
 Three mirrors the golden-admission repeat-count floor."""
 
+MAX_IO_ORACLE_CASES = 10_000
+"""Upper bound on held-out IO cases (Codex R9-R1 P2). Together with
+:data:`IO_RESULTS_MAX_BYTES` this keeps a frozen oracle SATISFIABLE: admission
+rejects any held-out set whose correct-solution result file would exceed the
+runtime cap, so init never freezes a ruler that fails every correct submission."""
+
+IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024
+"""Runtime cap on the oracle result file the driver writes into a container-
+writable work zone (Codex R9-R0 P1). The host reader (sandbox_scorer) requires
+a bounded regular file; admission (below) proves the golden result stays under
+it, so the same constant governs both ends (SSOT here — sandbox_scorer imports
+it — because contract.py is the lower module and cannot import from it)."""
+
 IO_ORACLE_GATE = "io_oracle_pass"
 """Validity-gate name the IO oracle drives. Presence of the gate and of
 ``execution.io_oracle`` are coupled both ways at admission."""
@@ -540,22 +553,33 @@ def _validate_io_oracle(case: CaseSpec, case_dir: Path, final_gates: list[str]) 
             "is not in its validity_gates — the oracle would run but never gate"
         )
 
-    # The held-out answers MUST resolve inside the frozen, secret reference/
-    # tree (Codex R9-R0 P1). reference/ is anchored by _collect_frozen_files,
-    # so verify_frozen catches any drift of the expected values; it is also
-    # never shipped to the agent (unlike visible/). A cases_file that is
-    # absolute, escapes via '..', or sits at the case root would be readable
-    # here but NEVER anchored — the oracle would then trust expected answers
-    # that can change while the ruler stays clean, or leak them to the agent.
-    reference_root = (case_dir / "reference").resolve()
-    resolved_cases = (case_dir / io.cases_file).resolve()
-    if not resolved_cases.is_relative_to(reference_root):
+    # The held-out answers MUST be a plain file inside the frozen, secret
+    # reference/ tree, reached by a case-relative path with NO symlink
+    # component (Codex R9-R0 P1 + R9-R1 P1). reference/ files are anchored by
+    # _collect_frozen_files, but its rglob hashes symlink TARGETS: a directory
+    # -symlink component could be retargeted outside reference/ after init —
+    # the manifest would not descend it (no drift) while _run_io_oracle
+    # re-follows the literal path and reads swapped answers. Requiring a
+    # symlink-free normalized reference/-relative path guarantees the runtime
+    # read follows the EXACT real file the manifest anchored, and keeps the
+    # answers out of the agent-visible visible/ tree.
+    rel = io.cases_file
+    rel_parts = Path(rel).parts
+    if os.path.isabs(rel) or ".." in rel_parts or rel_parts[:1] != ("reference",):
         raise ValueError(
-            f"io_oracle.cases_file '{io.cases_file}' must resolve inside the frozen, "
-            f"secret reference/ tree (resolved to {resolved_cases}); a file outside "
-            "reference/ is not anchored and its expected answers could drift "
-            "undetected or leak to the agent"
+            f"io_oracle.cases_file '{rel}' must be a case-relative path under "
+            "reference/ (no absolute path, no '..'); expected answers live only "
+            "in the frozen, secret reference/ tree"
         )
+    walk = case_dir
+    for part in rel_parts:
+        walk = walk / part
+        if walk.is_symlink():
+            raise ValueError(
+                f"io_oracle.cases_file '{rel}' traverses a symlink at '{part}' — "
+                "a symlink component can be retargeted without tripping verify_frozen; "
+                "use a plain reference/ path so the anchored file is the one read"
+            )
     cases_path = case_dir / io.cases_file
     if not cases_path.is_file():
         raise FileNotFoundError(f"io_oracle.cases_file missing: {cases_path}")
@@ -570,6 +594,11 @@ def _validate_io_oracle(case: CaseSpec, case_dir: Path, final_gates: list[str]) 
             f"io_oracle needs >= {MIN_IO_ORACLE_CASES} cases (got {len(data)}): "
             "an empty/tiny oracle gates nothing and is trivially guessable"
         )
+    if len(data) > MAX_IO_ORACLE_CASES:
+        raise ValueError(
+            f"io_oracle has {len(data)} cases (> {MAX_IO_ORACLE_CASES}): the "
+            "correct-solution result file would risk exceeding the runtime cap"
+        )
     for i, item in enumerate(data):
         if not isinstance(item, dict) or "args" not in item or "expected" not in item:
             raise ValueError(f"io_oracle case {i} must be an object with 'args' and 'expected'")
@@ -580,6 +609,24 @@ def _validate_io_oracle(case: CaseSpec, case_dir: Path, final_gates: list[str]) 
                 f"io_oracle case {i}: float in 'expected' — float equality is a "
                 "false-precision trap; v1 rejects floats (tolerance semantics = v2)"
             )
+
+    # Satisfiability under the runtime result cap (Codex R9-R1 P2): the driver
+    # writes one {index, ok, result} row per case; a CORRECT submission's
+    # result IS the held-out expected value, so the row shape below is exactly
+    # what a correct solution produces. If that projected file already exceeds
+    # IO_RESULTS_MAX_BYTES, the runtime cap would reject the golden and every
+    # correct submission — an unsatisfiable ruler. Refuse to freeze it here
+    # instead of shipping a contract no one can pass.
+    projected = [
+        {"index": i, "ok": True, "result": item["expected"]} for i, item in enumerate(data)
+    ]
+    projected_bytes = len(json.dumps(projected).encode("utf-8"))
+    if projected_bytes > IO_RESULTS_MAX_BYTES:
+        raise ValueError(
+            f"io_oracle held-out set is too large: a correct-solution result file "
+            f"(~{projected_bytes} B) would exceed the runtime cap {IO_RESULTS_MAX_BYTES} B, "
+            "making the contract unsatisfiable — shrink the held-out set or its outputs"
+        )
 
     _lint_io_disjoint_from_hidden(data, case_dir, case.id)
 

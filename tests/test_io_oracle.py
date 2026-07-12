@@ -456,6 +456,42 @@ class TestResultArtifactGuard:
         p.write_text(json.dumps([{"index": 0, "ok": True, "result": 9}]), encoding="utf-8")
         assert _reconcile_io(p, [9], []) == 1.0
 
+    def test_degrades_when_nofollow_flags_absent(self, tmp_path: Path, monkeypatch) -> None:
+        # Codex R9-harden-R0 P2: O_NOFOLLOW/O_NONBLOCK are POSIX-only. On a host
+        # lacking them the reader must degrade to a plain open, never raise
+        # AttributeError. Simulate by removing the attributes.
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+        monkeypatch.delattr(os, "O_NONBLOCK", raising=False)
+        p = tmp_path / IO_RESULTS_FILENAME
+        p.write_text(json.dumps([{"index": 0, "ok": True, "result": 9}]), encoding="utf-8")
+        # No AttributeError, and a legitimate file still reconciles.
+        assert _reconcile_io(p, [9], []) == 1.0
+
+    def test_stale_fstat_size_caught_on_read(self, tmp_path: Path, monkeypatch) -> None:
+        # Codex R9-harden-R0 P2: if fstat under-reports the size (stale
+        # metadata), the size gate passes but the read overruns the cap — the
+        # len(raw) > cap check must still reject the oversized artifact before
+        # its valid-JSON prefix is parsed as a complete result.
+        monkeypatch.setattr(ss, "IO_RESULTS_MAX_BYTES", 8)  # tiny cap
+        p = tmp_path / IO_RESULTS_FILENAME
+        # A valid-JSON prefix within the cap, then whitespace overrunning it.
+        p.write_text("[]" + " " * 20, encoding="utf-8")
+        real_fstat = os.fstat
+
+        def _lying_fstat(fd):  # claims a within-cap st_size, real mode
+            real = real_fstat(fd)
+
+            class _S:
+                st_mode = real.st_mode
+                st_size = 1
+
+            return _S()
+
+        monkeypatch.setattr(os, "fstat", _lying_fstat)
+        notes: list[str] = []
+        assert _reconcile_io(p, [], notes) == 0.0
+        assert any("exceeds cap" in n for n in notes)
+
 
 class TestReconcileNullResult:
     """P2: a forged row that omits ``result`` must fail before equality, else

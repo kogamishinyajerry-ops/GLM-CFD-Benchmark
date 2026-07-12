@@ -12,7 +12,7 @@
     "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
     "__validity_gates__": "975c64ef020beea4c2bd85f84a9e82a94c7f99074fffbb8d7aee2ffa3d763b6e",
     "__file_manifest__": "679f2893c414c850b9406881cef4a722f233e532175d800165a5560cf86120b0",
-    "judge_source:sandbox_scorer": "13a59f9fdd4f1bfdefcb6a5014d7586fa365d8e8a0e355ebefdd23f9e3ddca7d",
+    "judge_source:sandbox_scorer": "60bd876eb851677d0a0c88ce3c1fdb9ed5708da3b9cda6aadb4862648838cb21",
     "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
     "__judge_image__": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
   },

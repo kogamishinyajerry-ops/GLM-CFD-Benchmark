@@ -412,8 +412,14 @@ def _reconcile_io(results_path: Path, expected: list, notes: list[str]) -> float
     # exploitable here because the oracle container is already gone by this
     # point, but the single-open idiom is the correct primitive for a
     # checked read and removes the shape entirely.)
+    # O_NOFOLLOW / O_NONBLOCK are POSIX-only; getattr-fallback to 0 (no-op) on
+    # a non-Unix host so the reader degrades to a plain bounded open+fstat
+    # rather than raising AttributeError before os.open (Codex R9-harden-R0
+    # P2). The judge platform is Linux/Docker, where both are present and the
+    # symlink/FIFO guards are fully active.
+    open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        fd = os.open(results_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(results_path, open_flags)
     except OSError as e:
         notes.append(
             f"io oracle: results file not present or not a regular non-symlink file: {e} (invalid)"
@@ -433,6 +439,13 @@ def _reconcile_io(results_path: Path, expected: list, notes: list[str]) -> float
         with os.fdopen(fd, "rb") as f:
             fd = -1  # fdopen owns the descriptor now; its context manager closes it
             raw = f.read(IO_RESULTS_MAX_BYTES + 1)
+        # Enforce the cap on the BYTES ACTUALLY READ, not just fstat's size
+        # (Codex R9-harden-R0 P2): if fstat under-reported (stale metadata),
+        # read(MAX+1) returns MAX+1 bytes — reject before a valid-JSON prefix
+        # of an oversized artifact is parsed as a complete result.
+        if len(raw) > IO_RESULTS_MAX_BYTES:
+            notes.append(f"io oracle: results read exceeds cap {IO_RESULTS_MAX_BYTES} B (invalid)")
+            return 0.0
         results = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         notes.append(f"io oracle: results unreadable/unparseable: {e} (invalid)")

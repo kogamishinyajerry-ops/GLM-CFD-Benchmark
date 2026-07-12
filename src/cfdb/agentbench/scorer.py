@@ -394,6 +394,13 @@ def verify_ledger_chain(ledger_path: Path) -> LedgerChainReport:
             else:
                 unchained_prefix += 1
             continue
+        # A chain value must be a 64-char hex string BEFORE it is hashed,
+        # sliced or adopted as the next link (Codex R7 P2: a corrupt line
+        # storing a JSON number/object must be a named violation, never a
+        # TypeError traceback).
+        if not isinstance(chain, str) or len(chain) != 64:
+            problems.append(f"line {lineno}: chain value is not a 64-char string")
+            continue
         expected = _chain_hash(prev, row)
         if chain != expected:
             problems.append(

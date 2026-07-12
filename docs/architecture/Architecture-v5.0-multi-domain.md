@@ -437,3 +437,13 @@ cases/coding_tasks/<id>/
   旧尺 exit 3 点名 judge_source:sandbox_scorer→重锚 #3cb313ec、golden 真容器
   canary 注入下 1.0、真账本 21 legacy 前缀披露+链上行篡改 verify/passk 双拒
   点名 line 22、showcase 渲出 data-no-identity。1203 绿。
+- **R7-R0 治理审（审 74d34f6）：1P1+3P2 即修（R7-R1 批）**——①P1 捆绑尺锚过期
+  （根因=重锚后又跑 ruff format 改了 sandbox_scorer 字节→提交的锚对不上提交的源，
+  clean checkout 必 exit 3；**流程教训：重锚必须是字节定稿后的最后一步**）——修复：
+  字节定稿后重锚 #3cb313ec→#0a67252b + golden 真容器重评入账 + **防回归守卫见证**
+  （agentbench/ 捆绑契约必须对提交字节 verify_frozen+missing_required_anchors 全干净，
+  先红后绿）；②P2 链值非字符串（JSON 数字/对象）致 TypeError——修复：64 字符
+  字符串前置校验，按行点名不崩；③P2 无表头 CSV 首行坏数据被静默当表头截断曲线——
+  修复：表头正面验证（恰两列且皆非数值）才跳过；④P2 csv.Error/UnicodeDecodeError
+  逃逸（审查方实证 field>131072 崩溃）——修复：与 OSError 同拒。
+  见证 +5（守卫+链崩溃+表头歧义+超长字段+坏编码），1208 绿。

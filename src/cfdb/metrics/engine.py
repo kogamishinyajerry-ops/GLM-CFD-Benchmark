@@ -409,9 +409,12 @@ class MetricsEngine:
     def _load_csv_curve(self, path: Path) -> list[tuple[float, float]] | None:
         """Load a two-column CSV reference curve (strict; see caller).
 
-        The first row may be a non-numeric header (skipped). Every other
-        row must be exactly two finite floats; any violation rejects the
-        whole file with a logged reason.
+        The first row is skipped ONLY when it is a positively validated
+        header: exactly two columns, neither parseable as a float (Codex
+        R7 P2 — a malformed first DATA row like ``0.0,abc`` must reject
+        the whole file, never be silently consumed as a header). Every
+        data row must be exactly two finite floats; any violation rejects
+        the whole file with a logged reason.
 
         Args:
             path: Path to the CSV file.
@@ -422,7 +425,10 @@ class MetricsEngine:
         try:
             with path.open(newline="", encoding="utf-8") as f:
                 rows = [row for row in csv.reader(f) if len(row) > 0]
-        except OSError as e:
+        # csv.Error (e.g. a field beyond field_size_limit) and decoding
+        # failures surface during iteration, not open() — all three are
+        # 'unusable reference', never a crash (Codex R7 P2).
+        except (OSError, csv.Error, UnicodeDecodeError) as e:
             logger.warning("failed to read reference curve CSV %s: %s", path, e)
             return None
         if len(rows) == 0:
@@ -440,14 +446,25 @@ class MetricsEngine:
                 return None
             return (x, y)
 
-        first = _parse(rows[0])
-        data_rows = rows if first is not None else rows[1:]
+        def _is_header(row: list[str]) -> bool:
+            if len(row) != 2:
+                return False
+            for cell in row:
+                try:
+                    float(cell)
+                except ValueError:
+                    continue
+                return False  # a numeric cell means data, not a header
+            return True
+
+        has_header = _is_header(rows[0])
+        data_rows = rows[1:] if has_header else rows
         if len(data_rows) == 0:
             logger.warning("reference curve CSV %s has a header but no data rows", path)
             return None
         points: list[tuple[float, float]] = []
         for offset, row in enumerate(data_rows):
-            lineno = offset + (1 if first is not None else 2)
+            lineno = offset + (2 if has_header else 1)
             point = _parse(row)
             if point is None:
                 logger.warning(

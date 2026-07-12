@@ -405,3 +405,66 @@ class TestCanarySentinel:
         namespace: dict = {}
         exec(source, namespace)  # noqa: S102 — judge-authored source, self-check
         namespace[name]()  # does not raise
+
+
+# ============================================================================
+# R7-R1 review fixes (Codex R7-R0: 1P1 + 3P2)
+# ============================================================================
+
+
+class TestR7R1ReviewFixes:
+    def test_bundled_contracts_verify_on_committed_bytes(self) -> None:
+        # Codex R7 P1 regression guard: every ruler shipped in agentbench/
+        # must verify clean against the repo's committed bytes — a stale
+        # judge-source anchor (e.g. re-anchor before a later reformat)
+        # makes the bundled ruler unusable in a clean checkout (exit 3).
+        from cfdb.agentbench.contract import missing_required_anchors, verify_frozen
+
+        repo_root = Path(__file__).resolve().parent.parent
+        registry = CaseRegistry(repo_root / "cases")
+        contract_paths = sorted((repo_root / "agentbench").glob("*/contract.json"))
+        assert len(contract_paths) >= 3  # smoke / csv / cavity ship today
+        for contract_path in contract_paths:
+            contract = load_contract(contract_path)
+            case = registry.load(contract.case_id)
+            case_dir = registry.get_case_dir(contract.case_id)
+            assert verify_frozen(contract, case_dir) == [], contract_path
+            assert missing_required_anchors(contract, case, case_dir) == [], contract_path
+
+    def test_non_string_chain_is_named_violation_not_crash(self, tmp_path: Path) -> None:
+        # Codex R7 P2: a corrupt line storing chain as a JSON number must
+        # be a line-named problem, never a TypeError traceback.
+        ledger = tmp_path / "ledger.jsonl"
+        append_ledger(ledger, _row(sid="s0", attempt="a0"))
+        good = json.loads(_row(sid="s1", attempt="a1").model_dump_json())
+        good["chain"] = 123
+        with ledger.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(good) + "\n")
+        report = verify_ledger_chain(ledger)
+        assert report.problems == ["line 2: chain value is not a 64-char string"]
+        with pytest.raises(ValueError, match="chain broken"):
+            append_ledger(ledger, _row(sid="s2", attempt="a2"))
+
+    def test_malformed_first_data_row_rejects_headerless_file(self, tmp_path: Path) -> None:
+        # Codex R7 P2: '0.0,abc' is a bad DATA row (one numeric cell), not
+        # a header — silently skipping it would truncate the curve and
+        # shift the L2 verdict.
+        bad = tmp_path / "ref.csv"
+        bad.write_text("0.0,abc\n0.5,1.0\n", encoding="utf-8")
+        assert MetricsEngine()._load_reference_curve(bad) is None
+        # A positively validated header (neither cell numeric) still skips.
+        good = tmp_path / "ok.csv"
+        good.write_text("x/c,Cp\n0.5,1.0\n", encoding="utf-8")
+        assert MetricsEngine()._load_reference_curve(good) == [(0.5, 1.0)]
+
+    def test_oversized_csv_field_is_contained(self, tmp_path: Path) -> None:
+        # Codex R7 P2 (reviewer repro): a field beyond csv.field_size_limit
+        # raises csv.Error during iteration — must be None, never a crash.
+        big = tmp_path / "big.csv"
+        big.write_text("x/c,Cp\n" + "1" * 200000 + ",2\n", encoding="utf-8")
+        assert MetricsEngine()._load_reference_curve(big) is None
+
+    def test_undecodable_csv_is_contained(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.csv"
+        bad.write_bytes(b"x/c,Cp\n0.0,\xff\xfe\n")
+        assert MetricsEngine()._load_reference_curve(bad) is None

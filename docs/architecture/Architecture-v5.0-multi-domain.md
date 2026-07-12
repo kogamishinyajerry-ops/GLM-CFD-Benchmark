@@ -252,6 +252,16 @@ cases/coding_tasks/<id>/
   「reference/+visible/ 内文件增/删/改名」；已存在文件的内容改动由逐文件 sha256 咬。
   R1 批次起 visible/ 逐文件锚从 agentic-only 扩到全域（coding 的起始 solution.py 是
   任务面，改它=改被测对象，不同任务面的分数不得同血统）。
+- **字节码=可执行判卷材料，拒锚而非隐身（R4 批，纠正 R3 批的排除法）**：`-B` 只禁
+  写不禁读——裸 `helper.pyc` 与 checker 同目录照常 import（本机 3.12 探针实证）。
+  语义：init 见判卷树内任何 `__pycache__`/`*.pyc` 即拒锚（loud，点名路径）；manifest
+  对缓存**可见**——`-B` 保证合法运行不产缓存，事后出现的缓存=真漂移必咬。
+- **锚完整性三层闭合（R4 批终态）**：①verify_frozen 重哈希现存键（内容漂移/文件
+  丢失，精确点名）→②missing_required_anchors 按 case 重推**期望键全集**（通用特殊键
+  +域 judge/normalize 键+全部判卷文件键+held_out 键），被剥离的键在判分前显式点名
+  （exit 3 零落账；枚举本身失败也如实上报绝不静默降级）→③load 层强制五条通用锚
+  （含 judge_source:scorer，三域通用），showcase 等非判分消费者不再把判分会拒的尺
+  显示为 INTACT。顺序=verify 先行（诊断更准），完整性检查殿后（补盲区）。
 
 ## 9. 设计审查记录
 
@@ -312,3 +322,16 @@ cases/coding_tasks/<id>/
   witness：tests/test_codex_r2_witnesses.py（10 条，含 helper-import checker 真跑
   不自漂移 + 缺锚拒判零落账 + 缓存排除不放过真新增）。真 CLI 实况：scorer.py
   追加一行注释→exit 3 指名 `judge_source:scorer`，还原→golden 1.0 @ #17efa751。
+- **Codex R3（2026-07-12，审 4121785）：CHANGES_REQUIRED**——1P1+2P2，加轮已用尽
+  →二次交用户裁决，**用户裁决=R4 修复批修完直接 push（不再走第五轮审）**。三条全
+  grounded 坐实（P1 本机探针实证 `-B` 下裸 .pyc 照常 import 输出 poisoned）：
+  ①P1 缓存排除造盲区——修复：init 拒锚存量字节码+manifest 对缓存可见（见 §8）；
+  ②P2 判卷文件键不被强制（剥离 checker.py/held_out 键→verify 清白照判）——修复：
+  期望键全集重推强制齐全，verify 先行保诊断精度；③P2 load 通用锚漏
+  judge_source:scorer——修复：入 REQUIRED_UNIVERSAL_ANCHORS（五条）。
+  witness：tests/test_codex_r3_witnesses.py（9 条）+ R2 文件两处语义更新。
+  真 CLI 实况：走私 .pyc 入 reference/→exit 3 指名 `__file_manifest__`；存量
+  helper.pyc→init 结构化拒锚点名路径；golden 1.0 @ 终尺 #6942c968。
+  治理留痕：四轮审同一主题（锚完整性）逐层收紧且条条为真；R3 三条的攻击面均需
+  case 目录/契约文件写权限（与重锚同权限级），边际安全价值递减是二次裁决
+  「修完即 push」的依据，如实记录。

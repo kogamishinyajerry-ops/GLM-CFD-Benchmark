@@ -456,17 +456,20 @@ def score_submission(
     if case.id != contract.case_id:
         raise ValueError(f"case '{case.id}' does not match contract case '{contract.case_id}'")
 
-    # An anchor that is absent cannot drift (verify_frozen only re-checks
-    # keys that exist), so a contract stripped of a mandatory anchor would
-    # otherwise verify clean (Codex R2 P2). An incomplete ruler is treated
-    # exactly like a drifted one: refuse to score, exit 3, zero ledger.
-    missing = missing_required_anchors(contract, case.domain)
-    if len(missing) > 0:
-        raise FrozenDriftError([f"{key} (mandatory anchor missing)" for key in missing])
-
+    # verify_frozen runs first: it names drifted content and vanished
+    # frozen files by their precise key. But an anchor that is absent
+    # cannot drift (only existing keys are re-checked), so a contract
+    # stripped of a mandatory anchor would verify clean (Codex R2 P2) —
+    # the second check re-derives the full expected key set from the case
+    # (Codex R3 P2: judged files and held-out keys included, not just the
+    # special keys) and refuses an incomplete ruler exactly like a drifted
+    # one: exit 3, zero ledger.
     drifted = verify_frozen(contract, case_dir)
     if len(drifted) > 0:
         raise FrozenDriftError(drifted)
+    missing = missing_required_anchors(contract, case, case_dir)
+    if len(missing) > 0:
+        raise FrozenDriftError([f"{key} (mandatory anchor missing)" for key in missing])
 
     if case.domain == "coding":
         from cfdb.agentbench.sandbox_scorer import score_coding

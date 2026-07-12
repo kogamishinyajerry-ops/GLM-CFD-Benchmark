@@ -115,11 +115,12 @@ class TestMandatoryAnchorEnforcement:
             load_contract(path)
 
     def test_missing_required_anchors_per_domain(self, tmp_path: Path) -> None:
-        registry, _ = _tmp_case_registry(tmp_path, "coding_tasks", "smoke_add_two")
+        registry, case_dir = _tmp_case_registry(tmp_path, "coding_tasks", "smoke_add_two")
         contract = init_contract("smoke_add_two", registry)
-        assert missing_required_anchors(contract, "coding") == []
+        case = registry.load("smoke_add_two")
+        assert missing_required_anchors(contract, case, case_dir) == []
         del contract.frozen[f"{JUDGE_SOURCE_PREFIX}sandbox_scorer"]
-        assert missing_required_anchors(contract, "coding") == [
+        assert missing_required_anchors(contract, case, case_dir) == [
             f"{JUDGE_SOURCE_PREFIX}sandbox_scorer"
         ]
 
@@ -181,16 +182,20 @@ class TestBytecodeCacheImmunity:
         assert not (case_dir / "reference" / "__pycache__").exists()
         assert verify_frozen(contract, case_dir) == []
 
-    def test_preexisting_cache_never_anchored(self, tmp_path: Path) -> None:
+    def test_preexisting_cache_refuses_anchor(self, tmp_path: Path) -> None:
+        # R3 semantics (supersedes the R2 exclusion approach): bytecode is
+        # loadable judging material even under -B, so init refuses to bless
+        # a ruler over it instead of hiding it from the anchors.
         registry, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
         pycache = case_dir / "reference" / "__pycache__"
         pycache.mkdir()
         (pycache / "stale.cpython-312.pyc").write_bytes(b"\x00\x01")
         registry.clear_cache()
-        contract = init_contract("csv_field_extract", registry)
-        assert not any("__pycache__" in key for key in contract.frozen)
-        # And its later disappearance is a non-event, not a drift.
+        with pytest.raises(ValueError, match="importable bytecode"):
+            init_contract("csv_field_extract", registry)
+        # Deleting the cache unblocks anchoring.
         shutil.rmtree(pycache)
+        contract = init_contract("csv_field_extract", registry)
         assert verify_frozen(contract, case_dir) == []
 
     def test_real_file_addition_still_drifts(self, tmp_path: Path) -> None:

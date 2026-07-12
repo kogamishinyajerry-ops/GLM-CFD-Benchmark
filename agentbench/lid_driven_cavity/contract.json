@@ -8,7 +8,7 @@
     "__weights__": "8126f570b7b068d917a534fa06679059ccd303da6e5f297c9bcbef278db36cb5",
     "__validity_gates__": "7503fa9b41d4111273ae43d63328b95b393d0f9587ee6bbcef6ad4d25015adff",
     "__file_manifest__": "bf0450407cff3d3ff93e4f9f3c4ad3d2f22016dd93bb300cfa77d38bf481b06c",
-    "judge_source:scorer": "3970f0154d639c9f7b1e2c704f9a3bb507cb0d71f92588a58958cc60e921c6b9"
+    "judge_source:scorer": "bb20354e4e566ab21597a6a03e3ec25e3d6c25628b67cf86a0549fa373d37107"
   },
   "weights": {
     "qoi_error": -1.0

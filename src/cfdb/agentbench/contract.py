@@ -97,10 +97,15 @@ REQUIRED_UNIVERSAL_ANCHORS: tuple[str, ...] = (
     WEIGHTS_KEY,
     VALIDITY_GATES_KEY,
     FILE_MANIFEST_KEY,
+    f"{JUDGE_SOURCE_PREFIX}scorer",
 )
 """Anchors every v2 contract must carry regardless of domain (Codex R2 P2):
 the version label alone is not proof of migration — a payload claiming v2
-without these anchors is refused at load."""
+without these anchors is refused at load. ``judge_source:scorer`` is
+universal since the R3 batch anchored the shared scorer for every domain,
+so load-time consumers (showcase included) must require it too (Codex R3
+P2) — otherwise a contract the scoring path would refuse still displays as
+INTACT."""
 
 DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0}
 """Default public scoring weights (negative = lower metric is better).
@@ -259,12 +264,33 @@ def _judge_source_digest(shortname: str) -> str:
 def _is_cache_artifact(path: Path) -> bool:
     """True for Python bytecode-cache artifacts (``__pycache__``/``*.pyc``).
 
-    These are interpreter side effects, not judging material: a checker
-    legitimately importing a sibling helper module must never drift its own
-    ruler via a generated cache file (Codex R2 P2), and a preexisting cache
-    must never be anchored.
+    Bytecode is executable judging material Python will happily *load* even
+    under ``-B`` (which only suppresses *writing*): a bare ``helper.pyc``
+    next to a checker is importable, and a forged ``__pycache__`` entry can
+    shadow its source (Codex R3 P1). Caches are therefore refused at anchor
+    time (:func:`init_contract`) and fully visible to the manifest — never
+    silently excluded, which is what the R2 batch got wrong.
     """
     return "__pycache__" in path.parts or path.suffix == ".pyc"
+
+
+def _cache_artifacts_in_judged_trees(case_dir: Path) -> list[str]:
+    """Bytecode-cache artifacts currently present under the judged trees.
+
+    Args:
+        case_dir: Directory containing ``case.yaml``.
+
+    Returns:
+        Sorted case-dir-relative POSIX paths of cache artifacts.
+    """
+    found: list[str] = []
+    for tree in _MANIFEST_TREES:
+        tree_dir = case_dir / tree
+        if tree_dir.is_dir():
+            for path in tree_dir.rglob("*"):
+                if path.is_file() and _is_cache_artifact(path):
+                    found.append(path.relative_to(case_dir).as_posix())
+    return sorted(found)
 
 
 def _tree_manifest(case_dir: Path) -> list[str]:
@@ -274,7 +300,9 @@ def _tree_manifest(case_dir: Path) -> list[str]:
     recursively, returning case-dir-relative POSIX paths. Used identically
     at anchor time and at verify time, so any file added to, removed from,
     or renamed within a judged tree changes the manifest digest. Bytecode
-    caches are excluded (see :func:`_is_cache_artifact`).
+    caches are deliberately INCLUDED (Codex R3 P1): init refuses to anchor
+    while any exist and ``-B`` keeps legitimate runs from generating them,
+    so one appearing later is real drift and must bite.
 
     Args:
         case_dir: Directory containing ``case.yaml``.
@@ -287,7 +315,7 @@ def _tree_manifest(case_dir: Path) -> list[str]:
         tree_dir = case_dir / tree
         if tree_dir.is_dir():
             for path in tree_dir.rglob("*"):
-                if path.is_file() and not _is_cache_artifact(path):
+                if path.is_file():
                     paths.append(path.relative_to(case_dir).as_posix())
     return sorted(paths)
 
@@ -326,13 +354,13 @@ def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
     reference_dir = case_dir / "reference"
     if reference_dir.is_dir():
         for path in sorted(reference_dir.rglob("*")):
-            if path.is_file() and not _is_cache_artifact(path):
+            if path.is_file():
                 rel_paths.add(path.relative_to(case_dir).as_posix())
 
     visible_dir = case_dir / "visible"
     if visible_dir.is_dir():
         for path in sorted(visible_dir.rglob("*")):
-            if path.is_file() and not _is_cache_artifact(path):
+            if path.is_file():
                 rel_paths.add(path.relative_to(case_dir).as_posix())
 
     if case.reference is not None:
@@ -398,9 +426,22 @@ def init_contract(
     Raises:
         KeyError: If ``case_id`` is unknown to the registry.
         FileNotFoundError: If a file that must be frozen is missing.
+        ValueError: If a bytecode-cache artifact exists in a judged tree
+            (Codex R3 P1): bytecode is executable judging material that
+            Python loads even under ``-B``, so a ruler is never anchored
+            over it — delete the cache and re-run init.
     """
     case = registry.load(case_id)
     case_dir = registry.get_case_dir(case_id)
+
+    cache_artifacts = _cache_artifacts_in_judged_trees(case_dir)
+    if len(cache_artifacts) > 0:
+        raise ValueError(
+            f"refusing to anchor '{case_id}': importable bytecode present in "
+            f"judged trees: {cache_artifacts} — python -B keeps legitimate "
+            "runs cache-free, so delete these files and re-run init"
+        )
+
     domain_weights = DOMAIN_DEFAULT_WEIGHTS.get(case.domain, DEFAULT_WEIGHTS)
     domain_gates = DOMAIN_DEFAULT_VALIDITY_GATES.get(case.domain, DEFAULT_VALIDITY_GATES)
     final_weights = dict(domain_weights if weights is None else weights)
@@ -468,21 +509,43 @@ def required_domain_anchors(domain: str) -> tuple[str, ...]:
     return tuple(keys)
 
 
-def missing_required_anchors(contract: ScoringContract, domain: str) -> list[str]:
-    """Mandatory anchors absent from a contract's frozen map (Codex R2 P2).
+def missing_required_anchors(
+    contract: ScoringContract, case: CaseSpec, case_dir: Path
+) -> list[str]:
+    """Mandatory anchors absent from a contract's frozen map.
 
     ``verify_frozen`` can only re-check keys that exist; a contract stripped
     of an anchor would otherwise verify clean. The scoring path refuses to
     score when this is non-empty (an incomplete ruler is a drifted ruler).
 
+    The required set is the full expected key set (Codex R3 P2), re-derived
+    from the case exactly as :func:`init_contract` derives it: the universal
+    special keys, the domain judge/normalize anchors, every judged file
+    (``case.yaml``, ``reference/``, ``visible/``, declared reference files),
+    and every declared held-out key. A stripped ``reference/checker.py`` or
+    ``held_out:*`` entry is therefore named explicitly, never silently
+    tolerated. A file added to a judged tree after anchoring also lands
+    here (its key is expected but not frozen) — that is the same exit-3
+    ruler-drift family the manifest catches, just named earlier.
+
     Args:
         contract: Contract to inspect.
-        domain: Domain of the case being scored.
+        case: Case being scored (drives the expected key set).
+        case_dir: Case directory (drives file enumeration).
 
     Returns:
-        Sorted missing mandatory keys (universal + domain-specific).
+        Sorted missing mandatory keys. If the expected set cannot even be
+        enumerated (a declared reference file vanished), the enumeration
+        failure itself is returned as the missing entry — fail-closed,
+        never a silent downgrade to the special-keys-only check.
     """
-    required = tuple(REQUIRED_UNIVERSAL_ANCHORS) + required_domain_anchors(domain)
+    required: set[str] = set(REQUIRED_UNIVERSAL_ANCHORS)
+    required.update(required_domain_anchors(case.domain))
+    try:
+        required.update(_collect_frozen_files(case, case_dir))
+        required.update(_collect_held_out_files(case, case_dir).keys())
+    except FileNotFoundError as e:
+        return [f"<expected-anchor enumeration failed: {e}>"]
     return sorted(key for key in required if key not in contract.frozen)
 
 

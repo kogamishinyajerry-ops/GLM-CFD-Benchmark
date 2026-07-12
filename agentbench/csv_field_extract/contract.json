@@ -11,7 +11,7 @@
     "__validity_gates__": "1a2479196ccfe68923532a90b45fd7f4b0d1cad5147fcce06e1759a7a60cda1d",
     "__file_manifest__": "3c447d614507ccc52d7b034c264c30936ac53421c170abf2ca13e5d1c2df99e1",
     "judge_source:checker_scorer": "166dda20bb0cc3c852151a58b39b35f8a32730c0c43a7c52c7c1341cf309e9d9",
-    "judge_source:scorer": "3970f0154d639c9f7b1e2c704f9a3bb507cb0d71f92588a58958cc60e921c6b9",
+    "judge_source:scorer": "bb20354e4e566ab21597a6a03e3ec25e3d6c25628b67cf86a0549fa373d37107",
     "__normalize_source__": "9032c8bd9eba04ff674a40b86384c08356a61bc5e83a67ef229624cf1938dec7"
   },
   "weights": {

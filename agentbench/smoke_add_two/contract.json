@@ -12,7 +12,7 @@
     "__validity_gates__": "a01060fa26bbaf79ad2dcbf55327e92627d1bfae7a393fa96885ff5964ca1827",
     "__file_manifest__": "69026e6a4b7aecccbc13ae76702862ae05226ae8a6891a99b3a4346f86d18b31",
     "judge_source:sandbox_scorer": "59f5847c5105ff450f25887de682a6ebc5ee23738ca0f6b7e31e55b49e32bfbb",
-    "judge_source:scorer": "3970f0154d639c9f7b1e2c704f9a3bb507cb0d71f92588a58958cc60e921c6b9"
+    "judge_source:scorer": "bb20354e4e566ab21597a6a03e3ec25e3d6c25628b67cf86a0549fa373d37107"
   },
   "weights": {
     "pass_rate": 1.0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import math
@@ -139,10 +140,7 @@ class MetricsEngine:
                         )
                 else:
                     missing_count += 1
-                    notes.append(
-                        "missing absolute tolerance for zero-reference "
-                        f"QoI '{qoi_name}'"
-                    )
+                    notes.append(f"missing absolute tolerance for zero-reference QoI '{qoi_name}'")
                 continue
             errors[qoi_name] = abs(computed_val - ref_val) / abs(ref_val)
 
@@ -151,11 +149,7 @@ class MetricsEngine:
         for qoi_name, err in errors.items():
             if qoi_name in tolerances and err > tolerances[qoi_name]:
                 failed_qoi.add(qoi_name)
-        qoi_pass = (
-            missing_count == 0
-            and non_finite_count == 0
-            and len(failed_qoi) == 0
-        )
+        qoi_pass = missing_count == 0 and non_finite_count == 0 and len(failed_qoi) == 0
 
         # P4-G hole 2: QoIs with a computed error but no configured tolerance
         # do not participate in the gate. Keep that (backward compatible) but
@@ -212,10 +206,7 @@ class MetricsEngine:
                 if curve_name not in raw_l2:
                     # compute_curve_l2 itself skips length/shape mismatches.
                     curve_missing_count += 1
-                    notes.append(
-                        f"curve '{curve_name}' skipped: reference/computed "
-                        "shape mismatch"
-                    )
+                    notes.append(f"curve '{curve_name}' skipped: reference/computed shape mismatch")
                     continue
                 l2 = raw_l2[curve_name]
                 if math.isfinite(l2) is False:
@@ -229,13 +220,11 @@ class MetricsEngine:
                     if l2 > tol:
                         curves_failed.append(curve_name)
                         notes.append(
-                            f"curve '{curve_name}' failed L2 tolerance: "
-                            f"{l2:.6g} > {tol:.6g}"
+                            f"curve '{curve_name}' failed L2 tolerance: {l2:.6g} > {tol:.6g}"
                         )
                     else:
                         notes.append(
-                            f"curve '{curve_name}' passed L2 tolerance: "
-                            f"{l2:.6g} <= {tol:.6g}"
+                            f"curve '{curve_name}' passed L2 tolerance: {l2:.6g} <= {tol:.6g}"
                         )
                 else:
                     ungated_curves.append(curve_name)
@@ -270,9 +259,7 @@ class MetricsEngine:
         # curve_pass is trivially True and the branch below reduces
         # byte-for-byte to the pre-v5.0 logic -- zero behavior change.
         curve_pass = (
-            curve_missing_count == 0
-            and curve_non_finite_count == 0
-            and len(curves_failed) == 0
+            curve_missing_count == 0 and curve_non_finite_count == 0 and len(curves_failed) == 0
         )
         if qoi_pass and curve_pass:
             status = "pass"
@@ -347,9 +334,7 @@ class MetricsEngine:
                     if isinstance(parsed, dict):
                         ref_qoi = {k: float(v) for k, v in parsed.items()}
                 except (json.JSONDecodeError, ValueError, TypeError, OSError) as e:
-                    logger.warning(
-                        "failed to load reference QoI from %s: %s", ref_path, e
-                    )
+                    logger.warning("failed to load reference QoI from %s: %s", ref_path, e)
 
         return ref_qoi
 
@@ -388,15 +373,24 @@ class MetricsEngine:
         return result
 
     def _load_reference_curve(self, path: Path) -> list[tuple[float, float]] | None:
-        """Load curve data (a JSON list of [x, y] pairs) from a reference file.
+        """Load curve data from a reference file.
+
+        Two formats (R7 backlog -- NACA cp reference mapping): a ``.csv``
+        file (two numeric columns, an optional single header row like
+        ``x/c,Cp``) or, for any other extension, a JSON list of [x, y]
+        pairs. Validation is strict either way: one malformed row rejects
+        the WHOLE file (None -> upstream 'missing reference curve' note);
+        loading is never made lenient just to get a curve on the board.
 
         Args:
-            path: Path to the JSON file.
+            path: Path to the reference file.
 
         Returns:
             List of (x, y) points, or None if the file is missing, unreadable,
             or malformed (never raises -- callers treat None as 'not available').
         """
+        if path.suffix.lower() == ".csv":
+            return self._load_csv_curve(path)
         try:
             raw = path.read_text(encoding="utf-8")
             parsed = json.loads(raw)
@@ -411,6 +405,61 @@ class MetricsEngine:
         ) as e:
             logger.warning("failed to load reference curve from %s: %s", path, e)
         return None
+
+    def _load_csv_curve(self, path: Path) -> list[tuple[float, float]] | None:
+        """Load a two-column CSV reference curve (strict; see caller).
+
+        The first row may be a non-numeric header (skipped). Every other
+        row must be exactly two finite floats; any violation rejects the
+        whole file with a logged reason.
+
+        Args:
+            path: Path to the CSV file.
+
+        Returns:
+            List of (x, y) points, or None when the file is unusable.
+        """
+        try:
+            with path.open(newline="", encoding="utf-8") as f:
+                rows = [row for row in csv.reader(f) if len(row) > 0]
+        except OSError as e:
+            logger.warning("failed to read reference curve CSV %s: %s", path, e)
+            return None
+        if len(rows) == 0:
+            logger.warning("reference curve CSV %s is empty", path)
+            return None
+
+        def _parse(row: list[str]) -> tuple[float, float] | None:
+            if len(row) != 2:
+                return None
+            try:
+                x, y = float(row[0]), float(row[1])
+            except ValueError:
+                return None
+            if math.isfinite(x) is False or math.isfinite(y) is False:
+                return None
+            return (x, y)
+
+        first = _parse(rows[0])
+        data_rows = rows if first is not None else rows[1:]
+        if len(data_rows) == 0:
+            logger.warning("reference curve CSV %s has a header but no data rows", path)
+            return None
+        points: list[tuple[float, float]] = []
+        for offset, row in enumerate(data_rows):
+            lineno = offset + (1 if first is not None else 2)
+            point = _parse(row)
+            if point is None:
+                logger.warning(
+                    "reference curve CSV %s line %d is not two finite floats: %r "
+                    "(whole file rejected)",
+                    path,
+                    lineno,
+                    row,
+                )
+                return None
+            points.append(point)
+        return points
 
     def _load_reference_file(self, path: Path) -> dict[str, float]:
         """Load QoI values from a JSON reference file.

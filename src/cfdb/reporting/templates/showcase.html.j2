@@ -204,7 +204,7 @@ footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
   {% if agentbench.contracts %}
   <table>
     <thead><tr><th>Case</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th>
-      <th>打分事件</th><th>唯一 submission</th><th>valid</th><th>INVALID</th><th>best score</th><th>备注</th></tr></thead>
+      <th>打分事件</th><th>唯一 attempt（按内容）</th><th>valid</th><th>INVALID</th><th>best score</th><th>备注</th></tr></thead>
     <tbody>
     {% for c in agentbench.contracts %}
     <tr>
@@ -222,6 +222,7 @@ footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
         {% if c.ledger_error %}<div class="risk">{{ c.ledger_error }}</div>{% endif %}
         {% for d in c.drifted %}<div class="risk">drift: {{ d }}</div>{% endfor %}
         {% if c.n_stale_ruler %}<div class="faint" data-stale-ruler="{{ c.n_stale_ruler }}">{{ c.n_stale_ruler }} 行属旧/未知尺子 · 不入榜（like-with-like）</div>{% endif %}
+        {% if c.n_no_identity %}<div class="faint" data-no-identity="{{ c.n_no_identity }}">{{ c.n_no_identity }} 行无内容身份（legacy）· 不计入唯一 attempt</div>{% endif %}
       </td>
     </tr>
     {% endfor %}

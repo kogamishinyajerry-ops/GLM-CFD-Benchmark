@@ -216,7 +216,8 @@ cases/coding_tasks/<id>/
 - POSIX rlimit 进程级沙箱（虚假隔离感）；Windows 沙箱支持（未侦察）；
 - 轨迹级 grounding 判定；canary/时间切分防污染（启发式证据不可做硬 gate，
   只可做画像标注——业界实证其本质是概率信号）；
-- hash-chain 账本（v4 backlog 继承）；NACA y+/GCI 网格研究（需长时真跑，另立批次）；
+- ~~hash-chain 账本~~（R7 批已落地：行链+verify-ledger 命令+append 拒绝断链账本，
+  诚实边界=整链重写/尾截断需 git 外部锚，见 §8）；NACA y+/GCI 网格研究（需长时真跑，另立批次）；
 - registry/audit 双扫描器合并重构（本波只统一可见性语义，不合代码）；
 - taxonomy/gates 的 if/elif 链插件化重构（观察点，扩两域后再评估）；
 - checker 进沙箱执行（v5.0 信任模型=人签受信材料，见 §4）；
@@ -232,8 +233,9 @@ cases/coding_tasks/<id>/
   v5.0 新域 TrustProfile 的 completeness 维度**置 None（数据不足语义）**并注明
   「新域交付物形状未定义」，宁缺毋滥；域专属 completeness 定义进 backlog。
 - 无文件锁现状（write_text 直写）在多域并行跑时的竞写风险：v5.0 沿用路径隔离约定
-  （各域独立 --baselines/--library/--agentbench-dir），原子写（tmp+os.replace）进 backlog；
-  文档处注明。
+  （各域独立 --baselines/--library/--agentbench-dir）。**R7 批已落地 save_contract
+  原子写（同目录 tmp+os.replace，失败重锚旧尺原样保留）**；账本 append 为单
+  write 调用语义；其余写路径的原子化仍按需评估。
 - cli.py:550/web routes.py:520 的 'validation' 路径字面量是 NACA 专属巧合非通用机制
   （文件存在性 gate 保护，不误伤新域）——在此显式记录，防止误以为 validation 类目
   自动带极曲线能力。
@@ -247,14 +249,19 @@ cases/coding_tasks/<id>/
   进程隔离」做了对抗分析后降级撤销**：测试必须 import 提交代码，因此任何承载单测
   的进程同样被敌意代码占据、其单测报告片段同样可被进程内伪造——逐测试隔离只缩小
   单点爆炸半径，不改变「每份报告都出自被占领进程」的本质，实现它而宣称加固 =
-  安全剧场（假绿）。诚实的强化选项重述为：①canary 哨兵测试（判卷时注入必败
-  哨兵，空白伪造「全过」必被咬——只抬成本不成边界，且需重排 coding 测试床，另立
-  批次）；②受信重执行 oracle（judge 持外部预期输出复跑对账，改变任务形态）。
-  残差维持声明，README 验证边界不变。
-- **NACA cp_curve/CSV 参考映射递延（Codex R0 P2）**：naca0012 的 curve 参考键名
-  （cp_curve）与 outputs.curves 名（cp_distribution）不一致且为 CSV 格式，engine 的
-  curve 判定当前对其保持 fail-closed incomplete（adapters 尚未产 curves 数据，实际 inert）；
-  键对齐 + CSV 参考装载进 backlog，绝不为「能跑」而放松装载校验。
+  安全剧场（假绿）。诚实的强化选项重述为：①canary 哨兵测试（**R7 批已落地**：
+  每次判卷生成 secrets 随机命名哨兵测试，judge 专属 ro 挂载注入（提交侧不可删改、
+  不碰冻结 case 树），junitxml 按 testcase 名核验「恰一条且通过」后从计数中扣除——
+  只知公开 expected_test_count 的空白伪造报告必被咬。**定位=成本抬升器非边界**：
+  进程内敌意代码若观测活体 pytest 会话可读到哨兵名并绕伪——该残差维持声明）；
+  ②受信重执行 oracle（judge 持外部预期输出复跑对账，改变任务形态，仍在 backlog）。
+  同进程判卷颠覆残差本身维持声明，README 验证边界不变。
+- **NACA cp_curve/CSV 参考映射（Codex R0 P2 递延项，R7 批已落地）**：四个 naca0012
+  case.yaml 参考键 cp_curve→cp_distribution 对齐 outputs.curves；engine 增严格 CSV
+  装载（csv 标准库，首行可为非数值表头，其余行必须恰两列有限浮点，**一行坏整文件拒**，
+  绝不为「能跑」放松校验，Ladson 真数据实载）。curve 判定对 adapters 侧仍 inert
+  （无 adapter 产 curves 数据），adapter 侧采集仍在 backlog——参考侧已就绪，
+  adapter 落地即自动激活 gate。
 - **判卷政策已抽专职锚定模块（R5 批，backlog 项收口，锚面终态）**：共享政策全部
   迁入 `judge_policy.py`（QoI/wall-time 装载语义、held-out 优先、qoi_error 重算、
   gate 评估、agentic verdict→gates/score 组装、分数组装），`judge_source:judge_policy`
@@ -415,3 +422,18 @@ cases/coding_tasks/<id>/
   修复：转结构化 ValueError（CLI [FAIL] exit 1）。
   见证 7 条+四点 tamper 逐一翻红实证；实况：账本入树→[FAIL] exit 1 全文
   点名两路径、symlink→[FAIL] exit 1、golden 重评身份不变。1178 绿。
+- **R7 批（用户指令「继续优化，完成剩余优化建议」，backlog 五项收口）**：
+  ①save_contract 原子写（同目录 tmp+os.replace，失败重锚旧尺字节原样）；
+  ②hash-chain 账本（行 `chain`=sha256(前链+本行去链字段规范 JSON)，genesis=64 零；
+  legacy 无链行仅容忍为文件前缀且披露；链起后无链行/改行/中删皆按行号点名；
+  append 先核链、断链拒绝续写；CLI `verify-ledger` + passk 前置核链；
+  诚实边界=整链重写与尾截断文件内不可测，git 提交账本为外部锚——文档声明）；
+  ③showcase 唯一提交改按 attempt_id 内容身份去重，legacy 无身份行单列披露；
+  ④NACA cp 参考键对齐+严格 CSV 装载（一行坏整文件拒，Ladson 真数据实载）；
+  ⑤canary 哨兵落地（原「另立批次」项）：每卷 secrets 随机命名哨兵测试经
+  judge 专属 ro 挂载注入（不碰冻结树），junitxml 按名核验恰一条且通过后
+  从计数扣除——空白伪造报告必被咬；定位=成本抬升器非边界，进程内残差维持声明。
+  见证 25 条（test_backlog_r7_batch.py）+六点 tamper 翻红实证；实况：判卷源改动
+  旧尺 exit 3 点名 judge_source:sandbox_scorer→重锚 #3cb313ec、golden 真容器
+  canary 注入下 1.0、真账本 21 legacy 前缀披露+链上行篡改 verify/passk 双拒
+  点名 line 22、showcase 渲出 data-no-identity。1203 绿。

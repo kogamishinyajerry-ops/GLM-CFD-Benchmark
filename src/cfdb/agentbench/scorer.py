@@ -34,11 +34,13 @@ anchor-checker cannot anchor itself without regress).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -118,6 +120,18 @@ class SubmissionScore(BaseModel):
     ``/b/run`` collide; one candidate copied under fresh names multiplies).
     pass@k groups samples by this content identity; None marks legacy rows,
     which are never counted as samples (fail-closed)."""
+
+    chain: str | None = None
+    """Hash-chain link (R7 backlog): sha256 over the previous row's chain
+    (genesis = 64 zeros for the first chained row) and this row's canonical
+    JSON payload (every field except ``chain`` itself, sorted keys, compact
+    separators). Stamped by :func:`append_ledger`; None marks rows ledgered
+    before chaining existed, tolerated only as a contiguous file prefix
+    (see :func:`verify_ledger_chain`). Honest boundary: the chain makes
+    in-file edits, insertions and mid-file deletions tamper-evident; a
+    writer with file access can rewrite the whole chain consistently, and
+    pure tail truncation leaves a valid shorter chain — the committed
+    ledger in git is the external trust root for those."""
 
 
 def score_submission(
@@ -296,13 +310,127 @@ def score_submission(
     return result
 
 
+LEDGER_CHAIN_GENESIS = "0" * 64
+"""Chain seed for the first chained row of a ledger file."""
+
+
+class LedgerChainReport(NamedTuple):
+    """Result of :func:`verify_ledger_chain`."""
+
+    unchained_prefix: int
+    """Rows without a chain field before the chain starts (pre-R7 legacy)."""
+
+    n_chained: int
+    """Rows carrying a chain link."""
+
+    head: str | None
+    """The last stored chain link (None when no row is chained yet) —
+    compare against an externally recorded head (git) to detect tail
+    truncation, which the file alone cannot reveal."""
+
+    problems: list[str]
+    """Chain violations, each naming its 1-based ledger line. Empty for a
+    structurally intact ledger."""
+
+
+def _chain_hash(prev_chain: str, row: dict) -> str:
+    """Chain link for one ledger row: sha256(prev + canonical payload).
+
+    The payload is the row's JSON object minus the ``chain`` key, dumped
+    with sorted keys and compact separators — both the appender and the
+    verifier pass values through ``json.loads``/``json.dumps``, so float
+    representation converges and the form is stable across model versions
+    (verification recomputes from the STORED line, never by re-serializing
+    through the current pydantic model).
+    """
+    payload = {k: v for k, v in row.items() if k != "chain"}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256((prev_chain + "\n" + canonical).encode("utf-8")).hexdigest()
+
+
+def verify_ledger_chain(ledger_path: Path) -> LedgerChainReport:
+    """Verify the hash chain of a JSONL ledger file.
+
+    Rules: rows without a chain are tolerated only as a contiguous prefix
+    (they predate chaining, an honestly disclosed legacy population, like
+    ``attempt_id is None`` rows in pass@k). Once a chained row appears,
+    every later row must be chained and link from the previous chained
+    row — an in-file edit, insertion, mid-file deletion, or unchained
+    forgery therefore breaks the chain at a named line.
+
+    Honest boundary (also on :attr:`SubmissionScore.chain`): full-chain
+    rewrites and pure tail truncation are undetectable from the file
+    alone; the committed ledger in git is the external trust root. This
+    check is tamper-evidence between commits, not cryptographic authority.
+
+    Args:
+        ledger_path: Ledger file (missing file = empty, clean report).
+
+    Returns:
+        A :class:`LedgerChainReport`.
+    """
+    if not ledger_path.is_file():
+        return LedgerChainReport(0, 0, None, [])
+    problems: list[str] = []
+    prev = LEDGER_CHAIN_GENESIS
+    head: str | None = None
+    unchained_prefix = 0
+    n_chained = 0
+    for lineno, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if line.strip() == "":
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            problems.append(f"line {lineno}: not valid JSON")
+            continue
+        if not isinstance(row, dict):
+            problems.append(f"line {lineno}: not a JSON object")
+            continue
+        chain = row.get("chain")
+        if chain is None:
+            if head is not None:
+                problems.append(f"line {lineno}: unchained row after the chain started")
+            else:
+                unchained_prefix += 1
+            continue
+        expected = _chain_hash(prev, row)
+        if chain != expected:
+            problems.append(
+                f"line {lineno}: chain mismatch (stored {chain[:16]}, expected {expected[:16]})"
+            )
+        # Continue from the STORED link so one tampered row is one named
+        # problem instead of cascading over every later (honest) row.
+        prev = chain
+        head = chain
+        n_chained += 1
+    return LedgerChainReport(unchained_prefix, n_chained, head, problems)
+
+
 def append_ledger(ledger_path: Path, score: SubmissionScore) -> None:
-    """Append one score to the JSONL ledger (append-only, never rewrites).
+    """Append one hash-chained score to the JSONL ledger (append-only).
+
+    The row's ``chain`` link is computed here (R7 backlog): sha256 over the
+    previous chained row's link (genesis for the first) and this row's
+    canonical payload. Appending to a ledger whose existing chain is broken
+    is refused — fresh rows must never bury tampering.
 
     Args:
         ledger_path: Ledger file (parent directories are created).
-        score: Score to append.
+        score: Score to append (its ``chain`` field is stamped in place).
+
+    Raises:
+        ValueError: If the existing ledger's chain is broken.
     """
+    report = verify_ledger_chain(ledger_path)
+    if len(report.problems) > 0:
+        raise ValueError(
+            f"ledger chain broken in {ledger_path} — refusing to append: "
+            + "; ".join(report.problems)
+        )
+    prev = report.head if report.head is not None else LEDGER_CHAIN_GENESIS
+    row = json.loads(score.model_dump_json(exclude={"chain"}))
+    score.chain = _chain_hash(prev, row)
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with ledger_path.open("a", encoding="utf-8") as f:
         f.write(score.model_dump_json() + "\n")

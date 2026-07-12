@@ -1450,6 +1450,35 @@ def agent_eval_ledger_cmd(
         )
 
 
+@agent_eval_app.command("verify-ledger")
+def agent_eval_verify_ledger_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Case ID whose ledger to verify.")],
+    agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
+) -> None:
+    """Verify the ledger's hash chain (tamper evidence between commits).
+
+    Rows ledgered before chaining existed are tolerated only as a legacy
+    prefix and disclosed. Exits 1 on any chain violation. Honest boundary:
+    a consistent full-chain rewrite or a pure tail truncation is not
+    detectable from the file alone — compare the printed chain head
+    against the committed ledger in git for that.
+    """
+    from cfdb.agentbench.scorer import verify_ledger_chain
+
+    ledger_path = agentbench_dir / case / "ledger.jsonl"
+    report = verify_ledger_chain(ledger_path)
+    typer.echo(f"Ledger: {ledger_path}")
+    typer.echo(f"  unchained legacy prefix: {report.unchained_prefix} row(s)")
+    typer.echo(f"  chained rows:            {report.n_chained}")
+    typer.echo(f"  chain head:              {report.head or '-'}")
+    if len(report.problems) > 0:
+        typer.echo("[FAIL] chain violations:", err=True)
+        for problem in report.problems:
+            typer.echo(f"  {problem}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("[OK] chain intact (legacy prefix disclosed above)")
+
+
 @agent_eval_app.command("passk")
 def agent_eval_passk_cmd(
     case: Annotated[str, typer.Option("--case", "-c", help="Case ID whose ledger to analyze.")],
@@ -1523,6 +1552,17 @@ def agent_eval_passk_cmd(
     except ValueError as e:
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
+
+    # A structurally tampered ledger must not feed the metric (R7): the
+    # chain names the violated line; analytics over it would be fiction.
+    from cfdb.agentbench.scorer import verify_ledger_chain
+
+    chain_report = verify_ledger_chain(ledger_path)
+    if len(chain_report.problems) > 0:
+        typer.echo("[FAIL] Ledger hash chain broken — pass@k refused:", err=True)
+        for problem in chain_report.problems:
+            typer.echo(f"  {problem}", err=True)
+        raise typer.Exit(code=1)
 
     try:
         result = pass_at_k(

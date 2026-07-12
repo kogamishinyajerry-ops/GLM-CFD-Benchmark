@@ -41,13 +41,27 @@ from cfdb.registry import CaseRegistry
 CASE_ID = "coding_case"
 
 
-def _junit_xml(total: int, failures: int = 0, errors: int = 0, skipped: int = 0) -> str:
-    """Build a minimal well-formed junitxml report."""
+def _junit_xml(
+    total: int,
+    failures: int = 0,
+    errors: int = 0,
+    skipped: int = 0,
+    extra_case_names: list[str] | None = None,
+) -> str:
+    """Build a minimal well-formed junitxml report.
+
+    ``extra_case_names`` appends named passing testcases (e.g. the R7
+    canary sentinel) on top of ``total`` generic ones; the suite's
+    ``tests`` attribute counts both.
+    """
+    extras = extra_case_names or []
     cases = "".join(f'<testcase classname="t" name="t{i}"/>' for i in range(total))
+    cases += "".join(f'<testcase classname="t" name="{name}"/>' for name in extras)
+    suite_total = total + len(extras)
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         "<testsuites>"
-        f'<testsuite name="pytest" tests="{total}" failures="{failures}" '
+        f'<testsuite name="pytest" tests="{suite_total}" failures="{failures}" '
         f'errors="{errors}" skipped="{skipped}">'
         f"{cases}"
         "</testsuite>"
@@ -273,9 +287,7 @@ class TestTamperWitnesses:
         # The tampered hidden_tests were never even executed.
         assert stub.calls == []
 
-    def test_witness_1b_post_run_reverify_catches_race_tamper(
-        self, bench, tmp_path: Path
-    ) -> None:
+    def test_witness_1b_post_run_reverify_catches_race_tamper(self, bench, tmp_path: Path) -> None:
         """Defense-in-depth: score_coding's own post-run re-verify catches
         drift that happened during the scoring window (simulated here by
         calling score_coding directly, bypassing score_submission's
@@ -308,9 +320,7 @@ class TestTamperWitnesses:
                 work_dir=tmp_path / "work",
             )
 
-    def test_witness_2_test_count_mismatch_invalid_not_pass(
-        self, bench, tmp_path: Path
-    ) -> None:
+    def test_witness_2_test_count_mismatch_invalid_not_pass(self, bench, tmp_path: Path) -> None:
         _, case, case_dir, contract, tmp = bench
         sub_dir = tmp / "sub_undercollect"
         sub_dir.mkdir()

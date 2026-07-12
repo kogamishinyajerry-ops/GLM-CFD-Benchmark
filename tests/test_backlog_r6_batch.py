@@ -108,10 +108,15 @@ class TestJudgeImageAnchor:
         sub.mkdir()
 
         expected = case.execution.expected_test_count
-        stub = StubBackend(report_xml=_junit_xml(total=expected))
+        # The real judging path enforces the canary sentinel (R7): a known
+        # name is injected so the stub report can carry a passing canary.
+        canary = "test_cfdb_canary_deadbeefdeadbeef"
+        stub = StubBackend(report_xml=_junit_xml(total=expected, extra_case_names=[canary]))
         built_with: list[str | None] = []
 
-        def capturing_factory(c: Path, s: Path, image: str | None = None) -> StubBackend:
+        def capturing_factory(
+            c: Path, s: Path, image: str | None = None, canary_dir: Path | None = None
+        ) -> StubBackend:
             built_with.append(image)
             return stub
 
@@ -119,7 +124,7 @@ class TestJudgeImageAnchor:
 
         anchored = contract.frozen[JUDGE_IMAGE_KEY]
         monkeypatch.setattr(sbx, "resolve_judge_image_id", lambda ref: anchored)
-        baseline = sbx.score_coding(case, case_dir, sub, contract)
+        baseline = sbx.score_coding(case, case_dir, sub, contract, canary_name=canary)
         assert baseline.valid is True
         # TOCTOU closure (Codex R6 P1): the container must be constructed
         # from the verified IMMUTABLE ID, never the mutable tag.

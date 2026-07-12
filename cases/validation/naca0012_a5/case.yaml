@@ -67,7 +67,7 @@ outputs:
 reference:
   type: experimental
   files:
-    cp_curve: reference/ladson1988_a5.csv
+    cp_distribution: reference/ladson1988_a5.csv
   qoi_values:
     cl: 0.456
     cd: 0.0095

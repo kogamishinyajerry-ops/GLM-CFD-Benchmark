@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -697,7 +698,16 @@ def save_contract(contract: ScoringContract, path: Path, *, force: bool = False)
             "the frozen ruler (pass force=True to re-anchor deliberately)"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(contract.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    # Atomic replace (R7 backlog): the contract IS the ruler — a torn write
+    # (crash mid-write) must never leave a half-ruler behind. Write to a
+    # sibling temp file and os.replace() it in: on any failure before the
+    # replace, the previous contract file is untouched.
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        tmp_path.write_text(contract.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def load_contract(path: Path) -> ScoringContract:

@@ -21,10 +21,11 @@ Failure semantics are two-tier (Architecture v5.0 §3.3):
   aborted, nothing is ledgered for the current submission.
 - **Submission-level** (the ruler is intact, the *submission* is unusable):
   missing/unparseable junitxml, a collected-test-total mismatch against the
-  frozen ``expected_test_count`` (collection tampering), or an abnormal
-  container exit. These invalidate the one submission (``valid=False,
-  score=None``) but are ledgered like any other invalid sample — the ruler
-  was never in question.
+  frozen ``expected_test_count`` (collection tampering), a missing or
+  non-passing per-run canary sentinel (R7 — blanket report forgery), or an
+  abnormal container exit. These invalidate the one submission
+  (``valid=False, score=None``) but are ledgered like any other invalid
+  sample — the ruler was never in question.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import secrets
 import tempfile
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -60,6 +62,7 @@ HIDDEN_TESTS_REL = "reference/hidden_tests"
 
 JUDGE_HIDDEN_TESTS = "/judge/hidden_tests"
 JUDGE_SUBMISSION = "/judge/submission"
+JUDGE_CANARY = "/judge/canary"
 WORK_REPORT = "/work/report.xml"
 WORK_BASETEMP = "/work/pytest-tmp"
 WORK_TMPDIR = "/work/tmp"
@@ -74,7 +77,10 @@ that never touches Docker."""
 
 
 def _default_backend_factory(
-    case_dir: Path, submission_dir: Path, image: str | None = None
+    case_dir: Path,
+    submission_dir: Path,
+    image: str | None = None,
+    canary_dir: Path | None = None,
 ) -> ExecutionBackend:
     """Build the real sandboxed Docker backend for a coding submission.
 
@@ -94,6 +100,10 @@ def _default_backend_factory(
             comparison and ``docker run``, silently swapping the judge —
             running by content-addressed ID closes that window. None falls
             back to the configured tag (non-scoring/diagnostic use only).
+        canary_dir: Judge-owned host directory holding the per-run canary
+            sentinel test (R7); ro-mounted at :data:`JUDGE_CANARY` so
+            submission-side code cannot delete or edit it. None mounts no
+            canary (non-scoring/diagnostic use).
 
     Returns:
         A :class:`~cfdb.execution.docker.DockerBackend` configured with the
@@ -109,13 +119,16 @@ def _default_backend_factory(
     if image is None:
         image = os.environ.get("CFDB_JUDGE_IMAGE", "cfdb-judge:py312")
 
+    ro_mounts = [
+        (case_dir / HIDDEN_TESTS_REL, JUDGE_HIDDEN_TESTS),
+        (submission_dir, JUDGE_SUBMISSION),
+    ]
+    if canary_dir is not None:
+        ro_mounts.append((canary_dir, JUDGE_CANARY))
     return DockerBackend(  # type: ignore[call-arg]
         image=image,
         sandbox=True,
-        ro_mounts=[
-            (case_dir / HIDDEN_TESTS_REL, JUDGE_HIDDEN_TESTS),
-            (submission_dir, JUDGE_SUBMISSION),
-        ],
+        ro_mounts=ro_mounts,
     )
 
 
@@ -128,10 +141,13 @@ PYTEST_ARGS: list[str] = [
     f"--basetemp={WORK_BASETEMP}",
     f"--junitxml={WORK_REPORT}",
 ]
-"""Frozen pytest arguments (Architecture §3.3, verbatim)."""
+"""Frozen pytest arguments (Architecture §3.3, verbatim). The per-run canary
+path (R7 backlog) is APPENDED at runtime by :func:`_pytest_command` — the
+canary scheme is anchored via this module's source, its nonce is per-run by
+design and therefore can never itself be a frozen anchor."""
 
 
-def _pytest_command() -> list[str]:
+def _pytest_command(extra_paths: list[str] | None = None) -> list[str]:
     """Build the isolated judge bootstrap (Architecture §3.3 + Codex R0 P1).
 
     ``python -I`` ignores PYTHONPATH, user site-packages and sitecustomize,
@@ -140,13 +156,77 @@ def _pytest_command() -> list[str]:
     ``pytest.py`` shadow module cannot hijack judge startup. The submission
     path is inserted onto ``sys.path`` only after pytest is already
     imported, purely so the hidden tests can import the submission.
+
+    Args:
+        extra_paths: Additional collection paths appended to the frozen
+            args (the judge-owned canary mount).
     """
+    args = PYTEST_ARGS + list(extra_paths or [])
     bootstrap = (
         "import sys, pytest; "
         f"sys.path.insert(0, {JUDGE_SUBMISSION!r}); "
-        f"raise SystemExit(pytest.main({PYTEST_ARGS!r}))"
+        f"raise SystemExit(pytest.main({args!r}))"
     )
     return ["python", "-I", "-c", bootstrap]
+
+
+def _new_canary_name() -> str:
+    """Per-run canary test name: unforgeable without observing the run.
+
+    The 16-hex-char nonce comes from ``secrets``; a forged report written
+    from knowledge of the public case metadata (``expected_test_count``)
+    alone cannot contain it.
+    """
+    return f"test_cfdb_canary_{secrets.token_hex(8)}"
+
+
+def _canary_source(canary_name: str) -> str:
+    """Source of the canary sentinel test module (trivially passing)."""
+    return (
+        '"""cfdb judge canary (R7): per-run sentinel, judge-owned ro mount."""\n'
+        f"def {canary_name}():\n"
+        f"    assert {canary_name!r} == {canary_name!r}\n"
+    )
+
+
+def _verify_canary(report_path: Path, canary_name: str, notes: list[str]) -> bool:
+    """Check the junitxml for exactly one PASSING canary testcase.
+
+    A blanket-forged report (fabricated suite counts, no real pytest run)
+    cannot name the per-run canary, so it fails here (R7 backlog). This is
+    a COST-RAISER, not a boundary: in-process hostile code that observes
+    the live pytest session can read the canary name and forge around it —
+    that residual stays declared (§8, README verification boundary).
+
+    Args:
+        report_path: Host path to the junitxml report.
+        canary_name: The per-run sentinel test name to require.
+        notes: Audit note sink (mutated in place).
+
+    Returns:
+        True only if exactly one canary testcase exists and it passed.
+    """
+    try:
+        root = ET.parse(report_path).getroot()
+    except (ET.ParseError, OSError) as e:
+        notes.append(f"canary check could not re-read junitxml: {e} (submission invalid)")
+        return False
+    matches = [tc for tc in root.iter("testcase") if tc.get("name") == canary_name]
+    if len(matches) != 1:
+        notes.append(
+            f"canary sentinel testcase absent or duplicated ({len(matches)} match(es)): "
+            "submission invalid (blanket report forgery suspected)"
+        )
+        return False
+    bad_children = [
+        child.tag for child in matches[0] if child.tag in ("failure", "error", "skipped")
+    ]
+    if len(bad_children) > 0:
+        notes.append(
+            f"canary sentinel did not pass ({', '.join(bad_children)}): submission invalid"
+        )
+        return False
+    return True
 
 
 def _pytest_env() -> dict[str, str]:
@@ -207,6 +287,7 @@ def score_coding(
     backend_factory: BackendFactory | None = None,
     ruler_id: str | None = None,
     work_dir: Path | None = None,
+    canary_name: str | None = None,
 ) -> SubmissionScore:
     """Score one coding-domain submission by running hidden_tests in a sandbox.
 
@@ -226,6 +307,13 @@ def score_coding(
         work_dir: Host rw scratch directory (bind-mounted to ``/work`` by
             the real backend). Defaults to a fresh temp directory; tests
             should pass ``tmp_path``-derived paths for automatic cleanup.
+        canary_name: Per-run canary sentinel override (R7). Production
+            callers leave this None: on the real judging path a fresh
+            ``secrets`` nonce name is generated every run, the sentinel is
+            ro-mounted and its junitxml testcase is required to exist and
+            pass — a blanket-forged report cannot name it. On stub-backend
+            paths the canary is enforced only when a name is passed here
+            (unit tests exercise the verification with a known name).
 
     Returns:
         The submission score. A ruler-intact-but-unusable submission (bad
@@ -258,14 +346,25 @@ def score_coding(
                     f"{str(anchored_image_id)[:19]}...)"
                 ]
             )
+        # Canary sentinel (R7): mandatory on the real judging path. The
+        # per-run nonce name lives in a judge-owned ro mount so
+        # submission-side code cannot delete or edit the file; its junitxml
+        # testcase is required to exist and pass below. (Created outside
+        # the try like owned_tmp; the shared finally cleans both.)
+        if canary_name is None:
+            canary_name = _new_canary_name()
+        canary_tmp = tempfile.TemporaryDirectory(prefix="cfdb-canary-")
+        canary_dir = Path(canary_tmp.name)
+        (canary_dir / f"{canary_name}.py").write_text(_canary_source(canary_name), encoding="utf-8")
         # TOCTOU closure (Codex R6 P1): the container is started by the
         # verified IMMUTABLE image ID, never the mutable tag — a retag
         # between the comparison above and `docker run` can no longer swap
         # the judge.
         factory: BackendFactory = lambda c, s: _default_backend_factory(  # noqa: E731
-            c, s, image=live_image_id
+            c, s, image=live_image_id, canary_dir=canary_dir
         )
     else:
+        canary_tmp = None
         factory = backend_factory
     backend = factory(case_dir, submission_dir)
 
@@ -281,9 +380,13 @@ def score_coding(
         effective_work_dir.mkdir(parents=True, exist_ok=True)
         (effective_work_dir / "tmp").mkdir(parents=True, exist_ok=True)
 
+        canary_paths = [JUDGE_CANARY] if canary_tmp is not None else []
         timeout = case.budget.max_runtime_sec
         run_result = backend.execute(
-            _pytest_command(), cwd=effective_work_dir, timeout=timeout, env=_pytest_env()
+            _pytest_command(canary_paths),
+            cwd=effective_work_dir,
+            timeout=timeout,
+            env=_pytest_env(),
         )
 
         # Defense-in-depth: re-verify the ruler was not disturbed while the
@@ -313,13 +416,25 @@ def score_coding(
             )
             computed["tests_all_pass"] = 0.0
         else:
-            parsed = _parse_junit(effective_work_dir / REPORT_FILENAME, notes)
+            report_path = effective_work_dir / REPORT_FILENAME
+            parsed = _parse_junit(report_path, notes)
             if parsed is None:
                 computed["tests_all_pass"] = 0.0
             else:
                 total, failures, errors, skipped = parsed
+                # Canary sentinel check (R7): the per-run testcase must
+                # exist exactly once and pass; its single passing entry is
+                # then removed from the totals so the hidden-suite counts
+                # below stay exactly what the frozen case expects.
+                canary_ok = True
+                if canary_name is not None:
+                    canary_ok = _verify_canary(report_path, canary_name, notes)
+                    if canary_ok is True:
+                        total -= 1
                 expected = case.execution.expected_test_count
-                if expected is not None and total != expected:
+                if canary_ok is False:
+                    computed["tests_all_pass"] = 0.0
+                elif expected is not None and total != expected:
                     notes.append(
                         f"collected test total {total} != frozen expected_test_count "
                         f"{expected} (submission invalid: collection tampering suspected)"
@@ -367,3 +482,5 @@ def score_coding(
     finally:
         if owned_tmp is not None:
             owned_tmp.cleanup()
+        if canary_tmp is not None:
+            canary_tmp.cleanup()

@@ -332,6 +332,7 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
             "drifted": [],
             "n_events": 0,
             "n_unique_submissions": 0,
+            "n_no_identity": 0,
             "n_valid": 0,
             "n_invalid": 0,
             "best_score": None,
@@ -367,8 +368,15 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
             entries = []
         # Scoring events != unique submissions: re-scoring the same
         # submission appends a new ledger line but is still one submission.
+        # Uniqueness is CONTENT identity (attempt_id, R7 backlog) — the
+        # directory basename is caller-controlled and non-unique. Legacy
+        # rows without an identity are disclosed separately, never merged
+        # into (or padded onto) the unique count.
         row["n_events"] = len(entries)
-        row["n_unique_submissions"] = len({e.submission_id for e in entries})
+        row["n_unique_submissions"] = len(
+            {e.attempt_id for e in entries if e.attempt_id is not None}
+        )
+        row["n_no_identity"] = sum(1 for e in entries if e.attempt_id is None)
         row["n_valid"] = sum(1 for e in entries if e.valid is True)
         # INVALID disclosure (v5.0 §7 backlog, landed R6): invalid samples
         # are ledgered but never ranked — hiding their volume would make a

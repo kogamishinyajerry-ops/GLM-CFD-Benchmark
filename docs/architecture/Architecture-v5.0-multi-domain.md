@@ -347,3 +347,9 @@ cases/coding_tasks/<id>/
   pre-extraction 尺 load 必拒/退役 scorer 键 verify fail-closed）+ 双向实况
   （编排改动零漂移/政策改动 exit 3）。判决链结构变更按「命中即审」送 Codex
   异源审后 push。
+- **R5 治理审（同日，审 be5f16c）：1P1，verbatim 落地不加轮**——cfd 分支的判定
+  组装（valid 规则+metric 准入：qoi_error 仅可重算时进、wall_time 仅存在时进）
+  仍留在未入锚的编排层，语义可变而尺号不变。按审查员明示修法逐字落地：
+  `assemble_cfd` 整体迁入 judge_policy（与 assemble_agentic 对称），cfd 编排分支
+  收缩为纯接线；组装见证补入 extraction witness 文件；三契约再重锚
+  （smoke #064935ae→#af3e3a04）。编排零漂移旗舰见证复跑通过。1151 绿。

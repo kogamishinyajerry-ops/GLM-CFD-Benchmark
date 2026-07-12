@@ -365,6 +365,63 @@ def assemble_agentic(
     return gates, valid, metric_values
 
 
+def assemble_cfd(
+    contract: ScoringContract,
+    case: CaseSpec,
+    case_dir: Path,
+    submission_dir: Path,
+    notes: list[str],
+) -> tuple[dict[str, bool], bool, dict[str, float], float | None]:
+    """Full cfd verdict composition: inputs -> gates, validity, metrics.
+
+    Extracted verbatim from the orchestration layer (Codex R5 P1): which
+    submission values are read, which gates they face, what makes the
+    sample valid, and which recomputed values are admitted into
+    ``metric_values`` (``qoi_error`` only when recomputable, self-reported
+    ``wall_time_sec`` only when present) are all pass/fail policy — leaving
+    any of it outside this anchored module would let verdict semantics
+    change under an unchanged ruler ID.
+
+    Args:
+        contract: Frozen scoring contract.
+        case: Case spec.
+        case_dir: Case directory (reference resolution).
+        submission_dir: Submission directory (``qoi.json`` +
+            optional ``manifest.json``).
+        notes: Audit note sink (mutated in place).
+
+    Returns:
+        ``(gates, valid, metric_values, wall_time)``; ``wall_time`` is the
+        self-reported value (None when unavailable) so the caller can
+        record it — marked self-reported — without re-reading the file.
+    """
+    computed = load_submission_qoi(submission_dir, notes)
+    wall_time = load_wall_time(submission_dir)
+
+    self_reported = sorted(set(computed) - set(case.outputs.qoi))
+    if len(self_reported) > 0:
+        notes.append(
+            f"ignored self-reported fields {self_reported}: "
+            "scoring metrics are recomputed, never trusted"
+        )
+
+    if "wall_time_sec" in contract.weights:
+        notes.append("wall_time_sec is self-reported (weighted by explicit contract choice)")
+        logger.warning("wall_time_sec is self-reported: it is weighted in this contract")
+
+    gates = evaluate_gates(contract, case, computed, wall_time, notes)
+    valid = all(gates[g] is True for g in contract.validity_gates)
+
+    metric_values: dict[str, float] = {}
+    reference = load_reference_qoi(case, case_dir)
+    qoi_error = recompute_qoi_error(case, reference, computed, notes)
+    if qoi_error is not None:
+        metric_values["qoi_error"] = qoi_error
+    if wall_time is not None:
+        metric_values["wall_time_sec"] = wall_time
+    return gates, valid, metric_values, wall_time
+
+
 def assemble_score(
     contract: ScoringContract,
     valid: bool,

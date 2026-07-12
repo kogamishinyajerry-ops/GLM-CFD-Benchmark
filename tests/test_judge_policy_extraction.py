@@ -78,6 +78,40 @@ class TestPolicyAnchorExact:
         assert POLICY_KEY in verify_frozen(contract, case_dir)
 
 
+class TestCfdCompositionInPolicy:
+    """Codex R5 P1: the FULL cfd composition (valid rule + metric admission)
+    is policy and must behave identically from its anchored home."""
+
+    def test_metric_admission_and_validity(self, tmp_path: Path) -> None:
+        from cfdb.agentbench.judge_policy import assemble_cfd
+
+        registry, case_dir = _tmp_case_registry(tmp_path, "validation", "lid_driven_cavity")
+        contract = init_contract("lid_driven_cavity", registry)
+        case = registry.load("lid_driven_cavity")
+        held_out = json.loads((case_dir / "held_out" / "qoi.json").read_text(encoding="utf-8"))
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "qoi.json").write_text(json.dumps(held_out), encoding="utf-8")
+
+        # No manifest.json: wall_time unavailable -> never invented as a metric.
+        notes: list[str] = []
+        gates, valid, metrics, wall_time = assemble_cfd(contract, case, case_dir, sub, notes)
+        assert gates["qoi_complete"] is True
+        assert valid is (case.budget.max_runtime_sec is None)
+        assert wall_time is None
+        assert "wall_time_sec" not in metrics
+        assert "qoi_error" in metrics
+
+        # With a manifest: the self-reported wall time is admitted as a
+        # metric value (weightless by default) and feeds within_budget.
+        (sub / "manifest.json").write_text(json.dumps({"wall_time_sec": 0.5}), encoding="utf-8")
+        notes2: list[str] = []
+        gates2, valid2, metrics2, wall_time2 = assemble_cfd(contract, case, case_dir, sub, notes2)
+        assert wall_time2 == 0.5
+        assert metrics2["wall_time_sec"] == 0.5
+        assert valid2 is True
+
+
 class TestPreExtractionRulersRefused:
     def test_scorer_anchored_ruler_refused_at_load(self, tmp_path: Path) -> None:
         # Reconstruct an R3/R4-era contract: shared policy anchored as

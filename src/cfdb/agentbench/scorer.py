@@ -50,12 +50,9 @@ from cfdb.agentbench.contract import (
 )
 from cfdb.agentbench.judge_policy import (
     assemble_agentic,
+    assemble_cfd,
     assemble_score,
-    evaluate_gates,
-    load_reference_qoi,
-    load_submission_qoi,
     load_wall_time,
-    recompute_qoi_error,
 )
 from cfdb.schema import CaseSpec
 
@@ -235,32 +232,13 @@ def score_submission(
             ruler_id=ruler_id,
         )
     else:
+        # Full cfd composition (inputs -> gates/validity/metrics) is policy
+        # and lives in the anchored judge_policy module (Codex R5 P1);
+        # this branch only wires it and copies the outputs into the record.
         notes: list[str] = []
-        computed = load_submission_qoi(submission_dir, notes)
-        wall_time = load_wall_time(submission_dir)
-
-        self_reported = sorted(set(computed) - set(case.outputs.qoi))
-        if len(self_reported) > 0:
-            notes.append(
-                f"ignored self-reported fields {self_reported}: "
-                "scoring metrics are recomputed, never trusted"
-            )
-
-        if "wall_time_sec" in contract.weights:
-            notes.append("wall_time_sec is self-reported (weighted by explicit contract choice)")
-            logger.warning("wall_time_sec is self-reported: it is weighted in this contract")
-
-        gates = evaluate_gates(contract, case, computed, wall_time, notes)
-        valid = all(gates[g] is True for g in contract.validity_gates)
-
-        metric_values: dict[str, float] = {}
-        reference = load_reference_qoi(case, case_dir)
-        qoi_error = recompute_qoi_error(case, reference, computed, notes)
-        if qoi_error is not None:
-            metric_values["qoi_error"] = qoi_error
-        if wall_time is not None:
-            metric_values["wall_time_sec"] = wall_time
-
+        gates, valid, metric_values, wall_time = assemble_cfd(
+            contract, case, case_dir, submission_dir, notes
+        )
         score, breakdown = assemble_score(contract, valid, metric_values, notes)
 
         result = SubmissionScore(

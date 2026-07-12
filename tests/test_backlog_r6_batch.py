@@ -324,6 +324,126 @@ class TestPassAtK:
 
 
 # ============================================================================
+# Content identity hardening (Codex R6-R2, adjudication ③)
+# ============================================================================
+
+
+class TestR6dContentIdentityHardening:
+    """R6-R2 findings: evaluator output inside the judged tree, directory/
+    symlink identity, judged-snapshot binding, digest I/O failures."""
+
+    def _agentic_setup(self, tmp_path: Path):
+        registry, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        contract = init_contract("csv_field_extract", registry)
+        case = registry.load("csv_field_extract")
+        expected = (case_dir / "reference" / "expected.json").read_text(encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "summary.json").write_text(expected, encoding="utf-8")
+        return contract, case, case_dir, sub
+
+    def test_ledger_inside_submission_tree_is_refused(self, tmp_path: Path) -> None:
+        # Codex R6-R2 P1: the post-scoring ledger append would mutate the
+        # submission snapshot -> every rescore mints a fresh attempt_id.
+        from cfdb.agentbench.scorer import score_submission
+
+        contract, case, case_dir, sub = self._agentic_setup(tmp_path)
+        inside = sub / "agentbench" / "ledger.jsonl"
+        with pytest.raises(ValueError, match="inside the submission tree"):
+            score_submission(contract, case, case_dir, sub, ledger_path=inside)
+        assert inside.exists() is False  # refusal means zero ledger writes
+
+    def test_ledger_outside_submission_tree_still_scores(self, tmp_path: Path) -> None:
+        from cfdb.agentbench.scorer import score_submission
+
+        contract, case, case_dir, sub = self._agentic_setup(tmp_path)
+        outside = tmp_path / "bench" / "ledger.jsonl"
+        result = score_submission(contract, case, case_dir, sub, ledger_path=outside)
+        assert result.valid is True
+        assert outside.exists() is True
+
+    def test_empty_directory_changes_attempt_id(self, tmp_path: Path) -> None:
+        # Codex R6-R2 P1: dir_organize's checker judges directory layout, so
+        # an empty directory IS content — the two trees must not collapse.
+        from cfdb.agentbench.scorer import _submission_digest
+
+        tree_a = tmp_path / "a"
+        tree_b = tmp_path / "b"
+        for tree in (tree_a, tree_b):
+            tree.mkdir()
+            (tree / "f.txt").write_text("same", encoding="utf-8")
+        assert _submission_digest(tree_a) == _submission_digest(tree_b)
+        (tree_b / "extra_dir").mkdir()
+        assert _submission_digest(tree_a) != _submission_digest(tree_b)
+
+    def test_flat_tree_digest_scheme_unchanged(self, tmp_path: Path) -> None:
+        # Backward compatibility with already-ledgered rows: a flat
+        # file-only tree must keep the original (relpath, sha256) digest.
+        from cfdb.agentbench.contract import canonical_digest, sha256_file
+        from cfdb.agentbench.scorer import _submission_digest
+
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "z.txt").write_text("zz", encoding="utf-8")
+        (sub / "a.txt").write_text("aa", encoding="utf-8")
+        legacy_pairs = [
+            [p.relative_to(sub).as_posix(), sha256_file(p)]
+            for p in sorted(sub.rglob("*"))
+            if p.is_file()
+        ]
+        assert _submission_digest(sub) == canonical_digest(legacy_pairs)
+
+    def test_symlink_in_submission_is_refused(self, tmp_path: Path) -> None:
+        from cfdb.agentbench.scorer import _submission_digest
+
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        target = tmp_path / "outside.txt"
+        target.write_text("x", encoding="utf-8")
+        (sub / "link.txt").symlink_to(target)
+        with pytest.raises(ValueError, match="symlink"):
+            _submission_digest(sub)
+
+    def test_mutation_during_judging_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R6-R2 P2: verdict of the new bytes + identity of the old
+        # bytes must never be ledgered together.
+        import cfdb.agentbench.checker_scorer as checker_scorer
+        from cfdb.agentbench.scorer import score_submission
+
+        contract, case, case_dir, sub = self._agentic_setup(tmp_path)
+        real_score_agentic = checker_scorer.score_agentic
+
+        def mutating(case_dir_: Path, submission_dir_: Path):
+            verdict = real_score_agentic(case_dir_, submission_dir_)
+            (submission_dir_ / "planted.txt").write_text("late", encoding="utf-8")
+            return verdict
+
+        monkeypatch.setattr(checker_scorer, "score_agentic", mutating)
+        ledger = tmp_path / "bench" / "ledger.jsonl"
+        with pytest.raises(ValueError, match="changed during judging"):
+            score_submission(contract, case, case_dir, sub, ledger_path=ledger)
+        assert ledger.exists() is False  # refusal means zero ledger writes
+
+    def test_unreadable_file_is_structured_input_error(self, tmp_path: Path) -> None:
+        # Codex R6-R2 P2: digest I/O failure is a structured input error
+        # (ValueError -> CLI [FAIL] exit 1), never a raw OSError traceback.
+        from cfdb.agentbench.scorer import _submission_digest
+
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        secret = sub / "secret.bin"
+        secret.write_text("x", encoding="utf-8")
+        secret.chmod(0o000)
+        try:
+            with pytest.raises(ValueError, match="unreadable"):
+                _submission_digest(sub)
+        finally:
+            secret.chmod(0o644)
+
+
+# ============================================================================
 # INVALID disclosure in the showcase collector
 # ============================================================================
 

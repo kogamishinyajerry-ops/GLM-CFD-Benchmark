@@ -186,6 +186,17 @@ def score_submission(
     if len(missing) > 0:
         raise FrozenDriftError([f"{key} (mandatory anchor missing)" for key in missing])
 
+    # Evaluator-owned output must never live inside the judged tree (Codex
+    # R6-R2 P1): the post-scoring ledger append would mutate the submission
+    # snapshot, so every rescore of otherwise unchanged content would mint
+    # a fresh attempt_id and pad the pass@k sample population.
+    if ledger_path is not None and ledger_path.resolve().is_relative_to(submission_dir.resolve()):
+        raise ValueError(
+            f"ledger path '{ledger_path}' lies inside the submission tree "
+            f"'{submission_dir}': evaluator output would mutate the submission's "
+            "content identity — refusing to score"
+        )
+
     # Content identity stamped BEFORE judging (Codex R6-R1 P1): the attempt
     # is what was handed in, hashed up front — a submission that mutates
     # itself during scoring cannot retroactively pick its identity.
@@ -265,6 +276,18 @@ def score_submission(
             notes=notes,
             wall_time=WallTimeRecord(value_sec=wall_time),
             ruler_id=ruler_id,
+        )
+
+    # The recorded identity must be OF the judged bytes (Codex R6-R2 P2):
+    # if the tree changed while the checker/sandbox ran, the verdict
+    # describes content the pre-run attempt_id does not — refuse instead
+    # of ledgering a detached identity.
+    post_attempt_id = _submission_digest(submission_dir)
+    if post_attempt_id != attempt_id:
+        raise ValueError(
+            "submission content changed during judging (content identity "
+            f"{attempt_id[:16]} -> {post_attempt_id[:16]}): refusing to record "
+            "a score detached from the judged snapshot"
         )
 
     result.attempt_id = attempt_id
@@ -363,27 +386,46 @@ pass@k is refused."""
 
 
 def _submission_digest(submission_dir: Path) -> str:
-    """Content identity of a submission tree (Codex R6-R1 P1).
+    """Content identity of a submission tree (Codex R6-R1 P1, hardened R6-R2).
 
-    sha256 over the sorted (relative POSIX path, file sha256) pairs of
-    every file under the submission directory: identical content under any
-    basename is one attempt; different content is a different attempt —
-    the directory name (caller-controlled, non-unique) never decides
-    sample identity.
+    sha256 over the sorted manifest of the tree: files as (relative POSIX
+    path, file sha256) pairs — the original scheme, unchanged, so flat
+    file-only trees keep their already-ledgered identity — plus directories
+    as ("<relpath>/", "dir") entries (Codex R6-R2 P1: the shipped
+    dir_organize checker judges directory layout, so an empty directory IS
+    content and two trees differing by one must not collapse into a single
+    attempt). Symlinks are refused outright: hashing the link target would
+    record an identity the judge may not reproduce (the link can dangle or
+    point elsewhere inside the sandbox mount).
 
     Args:
         submission_dir: Submission directory.
 
     Returns:
         64-char lowercase hex digest.
+
+    Raises:
+        ValueError: If the tree contains a symlink, or an entry cannot be
+            read while hashing (Codex R6-R2 P2: I/O failures surface as a
+            structured input error, never a raw OSError).
     """
     from cfdb.agentbench.contract import canonical_digest, sha256_file
 
-    pairs = [
-        [path.relative_to(submission_dir).as_posix(), sha256_file(path)]
-        for path in sorted(submission_dir.rglob("*"))
-        if path.is_file()
-    ]
+    pairs: list[list[str]] = []
+    try:
+        for path in sorted(submission_dir.rglob("*")):
+            rel = path.relative_to(submission_dir).as_posix()
+            if path.is_symlink():
+                raise ValueError(
+                    f"submission contains a symlink at '{rel}': refusing to hash "
+                    "link targets into the content identity"
+                )
+            if path.is_dir():
+                pairs.append([rel + "/", "dir"])
+            elif path.is_file():
+                pairs.append([rel, sha256_file(path)])
+    except OSError as e:
+        raise ValueError(f"submission unreadable while computing content identity: {e}") from e
     return canonical_digest(pairs)
 
 

@@ -400,3 +400,18 @@ cases/coding_tasks/<id>/
   scorer.py 属未锚编排层，契约无需重锚（抽取批红利首次兑现）。
   实况：真账本 attempt_id 盖章、legacy 行如实排除播报、篡改 case.yaml
   domain→exit 3 点名 case.yaml、还原即恢复。见证 20 条（本文件），1171 绿。
+- **R6-R2 终轮（同日，审 6019fb7）：2P1+2P2——周期 cap（3 轮）用尽仍有 P1，
+  交用户裁决③「R6d 修复批，修完直接 push」（先例=裁决②），按审查方
+  Suggested fix 方向逐字落地不再送第 5 轮**——
+  ①P1 账本混入提交树（`--submission .` 类路径下判卷后 append 改变树内容
+  →同内容每次重评换新 attempt_id→重评灌样本）——修复：ledger_path 落在
+  submission_dir 内直接拒收（ValueError，零落账）；②P1 空目录/symlink 不入
+  内容身份（`is_file()` 过滤丢目录条目，而 dir_organize checker 恰判目录布局
+  →实质不同的提交合并成一个 attempt；symlink 静默按目标哈希）——修复：
+  manifest 增目录条目（`relpath/`+"dir"，纯文件平铺树 digest 不变=已落账行
+  身份不受扰，实况验真 golden 重评仍 e6677e4b 且被 passk 折叠），symlink
+  一律拒收；③P2 判卷窗口内宿主侧改树→判决对新字节身份记旧字节——修复：
+  判后重算 digest 不一致即拒绝落账；④P2 digest 途中 I/O 失败裸抛 OSError——
+  修复：转结构化 ValueError（CLI [FAIL] exit 1）。
+  见证 7 条+四点 tamper 逐一翻红实证；实况：账本入树→[FAIL] exit 1 全文
+  点名两路径、symlink→[FAIL] exit 1、golden 重评身份不变。1178 绿。

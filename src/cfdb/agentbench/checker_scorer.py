@@ -42,6 +42,12 @@ logger = logging.getLogger(__name__)
 
 CheckerMode = Literal["CHECKER_OK", "CHECKER_ERROR"]
 
+MAX_CHECKER_STDOUT_CHARS = 1_000_000
+"""Defensive cap on checker stdout consumed by the verdict parser (R8):
+oversized output — typically a checker echoing a hostile oversized
+artifact — is CHECKER_ERROR (fail-closed "could not judge"), never
+silently truncated into a parseable-looking tail."""
+
 _DENIED_MODULES: frozenset[str] = frozenset({"subprocess", "socket", "ctypes", "importlib"})
 """Module roots whose import trips :func:`validate_checker` (accidental
 outbound calls / dynamic loading in judging material)."""
@@ -166,6 +172,16 @@ def score_agentic(
         return _error_verdict(
             f"checker exited with code {proc.returncode}: {checker_path} "
             f"(stderr tail: {stderr_tail!r})"
+        )
+
+    # Defensive output cap (R8 backlog): the checker is trusted material,
+    # but a checker driven into pathological output by a hostile artifact
+    # (e.g. echoing an unbounded file) must not OOM the verdict parser —
+    # oversized stdout is "could not judge", never silently truncated.
+    if len(proc.stdout) > MAX_CHECKER_STDOUT_CHARS:
+        return _error_verdict(
+            f"checker stdout is {len(proc.stdout)} chars, exceeding the "
+            f"{MAX_CHECKER_STDOUT_CHARS}-char cap: {checker_path}"
         )
 
     payload = _extract_json_tail(proc.stdout)

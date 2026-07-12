@@ -221,9 +221,12 @@ cases/coding_tasks/<id>/
 - registry/audit 双扫描器合并重构（本波只统一可见性语义，不合代码）；
 - taxonomy/gates 的 if/elif 链插件化重构（观察点，扩两域后再评估）；
 - checker 进沙箱执行（v5.0 信任模型=人签受信材料，见 §4）；
-- golden 准入 3 次复跑的系统化留痕（v5.0 允许 case 作者本地跑+摘要入仓，
-  自动化准入 runner 记 backlog——账实对齐弱点如实声明）；
-- checker 读产物目录的防护性编码契约（大文件/反序列化上限）；
+- ~~golden 准入 3 次复跑的系统化留痕~~（R8 批已落地：`agent-eval admit` 真沙箱
+  N 连跑，admission.json 机写落 case 根（冻结树外不漂尺），单次 flaky 即判失败
+  但记录照写=诚实纸痕）；
+- ~~checker 读产物目录的防护性编码契约~~（R8 批已落地平台侧：提交树 64MiB 上限
+  判卷前拒收（哈希/挂载/checker 全线性于树大小=DoS 面）+ checker stdout 1M 字符
+  上限超限即 CHECKER_ERROR 绝不截断硬解析）；
 - ~~showcase/报告层显式披露各提交者 INVALID 率~~（R6 批已落地，见本节顶部注记）。
 
 ## 8. 风险与残差（如实）
@@ -232,6 +235,11 @@ cases/coding_tasks/<id>/
   是 CFD 语汇，coding/agentic 硬套会产出「表面绿但语义骗人」的 completeness 分——
   v5.0 新域 TrustProfile 的 completeness 维度**置 None（数据不足语义）**并注明
   「新域交付物形状未定义」，宁缺毋滥；域专属 completeness 定义进 backlog。
+  **R8 批复核后维持递延（理由留痕）**：TrustProfile 消费的是 runs/（求解器验证跑）
+  证据流，agentbench 判卷根本不产 trust profile——今天不存在会消费「coding/agentic
+  completeness」的任何呈现或判定面；为无消费者的维度发明定义=装饰性指标（Goodhart
+  邀请函）。待 agentbench 结果进入 trust 呈现面时再定义，届时以 admission.json/
+  账本链/canary 等真实证据轴为底料。
 - 无文件锁现状（write_text 直写）在多域并行跑时的竞写风险：v5.0 沿用路径隔离约定
   （各域独立 --baselines/--library/--agentbench-dir）。**R7 批已落地 save_contract
   原子写（同目录 tmp+os.replace，失败重锚旧尺原样保留）**；账本 append 为单
@@ -259,9 +267,13 @@ cases/coding_tasks/<id>/
 - **NACA cp_curve/CSV 参考映射（Codex R0 P2 递延项，R7 批已落地）**：四个 naca0012
   case.yaml 参考键 cp_curve→cp_distribution 对齐 outputs.curves；engine 增严格 CSV
   装载（csv 标准库，首行可为非数值表头，其余行必须恰两列有限浮点，**一行坏整文件拒**，
-  绝不为「能跑」放松校验，Ladson 真数据实载）。curve 判定对 adapters 侧仍 inert
-  （无 adapter 产 curves 数据），adapter 侧采集仍在 backlog——参考侧已就绪，
-  adapter 落地即自动激活 gate。
+  绝不为「能跑」放松校验，Ladson 真数据实载）。**R8 批 adapter 侧采集落地，gate
+  已激活**：controlDict.naca 增 cpSurface 采样 FO（airfoil patch 终迭代 raw 采 p），
+  openfoam adapter 严格解析（一行坏整文件拒）→ Cp=p/(0.5·u_inf²)（simpleFoam 运动
+  学压强，来流参考 0）→ 取上表面（y>0，Ladson 参考单值面约定文档明示）→ 重采样到
+  参考 x/c 网格（**参考站点超出采样范围整条拒=绝不外插**；y 值纯仿真，仅借公开
+  横坐标=标准 V&V 做法）；装载规格单源化 metrics.curves.load_reference_curve
+  （engine 委托+adapter 复用，规格不可分叉）。curve_l2 精确网格契约未动。
 - **判卷政策已抽专职锚定模块（R5 批，backlog 项收口，锚面终态）**：共享政策全部
   迁入 `judge_policy.py`（QoI/wall-time 装载语义、held-out 优先、qoi_error 重算、
   gate 评估、agentic verdict→gates/score 组装、分数组装），`judge_source:judge_policy`
@@ -447,3 +459,25 @@ cases/coding_tasks/<id>/
   修复：表头正面验证（恰两列且皆非数值）才跳过；④P2 csv.Error/UnicodeDecodeError
   逃逸（审查方实证 field>131072 崩溃）——修复：与 OSError 同拒。
   见证 +5（守卫+链崩溃+表头歧义+超长字段+坏编码），1208 绿。
+- **R8 批（用户指令「继续优化，完成剩余优化建议」二轮，backlog 再收四项+一递延留痕）**：
+  ①adapter 侧 cp 采集落地激活 curve gate（cpSurface FO+严格 raw 解析+上表面
+  +无外插重采样，详 §8 NACA 条目）——**真数据两次咬合修形**：首跑（930s 收敛，
+  4334 真面元）暴露「参考名义端点 0/1 恒在面元中心范围外」→ 亚分辨率钳制；
+  局部间距判据又被真数据反咬（尾缘加密网格间距 1e-5 << 几何缺口 4e-3，
+  越好的网格越容易拒=方向反了）→ 终版=端点缺口 ≤ 参考跨度 1% 才钳制且留痕，
+  超出整条拒。真曲线实证：17 站点=参考网格，L2=1.94 vs Ladson a5（与 cl
+  0.094 vs 0.456 同源=10.8k cells 欠分辨的既有诚实 FAIL，容差一个没调）；
+  ②提交树 64MiB 平台上限（哈希/挂载/checker 全线性于树大小=DoS 面，判卷前
+  结构化拒收）+ checker stdout 1M 字符上限（超限 CHECKER_ERROR 绝不截断硬解析）；
+  ③`agent-eval admit` golden 准入 N 连跑机写留痕（admission.json 落 case 根=
+  冻结树外不漂尺，单次 flaky 即失败但记录照写；真容器实况 3/3 绿，golden
+  content id 与账本 attempt_id 同 digest 方案交叉一致）；④装载规格单源化
+  （metrics.curves.load_reference_curve，engine 委托+adapter 复用）；
+  ⑤域专属 completeness 复核后维持递延（无消费者的维度=装饰性指标，理由 §8）。
+  防回归守卫本批两度真咬（checker_scorer 变更→csv 尺 #a54b09ae→#80183efd，
+  字节定稿后重锚=canon 47 顺序执行）。见证 22+2 条（test_backlog_r8_batch.py），
+  五点 tamper 翻红实证。**runner 全程实况（第二次真跑 656s，合流集成缝必真跑）**：
+  metrics.json 收 `curve_l2_errors: {cp_distribution: 1.9424}` +
+  `ungated_curves: [cp_distribution]` 披露 note，与离线提取 L2 至小数位一致
+  （交叉验证）；overall fail 由欠分辨 QoI 驱动（cl 误差 79%/cd 505%），
+  curve gate 端到端激活且未影响既有诚实判定。

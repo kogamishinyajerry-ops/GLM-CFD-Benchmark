@@ -1450,6 +1450,47 @@ def agent_eval_ledger_cmd(
         )
 
 
+@agent_eval_app.command("admit")
+def agent_eval_admit_cmd(
+    case: Annotated[str, typer.Option("--case", "-c", help="Coding case ID to admit.")],
+    runs: Annotated[int, typer.Option("--runs", help="Consecutive golden runs required.")] = 3,
+    cases_dir: _CasesDirOption = Path("cases"),
+) -> None:
+    """Run the golden solution N times in the real sandbox and record evidence.
+
+    Systematic paper trail for the v5.0 case-admission gate (golden must
+    pass the frozen hidden tests three consecutive times). Writes
+    ``<case_dir>/admission.json`` — outside the frozen trees, so no ruler
+    drifts. Exits 1 when any run fails (the record is still written:
+    honest evidence of a failed admission).
+    """
+    from cfdb.agentbench.admission import run_admission
+
+    registry = CaseRegistry(cases_dir)
+    try:
+        record = run_admission(case, registry, runs=runs)
+    except (KeyError, FileNotFoundError, ValueError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    for i, verdict in enumerate(record.verdicts, start=1):
+        shown = f"{verdict.score:.6g}" if verdict.score is not None else "None"
+        typer.echo(f"  run {i}/{record.runs}: valid={verdict.valid} score={shown}")
+    typer.echo(f"  golden content id: {record.golden_attempt_id[:16]}")
+    if record.judge_image_id:
+        typer.echo(f"  judge image:       {record.judge_image_id[:19]}...")
+    typer.echo(f"  record: cases -> {record.case_id}/admission.json")
+    if record.all_passed is True:
+        typer.echo(f"[OK] admission passed: {record.runs}/{record.runs} golden runs green")
+    else:
+        typer.echo(
+            "[FAIL] admission failed — golden did not pass every run "
+            "(record written for the paper trail)",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
 @agent_eval_app.command("verify-ledger")
 def agent_eval_verify_ledger_cmd(
     case: Annotated[str, typer.Option("--case", "-c", help="Case ID whose ledger to verify.")],

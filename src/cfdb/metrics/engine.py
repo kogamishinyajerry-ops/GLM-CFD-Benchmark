@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import logging
 import math
@@ -10,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cfdb.adapters.base import ArtifactManifest, RunResult
-from cfdb.metrics.curves import compute_curve_l2
+from cfdb.metrics.curves import compute_curve_l2, load_reference_curve
 from cfdb.metrics.performance import check_budget
 from cfdb.schema import CaseSpec, MetricsResult, TimingSpec
 
@@ -375,12 +374,11 @@ class MetricsEngine:
     def _load_reference_curve(self, path: Path) -> list[tuple[float, float]] | None:
         """Load curve data from a reference file.
 
-        Two formats (R7 backlog -- NACA cp reference mapping): a ``.csv``
-        file (two numeric columns, an optional single header row like
-        ``x/c,Cp``) or, for any other extension, a JSON list of [x, y]
-        pairs. Validation is strict either way: one malformed row rejects
-        the WHOLE file (None -> upstream 'missing reference curve' note);
-        loading is never made lenient just to get a curve on the board.
+        Delegates to :func:`cfdb.metrics.curves.load_reference_curve` — the
+        single strict loading spec (R7: positively validated CSV header,
+        one malformed row rejects the whole file, parser errors contained)
+        shared with adapters that resample onto the reference abscissa, so
+        the rules cannot drift apart.
 
         Args:
             path: Path to the reference file.
@@ -389,94 +387,7 @@ class MetricsEngine:
             List of (x, y) points, or None if the file is missing, unreadable,
             or malformed (never raises -- callers treat None as 'not available').
         """
-        if path.suffix.lower() == ".csv":
-            return self._load_csv_curve(path)
-        try:
-            raw = path.read_text(encoding="utf-8")
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [(float(pt[0]), float(pt[1])) for pt in parsed]
-        except (
-            json.JSONDecodeError,
-            ValueError,
-            TypeError,
-            OSError,
-            IndexError,
-        ) as e:
-            logger.warning("failed to load reference curve from %s: %s", path, e)
-        return None
-
-    def _load_csv_curve(self, path: Path) -> list[tuple[float, float]] | None:
-        """Load a two-column CSV reference curve (strict; see caller).
-
-        The first row is skipped ONLY when it is a positively validated
-        header: exactly two columns, neither parseable as a float (Codex
-        R7 P2 — a malformed first DATA row like ``0.0,abc`` must reject
-        the whole file, never be silently consumed as a header). Every
-        data row must be exactly two finite floats; any violation rejects
-        the whole file with a logged reason.
-
-        Args:
-            path: Path to the CSV file.
-
-        Returns:
-            List of (x, y) points, or None when the file is unusable.
-        """
-        try:
-            with path.open(newline="", encoding="utf-8") as f:
-                rows = [row for row in csv.reader(f) if len(row) > 0]
-        # csv.Error (e.g. a field beyond field_size_limit) and decoding
-        # failures surface during iteration, not open() — all three are
-        # 'unusable reference', never a crash (Codex R7 P2).
-        except (OSError, csv.Error, UnicodeDecodeError) as e:
-            logger.warning("failed to read reference curve CSV %s: %s", path, e)
-            return None
-        if len(rows) == 0:
-            logger.warning("reference curve CSV %s is empty", path)
-            return None
-
-        def _parse(row: list[str]) -> tuple[float, float] | None:
-            if len(row) != 2:
-                return None
-            try:
-                x, y = float(row[0]), float(row[1])
-            except ValueError:
-                return None
-            if math.isfinite(x) is False or math.isfinite(y) is False:
-                return None
-            return (x, y)
-
-        def _is_header(row: list[str]) -> bool:
-            if len(row) != 2:
-                return False
-            for cell in row:
-                try:
-                    float(cell)
-                except ValueError:
-                    continue
-                return False  # a numeric cell means data, not a header
-            return True
-
-        has_header = _is_header(rows[0])
-        data_rows = rows[1:] if has_header else rows
-        if len(data_rows) == 0:
-            logger.warning("reference curve CSV %s has a header but no data rows", path)
-            return None
-        points: list[tuple[float, float]] = []
-        for offset, row in enumerate(data_rows):
-            lineno = offset + (2 if has_header else 1)
-            point = _parse(row)
-            if point is None:
-                logger.warning(
-                    "reference curve CSV %s line %d is not two finite floats: %r "
-                    "(whole file rejected)",
-                    path,
-                    lineno,
-                    row,
-                )
-                return None
-            points.append(point)
-        return points
+        return load_reference_curve(path)
 
     def _load_reference_file(self, path: Path) -> dict[str, float]:
         """Load QoI values from a JSON reference file.

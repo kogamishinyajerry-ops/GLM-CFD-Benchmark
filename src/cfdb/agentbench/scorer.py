@@ -211,6 +211,19 @@ def score_submission(
             "content identity — refusing to score"
         )
 
+    # Platform guard (R8 backlog: defensive limits on judged input): an
+    # oversized submission tree is refused BEFORE hashing or judging — the
+    # content digest, the checker and the sandbox mounts all walk this
+    # tree, and an unbounded one is a denial-of-service on the judge host.
+    total_bytes = sum(
+        p.lstat().st_size for p in submission_dir.rglob("*") if p.is_file() or p.is_symlink()
+    )
+    if total_bytes > MAX_SUBMISSION_BYTES:
+        raise ValueError(
+            f"submission tree is {total_bytes} bytes, exceeding the platform cap "
+            f"of {MAX_SUBMISSION_BYTES} bytes — refusing to score"
+        )
+
     # Content identity stamped BEFORE judging (Codex R6-R1 P1): the attempt
     # is what was handed in, hashed up front — a submission that mutates
     # itself during scoring cannot retroactively pick its identity.
@@ -308,6 +321,17 @@ def score_submission(
     if ledger_path is not None:
         append_ledger(ledger_path, result)
     return result
+
+
+MAX_SUBMISSION_BYTES = 64 * 1024 * 1024
+"""Platform cap on a submission tree's total file bytes (R8 backlog).
+
+The judge hashes every file (content identity), the agentic checker reads
+artifacts, and the coding sandbox mounts the tree — all linear in
+submission size, so an unbounded tree is a denial-of-service on the judge
+host, not a legitimate submission. Refused as a structured input error
+(never judged, never ledgered). 64 MiB is generous for every shipped case
+family; raising it is a deliberate platform decision, not a per-case knob."""
 
 
 LEDGER_CHAIN_GENESIS = "0" * 64

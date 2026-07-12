@@ -50,9 +50,13 @@ class OpenFOAMAdapter:
         self._dry_run = dry_run
         if backend is None:
             from cfdb.execution.local import LocalExecutionBackend
+
             backend = LocalExecutionBackend()
         self._backend = backend
         self._template_dir = Path(__file__).parent / "templates" / "openfoam"
+        # Source case dir (reference data lives here), remembered by
+        # prepare() for cp-curve resampling at collect time (R8).
+        self._source_case_dir: Path | None = None
 
     def _find_solver_config(self, case: CaseSpec) -> SolverConfig:
         """Find the 'openfoam' solver config in the case.
@@ -71,9 +75,7 @@ class OpenFOAMAdapter:
                 return solver
         raise ValueError(f"no 'openfoam' solver config found in case '{case.id}'")
 
-    def _build_context(
-        self, case: CaseSpec, case_dir: Path, run_dir: Path
-    ) -> dict[str, Any]:
+    def _build_context(self, case: CaseSpec, case_dir: Path, run_dir: Path) -> dict[str, Any]:
         """Build Jinja2 template context from case parameters.
 
         Args:
@@ -202,6 +204,11 @@ class OpenFOAMAdapter:
         """
         case_dir_out = run_dir / "case"
         context = self._build_context(case, case_dir, run_dir)
+
+        # Remember the SOURCE case dir (holds reference data): cp-curve
+        # collection resamples onto the case reference's x/c grid, and
+        # collect_outputs only receives the run dir (R8).
+        self._source_case_dir = case_dir
 
         # Create shared directory structure
         (case_dir_out / "system").mkdir(parents=True, exist_ok=True)
@@ -350,14 +357,10 @@ class OpenFOAMAdapter:
         if stl_src.exists():
             shutil.copy2(stl_src, trisurface / "naca0012.stl")
         else:
-            logger.warning(
-                "naca0012.stl not found at %s or fallback location", stl_src
-            )
+            logger.warning("naca0012.stl not found at %s or fallback location", stl_src)
 
         # 0/ initial fields: U (alpha-derived), p, nuTilda (SA)
-        (zero_dir / "U").write_text(
-            self._render_template("U.naca.j2", context), encoding="utf-8"
-        )
+        (zero_dir / "U").write_text(self._render_template("U.naca.j2", context), encoding="utf-8")
         nu_val = context.get("nu", 1.6667e-5)
         # p: incompressible, uniform 0, with NACA boundary types.
         # farfield uses freestreamPressure (not fixedValue) — fixedValue 0 on
@@ -683,6 +686,7 @@ class OpenFOAMAdapter:
         case_dir_out = run_dir / "case"
         files: dict[str, Path] = {}
         qoi_values: dict[str, float] = {}
+        curves: dict[str, list[tuple[float, float]]] | None = None
 
         if case_dir_out.exists():
             for path in sorted(case_dir_out.rglob("*")):
@@ -760,6 +764,12 @@ class OpenFOAMAdapter:
                     "returned None) under postProcessing/forces/ for case %s",
                     case.id,
                 )
+
+            # === cp distribution collection (R8: activates the curve_l2
+            # gate for NACA cases). Fail-closed: any missing/unusable piece
+            # leaves curves at None with a logged reason — never a partial
+            # or fabricated curve. ===
+            curves = self._collect_cp_curve(case, case_dir_out, u_inf, l_ref)
         else:
             # Original LDC probe extraction
             probes_dir = case_dir_out / "postProcessing" / "probes"
@@ -773,8 +783,68 @@ class OpenFOAMAdapter:
         return ArtifactManifest(
             files=files,
             qoi_values=qoi_values if qoi_values else None,
-            curves=None,
+            curves=curves,
         )
+
+    def _collect_cp_curve(
+        self, case: CaseSpec, case_dir_out: Path, u_inf: float, l_ref: float
+    ) -> dict[str, list[tuple[float, float]]] | None:
+        """Collect the cp_distribution curve from the cpSurface sample (R8).
+
+        Reads the latest ``postProcessing/cpSurface/<time>/p_*.raw``,
+        converts kinematic pressure to Cp, extracts the upper surface and
+        resamples onto the case reference's x/c grid (strict shared loader
+        — only the ABSCISSA of the reference is used; Cp values are purely
+        simulated). Every failure path returns None with a logged reason.
+
+        Args:
+            case: CaseSpec configuration.
+            case_dir_out: Rendered OpenFOAM case dir inside the run dir.
+            u_inf: Freestream speed (m/s).
+            l_ref: Chord length (m).
+
+        Returns:
+            ``{"cp_distribution": [(x, cp), ...]}`` or None.
+        """
+        curve_name = "cp_distribution"
+        if curve_name not in (case.outputs.curves or []):
+            return None
+        if case.reference is None or curve_name not in (case.reference.files or {}):
+            logger.warning("cp collection skipped: case has no '%s' reference file", curve_name)
+            return None
+        if self._source_case_dir is None:
+            logger.warning("cp collection skipped: source case dir unknown (prepare not run)")
+            return None
+
+        from cfdb.metrics.curves import load_reference_curve
+        from cfdb.post.cp_curve import extract_cp_distribution
+
+        ref_path = self._source_case_dir / case.reference.files[curve_name]
+        reference = load_reference_curve(ref_path)
+        if reference is None:
+            logger.warning("cp collection skipped: reference %s failed strict load", ref_path)
+            return None
+
+        raw_candidates = sorted(
+            case_dir_out.glob("postProcessing/cpSurface/*/p_*.raw"),
+            key=lambda p: _safe_float_dir(p.parent.name),
+        )
+        if not raw_candidates:
+            logger.warning(
+                "cp collection skipped: no postProcessing/cpSurface/*/p_*.raw for case %s",
+                case.id,
+            )
+            return None
+
+        curve = extract_cp_distribution(
+            raw_candidates[-1],
+            u_inf=u_inf,
+            l_ref=l_ref,
+            reference_x=[x for x, _ in reference],
+        )
+        if curve is None:
+            return None
+        return {curve_name: curve}
 
 
 def _safe_float_dir(name: str) -> float:

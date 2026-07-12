@@ -89,6 +89,30 @@ functions
             }
         );
     }
+
+    cpSurface
+    {
+        // Samples kinematic pressure on the airfoil patch at the final
+        // iteration (raw x-y-z-p rows). The adapter converts to
+        // Cp = p / (0.5 * u_inf^2) (simpleFoam p is kinematic, freestream
+        // reference 0) and resamples the upper surface onto the case's
+        // reference x/c grid for the curve_l2 gate.
+        type            surfaces;
+        libs            ("libsampling.so");
+        writeControl    onEnd;
+        surfaceFormat   raw;
+        fields          (p);
+        interpolationScheme cell;
+        surfaces
+        {
+            airfoilSurface
+            {
+                type        patch;
+                patches     (airfoil);
+                interpolate false;
+            }
+        }
+    }
 }
 
 // ************************************************************************* //

@@ -1,0 +1,37 @@
+id: kth_largest
+name: K-th Largest Element
+category: verification
+domain: coding
+description: >-
+  Manufactured algorithm task: kth_largest() must be reimplemented from a
+  sort-ascending stub (buggy: returns the k-th smallest) to a correct
+  sort-descending scan. Mechanical correctness is judged purely by hidden
+  tests. Exercises a MULTI-ARGUMENT entry (list + int) in the
+  trusted-reexecution oracle. See Architecture-v5.0-multi-domain.md §3.4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi:
+    - pass_rate
+reference:
+  type: manufactured
+  qoi_values:
+    pass_rate: 1.0
+metrics:
+  qoi_relative_tolerance:
+    pass_rate: 0.0
+budget:
+  max_runtime_sec: 60
+execution:
+  requires_sandbox: true
+  expected_test_count: 5
+  # R9 rollout: trusted re-execution oracle over a multi-arg entry (nums, k).
+  # Held-out (nums, k) pairs are disjoint from the hidden-test inputs (verified
+  # by the admission disjointness lint), so a submission cannot replay a
+  # harvested assertion — it must actually compute the k-th largest of inputs
+  # it has never seen. The 'io_oracle_pass' gate is implied by this declaration
+  # (auto-added at contract init).
+  io_oracle:
+    entry: "solution:kth_largest"
+    cases_file: "reference/held_out_io.json"

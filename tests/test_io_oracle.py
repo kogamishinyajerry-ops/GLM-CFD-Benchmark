@@ -747,6 +747,7 @@ class TestShippedIoOracleCases:
             "csv_field_splitter",
             "roman_to_int",
             "merge_intervals",
+            "kth_largest",
         }, io_cases
         for case_id in io_cases:
             contract = init_contract(case_id, registry)  # runs io-oracle admission

@@ -1,0 +1,34 @@
+{
+  "case_id": "kth_largest",
+  "runs": 3,
+  "all_passed": true,
+  "golden_attempt_id": "37f54adcb1a61883e60db4fee7d981e148c88df42764f364c0f57c07445fa965",
+  "judge_image_id": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09",
+  "verdicts": [
+    {
+      "valid": true,
+      "score": 1.0,
+      "scored_at": "2026-07-12T17:31:41.263308+00:00",
+      "notes": [
+        "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+      ]
+    },
+    {
+      "valid": true,
+      "score": 1.0,
+      "scored_at": "2026-07-12T17:31:42.185261+00:00",
+      "notes": [
+        "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+      ]
+    },
+    {
+      "valid": true,
+      "score": 1.0,
+      "scored_at": "2026-07-12T17:31:43.146140+00:00",
+      "notes": [
+        "judge image: sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+      ]
+    }
+  ],
+  "created_at": "2026-07-12T17:31:43.146888+00:00"
+}

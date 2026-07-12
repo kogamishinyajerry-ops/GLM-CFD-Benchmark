@@ -234,6 +234,15 @@ cases/coding_tasks/<id>/
   自动带极曲线能力。
 - 外部调研中 BenchJack/RewardHackingAgents 关键数字为摘要级转述（declared-not-verified），
   正式对外引用前需原文复核；本蓝图只采其机制结论（checker 入锚），不背书具体数字。
+- **同进程判卷颠覆残差（Codex R0 P1 族，如实声明）**：提交代码被隐藏测试 import 后与
+  报告写出方同进程运行——`python -I` 启动隔离封死 sitecustomize/PYTHONPATH/pytest 影子
+  劫持，skipped=0 与收集计数对账封死懒作弊，但进程内 monkeypatch/伪造 report.xml 在
+  单进程 pytest 模型下无法机械排除（进程内无秘密可依）。v5.0 coding 判决的可信范围 =
+  非对抗提交；对抗强化路线 = 逐测试进程隔离 / 带外观察（backlog）。README 验证边界同步声明。
+- **NACA cp_curve/CSV 参考映射递延（Codex R0 P2）**：naca0012 的 curve 参考键名
+  （cp_curve）与 outputs.curves 名（cp_distribution）不一致且为 CSV 格式，engine 的
+  curve 判定当前对其保持 fail-closed incomplete（adapters 尚未产 curves 数据，实际 inert）；
+  键对齐 + CSV 参考装载进 backlog，绝不为「能跑」而放松装载校验。
 
 ## 9. 设计审查记录
 

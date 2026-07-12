@@ -41,6 +41,19 @@ def compute_curve_l2(
                 len(comp_curve),
             )
             continue
+        # x grids must actually match (Codex R0 P1: the docstring always
+        # promised this but the code never checked — same-length curves
+        # sampled at different abscissas could report L2=0 and pass).
+        # Exact equality; NaN x never matches (fail-closed skip -> the
+        # engine counts the curve as missing -> incomplete, never pass).
+        ref_x = np.array([x for x, _ in ref_curve])
+        comp_x = np.array([x for x, _ in comp_curve])
+        if not np.array_equal(ref_x, comp_x):
+            logger.warning(
+                "curve '%s' x-grid mismatch: reference and computed abscissas differ",
+                key,
+            )
+            continue
         ref_y = np.array([y for _, y in ref_curve])
         comp_y = np.array([y for _, y in comp_curve])
         diff = comp_y - ref_y

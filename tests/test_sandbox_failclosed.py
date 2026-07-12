@@ -199,7 +199,9 @@ class TestRunnerSandboxFailClosed:
         self, runner: Runner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         stub = _StubSandboxBackend()
-        monkeypatch.setattr(Runner, "_build_backend", lambda self, name, opts: stub)
+        monkeypatch.setattr(
+            Runner, "_build_backend", lambda self, name, opts, **kw: stub
+        )
         manifest = runner.execute(
             case_id="sandboxed_case", solver="generic", backend="local"
         )
@@ -210,7 +212,9 @@ class TestRunnerSandboxFailClosed:
         self, runner: Runner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         stub = _StubNonSandboxBackend()
-        monkeypatch.setattr(Runner, "_build_backend", lambda self, name, opts: stub)
+        monkeypatch.setattr(
+            Runner, "_build_backend", lambda self, name, opts, **kw: stub
+        )
         with pytest.raises(RuntimeError, match="requires_sandbox"):
             runner.execute(
                 case_id="sandboxed_case", solver="generic", backend="local"
@@ -223,7 +227,9 @@ class TestRunnerSandboxFailClosed:
         truthiness. A backend whose is_sandbox is truthy (1) but not the
         literal True singleton must still be refused."""
         stub = _StubTruthyNonBooleanBackend()
-        monkeypatch.setattr(Runner, "_build_backend", lambda self, name, opts: stub)
+        monkeypatch.setattr(
+            Runner, "_build_backend", lambda self, name, opts, **kw: stub
+        )
         with pytest.raises(RuntimeError, match="requires_sandbox"):
             runner.execute(
                 case_id="sandboxed_case", solver="generic", backend="local"
@@ -234,7 +240,9 @@ class TestRunnerSandboxFailClosed:
     ) -> None:
         """requires_sandbox=False never blocks, regardless of backend capability."""
         stub = _StubSandboxBackend()
-        monkeypatch.setattr(Runner, "_build_backend", lambda self, name, opts: stub)
+        monkeypatch.setattr(
+            Runner, "_build_backend", lambda self, name, opts, **kw: stub
+        )
         manifest = runner.execute(
             case_id="unsandboxed_case", solver="generic", backend="local"
         )

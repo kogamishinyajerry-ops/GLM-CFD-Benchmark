@@ -52,7 +52,12 @@
         <dt>Name</dt><dd>{{ case.name }}</dd>
         <dt>Category</dt><dd>{{ case.category }}</dd>
         <dt>Description</dt><dd>{{ case.description or 'N/A' }}</dd>
+        <dt>Domain</dt><dd>{{ case.domain }}</dd>
+        {% if case.physics %}
         <dt>Physics</dt><dd>{{ case.physics.flow }}{% if case.physics.turbulence %} + {{ case.physics.turbulence }}{% endif %}, {{ case.physics.dimensionality }}, {{ 'steady' if case.physics.steady else 'transient' }}</dd>
+        {% else %}
+        <dt>Physics</dt><dd>n/a (non-CFD domain)</dd>
+        {% endif %}
         {% if case.conditions.reynolds %}
         <dt>Reynolds</dt><dd>{{ "%.0f"|format(case.conditions.reynolds) }}</dd>
         {% endif %}

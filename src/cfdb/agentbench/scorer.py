@@ -485,21 +485,50 @@ def score_submission(
         # a single append point regardless of domain.
         agentic_notes: list[str] = []
         verdict = score_agentic(case_dir, submission_dir)
-        if verdict.mode != "CHECKER_OK":
+
+        # Post-run ruler re-verification (Codex R0 P2, mirrors the coding
+        # branch): a host-side race or an accidental checker write during
+        # execution must abort with exit 3, never ledger a score taken with
+        # a disturbed ruler.
+        post_drift = verify_frozen(contract, case_dir)
+        if len(post_drift) > 0:
+            raise FrozenDriftError(post_drift)
+
+        checker_ok = verdict.mode == "CHECKER_OK"
+        if not checker_ok:
             agentic_notes.append(f"checker_error: {verdict.error}")
-            agentic_gates = {"checker_ok": False}
-            agentic_valid = False
-            agentic_score: float | None = None
-            agentic_breakdown: dict[str, float] = {}
-        else:
-            if len(verdict.evidence) > 0:
-                agentic_notes.append(f"checker evidence: {'; '.join(verdict.evidence)}")
-            agentic_gates = {"checker_ok": True}
-            agentic_valid = verdict.success is True
-            agentic_metric_values = {"checker_success": 1.0 if verdict.success else 0.0}
-            agentic_score, agentic_breakdown = _assemble_score(
-                contract, agentic_valid, agentic_metric_values, agentic_notes
-            )
+        elif len(verdict.evidence) > 0:
+            agentic_notes.append(f"checker evidence: {'; '.join(verdict.evidence)}")
+
+        # Evaluate the FULL frozen gate list (Codex R0 P2): 'checker_ok'
+        # maps to the checker verdict; any unknown gate name fails closed —
+        # a contract can only rank what its declared gates actually gated.
+        agentic_gates: dict[str, bool] = {}
+        for gate_name in contract.validity_gates:
+            if gate_name == "checker_ok":
+                agentic_gates[gate_name] = checker_ok
+            else:
+                agentic_gates[gate_name] = False
+                agentic_notes.append(
+                    f"unknown agentic gate '{gate_name}' failed closed"
+                )
+        if "checker_ok" not in agentic_gates:
+            # The verdict is always recorded even if the frozen gate list
+            # omitted it (visibility; it cannot make the score rankable).
+            agentic_gates["checker_ok"] = checker_ok
+
+        gates_pass = all(
+            agentic_gates[g] is True for g in contract.validity_gates
+        )
+        agentic_valid = gates_pass and verdict.success is True
+        agentic_metric_values = (
+            {"checker_success": 1.0 if verdict.success is True else 0.0}
+            if checker_ok
+            else {}
+        )
+        agentic_score, agentic_breakdown = _assemble_score(
+            contract, agentic_valid, agentic_metric_values, agentic_notes
+        )
         result = SubmissionScore(
             submission_id=submission_dir.name,
             valid=agentic_valid,

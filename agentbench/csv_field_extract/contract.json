@@ -5,8 +5,11 @@
     "case.yaml": "c9cefd970ccbfb3fc37cb11c6726664881fe5d50d62388c1bb4eb3ace4b65e3d",
     "reference/checker.py": "4fe70160409326aec29fdf27c8830e465a63e92fd4dd7b847a1beae2239e6f4a",
     "reference/expected.json": "ccdcc445576768cccb278d421f14d2fb01d53a56e996a66d227cd7133a9c148f",
+    "visible/README.md": "83ce6fa7eb4cefae31fcff77df218697595e0abd318d0fa42c9ca0807b64042b",
+    "visible/employees.csv": "0611f35bea6137ba3ed2a7864c1dbeccf86a56b4b89b309ea77fc624ca67ae53",
     "__weights__": "89f4764a4a60c4de3243d5ba83c99c58862ce79efbb655e144dff233bf4f4173",
-    "__validity_gates__": "1a2479196ccfe68923532a90b45fd7f4b0d1cad5147fcce06e1759a7a60cda1d"
+    "__validity_gates__": "1a2479196ccfe68923532a90b45fd7f4b0d1cad5147fcce06e1759a7a60cda1d",
+    "__normalize_source__": "9032c8bd9eba04ff674a40b86384c08356a61bc5e83a67ef229624cf1938dec7"
   },
   "weights": {
     "checker_success": 1.0

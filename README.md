@@ -237,6 +237,17 @@ not:
   (append-only discipline), not cryptographic.** There is no hash chain: a
   process that respects the library/ledger APIs cannot rewrite history,
   but direct file edits are outside this boundary.
+- **Coding-domain judging trusts the judge process, not the submission —
+  but the submission executes inside the judge process.** The `python -I`
+  bootstrap blocks startup hijack (PYTHONPATH / sitecustomize / pytest
+  shadowing), skipped-test and collected-count reconciliation block the
+  lazy cheats, and the judge material is read-only-mounted. What remains:
+  a hostile submission imported by the hidden tests runs in the same
+  Python process as the report writer and can in principle monkeypatch
+  pytest internals or fabricate `/work/report.xml` from inside. v5.0's
+  coding verdicts are therefore trustworthy for non-adversarial
+  submissions; adversarial hardening (per-test process isolation,
+  out-of-band observation) is on the roadmap.
 
 ## Mock Cases (P0)
 

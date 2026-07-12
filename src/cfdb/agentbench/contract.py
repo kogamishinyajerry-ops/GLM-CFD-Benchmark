@@ -39,6 +39,13 @@ VALIDITY_GATES_KEY = "__validity_gates__"
 """Frozen-map key anchoring the sha256 of the contract's validity gates."""
 
 HELD_OUT_PREFIX = "held_out:"
+
+NORMALIZE_SOURCE_KEY = "__normalize_source__"
+"""Frozen-map key anchoring the sha256 of cfdb/agentbench/normalize.py for
+agentic contracts. Normalization rules are judging material (Architecture
+v5.0 §0.7): editing normalize.py must drift every existing agentic contract
+(exit 3 at scoring) — a version string alone would not catch a code change
+that forgets to bump it (Codex R0 P2)."""
 """Frozen-map key prefix for held-out reference files (v5.0 Wave D2).
 
 Held-out files live under the case directory like any other reference file,
@@ -164,11 +171,29 @@ def canonical_digest(obj: object) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _normalize_source_digest() -> str:
+    """sha256 of the live ``cfdb/agentbench/normalize.py`` source file.
+
+    Used both when anchoring (:data:`NORMALIZE_SOURCE_KEY` at init) and when
+    re-verifying — so editing the normalization rules drifts every existing
+    agentic contract instead of silently changing quasi-exact-match
+    semantics under a frozen ruler.
+    """
+    from cfdb.agentbench import normalize
+
+    return sha256_file(Path(normalize.__file__))
+
+
 def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
     """Enumerate the case files that must be frozen.
 
     Includes ``case.yaml``, every file under ``<case_dir>/reference/``
     (recursive), and every file listed in ``case.reference.files``.
+    For agentic cases, every file under ``<case_dir>/visible/`` is frozen
+    too (Codex R0 P1): a state-based checker derives its expected verdict
+    from the visible inputs, so editing them after contract creation would
+    silently change the accepted output while the checker itself hashes
+    clean.
 
     Args:
         case: Loaded case spec.
@@ -193,6 +218,13 @@ def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
         for path in sorted(reference_dir.rglob("*")):
             if path.is_file():
                 rel_paths.add(path.relative_to(case_dir).as_posix())
+
+    if case.domain == "agentic":
+        visible_dir = case_dir / "visible"
+        if visible_dir.is_dir():
+            for path in sorted(visible_dir.rglob("*")):
+                if path.is_file():
+                    rel_paths.add(path.relative_to(case_dir).as_posix())
 
     if case.reference is not None:
         for rel in case.reference.files.values():
@@ -270,6 +302,25 @@ def init_contract(
             "influence their own ranking"
         )
 
+    if case.domain == "agentic":
+        # Admission gate (Codex R0 P2): refuse to freeze a contract over a
+        # checker that imports denied modules — validate_checker is supply
+        # -chain hygiene, and init is its mandatory production call site.
+        from cfdb.agentbench.checker_scorer import validate_checker
+
+        checker_path = case_dir / "reference" / "checker.py"
+        if not checker_path.is_file():
+            raise FileNotFoundError(
+                f"agentic case '{case_id}' has no reference/checker.py — "
+                "cannot freeze a contract without its judging primitive"
+            )
+        admission = validate_checker(checker_path)
+        if admission.ok is not True:
+            raise ValueError(
+                f"agentic checker {checker_path} failed admission: "
+                + "; ".join(admission.violations)
+            )
+
     frozen: dict[str, str] = {}
     for rel in _collect_frozen_files(case, case_dir):
         frozen[rel] = sha256_file(case_dir / rel)
@@ -277,6 +328,8 @@ def init_contract(
         frozen[held_out_key] = sha256_file(case_dir / rel)
     frozen[WEIGHTS_KEY] = canonical_digest(final_weights)
     frozen[VALIDITY_GATES_KEY] = canonical_digest(final_gates)
+    if case.domain == "agentic":
+        frozen[NORMALIZE_SOURCE_KEY] = _normalize_source_digest()
 
     logger.info("initialized scoring contract for '%s' (%d frozen items)", case_id, len(frozen))
     return ScoringContract(
@@ -308,6 +361,8 @@ def verify_frozen(contract: ScoringContract, case_dir: Path) -> list[str]:
             actual = canonical_digest(contract.weights)
         elif key == VALIDITY_GATES_KEY:
             actual = canonical_digest(contract.validity_gates)
+        elif key == NORMALIZE_SOURCE_KEY:
+            actual = _normalize_source_digest()
         else:
             rel = key[len(HELD_OUT_PREFIX):] if key.startswith(HELD_OUT_PREFIX) else key
             path = case_dir / rel

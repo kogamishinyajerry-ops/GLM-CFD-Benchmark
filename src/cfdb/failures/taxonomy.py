@@ -245,6 +245,15 @@ def classify(manifest: RunManifest, metrics: MetricsResult | None) -> FailureMod
         # fall through to UNKNOWN. Legacy metrics (empty qoi_failed) keep the
         # old qoi_relative_errors trigger.
         return "TOLERANCE_EXCEEDED"
+    if (
+        manifest.status == "success"
+        and metrics is not None
+        and len(metrics.curves_failed) > 0
+    ):
+        # v5.0 D1 curve gating (Codex R0 P2): a run can pass every QoI yet
+        # fail a curve L2 tolerance (qoi_pass True, curves_failed non-empty,
+        # overall_status 'fail') — that is a tolerance failure, not UNKNOWN.
+        return "TOLERANCE_EXCEEDED"
     if _matching_notes_any(metrics, _WRONG_ANSWER_PATTERNS):
         return "WRONG_ANSWER"
     if _matching_notes_any(metrics, _RESOURCE_EXCEEDED_PATTERNS):
@@ -299,11 +308,17 @@ def build_signature(
     if mode == "MISSING_REFERENCE":
         return "; ".join(_matching_notes(metrics, _MISSING_REFERENCE_PATTERN))
     if mode == "TOLERANCE_EXCEEDED":
-        if metrics is not None and metrics.qoi_failed:
-            # Stage-A semantics: sign with the QoIs that actually failed
-            # their gate, so distinct failure sets over the same measured
-            # QoIs are not over-deduplicated into one fingerprint.
-            return f"qoi={','.join(sorted(metrics.qoi_failed))}"
+        if metrics is not None and (metrics.qoi_failed or metrics.curves_failed):
+            # Stage-A semantics: sign with the QoIs/curves that actually
+            # failed their gate, so distinct failure sets over the same
+            # measured quantities are not over-deduplicated. Curve-only
+            # failures (v5.0 D1) get their own stable signature component.
+            parts: list[str] = []
+            if metrics.qoi_failed:
+                parts.append(f"qoi={','.join(sorted(metrics.qoi_failed))}")
+            if metrics.curves_failed:
+                parts.append(f"curves={','.join(sorted(metrics.curves_failed))}")
+            return " ".join(parts)
         # Legacy metrics without qoi_failed: fall back to the historical
         # all-measured-QoIs signature to keep old fingerprints stable.
         logger.info(

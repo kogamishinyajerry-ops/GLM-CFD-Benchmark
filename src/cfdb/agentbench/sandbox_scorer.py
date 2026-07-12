@@ -108,42 +108,62 @@ def _default_backend_factory(case_dir: Path, submission_dir: Path) -> ExecutionB
     )
 
 
+PYTEST_ARGS: list[str] = [
+    JUDGE_HIDDEN_TESTS,
+    f"--rootdir={JUDGE_HIDDEN_TESTS}",
+    f"--confcutdir={JUDGE_HIDDEN_TESTS}",
+    "-p",
+    "no:cacheprovider",
+    f"--basetemp={WORK_BASETEMP}",
+    f"--junitxml={WORK_REPORT}",
+]
+"""Frozen pytest arguments (Architecture §3.3, verbatim)."""
+
+
 def _pytest_command() -> list[str]:
-    """Build the frozen pytest invocation (Architecture §3.3, verbatim)."""
-    return [
-        "python",
-        "-m",
-        "pytest",
-        JUDGE_HIDDEN_TESTS,
-        f"--rootdir={JUDGE_HIDDEN_TESTS}",
-        f"--confcutdir={JUDGE_HIDDEN_TESTS}",
-        "-p",
-        "no:cacheprovider",
-        f"--basetemp={WORK_BASETEMP}",
-        f"--junitxml={WORK_REPORT}",
-    ]
+    """Build the isolated judge bootstrap (Architecture §3.3 + Codex R0 P1).
+
+    ``python -I`` ignores PYTHONPATH, user site-packages and sitecustomize,
+    so the interpreter starts and ``pytest`` is imported from the judge
+    image ONLY — a submission shipping ``sitecustomize.py`` or a
+    ``pytest.py`` shadow module cannot hijack judge startup. The submission
+    path is inserted onto ``sys.path`` only after pytest is already
+    imported, purely so the hidden tests can import the submission.
+    """
+    bootstrap = (
+        "import sys, pytest; "
+        f"sys.path.insert(0, {JUDGE_SUBMISSION!r}); "
+        f"raise SystemExit(pytest.main({PYTEST_ARGS!r}))"
+    )
+    return ["python", "-I", "-c", bootstrap]
 
 
 def _pytest_env() -> dict[str, str]:
-    """Build the frozen pytest environment (Architecture §3.3, verbatim)."""
+    """Build the frozen pytest environment (Architecture §3.3, verbatim).
+
+    No PYTHONPATH: ``python -I`` would ignore it anyway (by design — the
+    submission path travels inside the bootstrap, after pytest import).
+    """
     return {
-        "PYTHONPATH": JUDGE_SUBMISSION,
         "PYTHONDONTWRITEBYTECODE": "1",
         "TMPDIR": WORK_TMPDIR,
     }
 
 
-def _parse_junit(report_path: Path, notes: list[str]) -> tuple[int, int, int] | None:
-    """Parse a junitxml report into ``(total, failures, errors)``.
+def _parse_junit(report_path: Path, notes: list[str]) -> tuple[int, int, int, int] | None:
+    """Parse a junitxml report into ``(total, failures, errors, skipped)``.
 
     Args:
         report_path: Host path to the ``report.xml`` produced by pytest.
         notes: Audit note sink (mutated in place).
 
     Returns:
-        ``(total, failures, errors)``, or None (fail-closed) if the file is
-        missing or cannot be parsed as valid junitxml — this never guesses
-        a verdict from stdout.
+        ``(total, failures, errors, skipped)``, or None (fail-closed) if the
+        file is missing or cannot be parsed as valid junitxml — this never
+        guesses a verdict from stdout. ``skipped`` matters: JUnit's ``tests``
+        total INCLUDES skipped items, so ignoring it would let a submission
+        call ``pytest.skip()`` from inside a hidden test and match the frozen
+        count with zero failures (Codex R0 P1).
     """
     if not report_path.is_file():
         notes.append(f"junitxml missing at {report_path} (submission invalid)")
@@ -161,10 +181,11 @@ def _parse_junit(report_path: Path, notes: list[str]) -> tuple[int, int, int] | 
         total = int(suite.get("tests", "0"))
         failures = int(suite.get("failures", "0"))
         errors = int(suite.get("errors", "0"))
+        skipped = int(suite.get("skipped", "0"))
     except (TypeError, ValueError) as e:
         notes.append(f"junitxml testsuite counts unparseable: {e} (submission invalid)")
         return None
-    return total, failures, errors
+    return total, failures, errors, skipped
 
 
 def score_coding(
@@ -210,78 +231,105 @@ def score_coding(
     factory = backend_factory if backend_factory is not None else _default_backend_factory
     backend = factory(case_dir, submission_dir)
 
-    effective_work_dir = work_dir if work_dir is not None else Path(
-        tempfile.mkdtemp(prefix="cfdb-sbx-work-")
-    )
-    effective_work_dir.mkdir(parents=True, exist_ok=True)
-    (effective_work_dir / "tmp").mkdir(parents=True, exist_ok=True)
-
-    timeout = case.budget.max_runtime_sec
-    run_result = backend.execute(
-        _pytest_command(), cwd=effective_work_dir, timeout=timeout, env=_pytest_env()
-    )
-
-    # Defense-in-depth: re-verify the ruler was not disturbed while the
-    # sandbox ran (the ro judge mount is the primary defense; this catches
-    # a host-side race/tamper within the scoring window itself).
-    drifted = verify_frozen(contract, case_dir)
-    if len(drifted) > 0:
-        raise FrozenDriftError(drifted)
-
-    notes: list[str] = []
-    wall_time = (
-        run_result.wall_time_sec if math.isfinite(run_result.wall_time_sec) else None
-    )
-
-    computed: dict[str, float] = {"sandbox_used": 1.0}
-
-    if run_result.timed_out is True or run_result.exit_code == -1:
-        notes.append(
-            f"container exited abnormally (exit_code={run_result.exit_code}, "
-            f"timed_out={run_result.timed_out}): submission invalid"
-        )
-        computed["tests_all_pass"] = 0.0
+    # Internally-created scratch dirs are cleaned up on success AND
+    # exception (Codex R0 P2); caller-owned dirs are left untouched.
+    owned_tmp: tempfile.TemporaryDirectory[str] | None = None
+    if work_dir is not None:
+        effective_work_dir = work_dir
     else:
-        parsed = _parse_junit(effective_work_dir / REPORT_FILENAME, notes)
-        if parsed is None:
+        owned_tmp = tempfile.TemporaryDirectory(prefix="cfdb-sbx-work-")
+        effective_work_dir = Path(owned_tmp.name)
+    try:
+        effective_work_dir.mkdir(parents=True, exist_ok=True)
+        (effective_work_dir / "tmp").mkdir(parents=True, exist_ok=True)
+
+        timeout = case.budget.max_runtime_sec
+        run_result = backend.execute(
+            _pytest_command(), cwd=effective_work_dir, timeout=timeout, env=_pytest_env()
+        )
+
+        # Defense-in-depth: re-verify the ruler was not disturbed while the
+        # sandbox ran (the ro judge mount is the primary defense; this catches
+        # a host-side race/tamper within the scoring window itself).
+        drifted = verify_frozen(contract, case_dir)
+        if len(drifted) > 0:
+            raise FrozenDriftError(drifted)
+
+        notes: list[str] = []
+        judge_image = getattr(backend, "image", None) or getattr(backend, "_image", None)
+        if isinstance(judge_image, str):
+            notes.append(f"judge image: {judge_image}")
+        wall_time = (
+            run_result.wall_time_sec if math.isfinite(run_result.wall_time_sec) else None
+        )
+
+        computed: dict[str, float] = {"sandbox_used": 1.0}
+
+        # Exit-code policy (Codex R0 P2): only pytest's own outcomes may
+        # reach report-based scoring — 0 (all passed) and 1 (ordinary test
+        # failures). Timeouts, negative codes and >=2 (pytest infra errors
+        # 2-5, docker runtime codes) invalidate the submission regardless
+        # of any report file left in the writable work zone.
+        if run_result.timed_out is True or run_result.exit_code not in (0, 1):
+            notes.append(
+                f"container exited abnormally (exit_code={run_result.exit_code}, "
+                f"timed_out={run_result.timed_out}): submission invalid"
+            )
             computed["tests_all_pass"] = 0.0
         else:
-            total, failures, errors = parsed
-            expected = case.execution.expected_test_count
-            if expected is not None and total != expected:
-                notes.append(
-                    f"collected test total {total} != frozen expected_test_count "
-                    f"{expected} (submission invalid: collection tampering suspected)"
-                )
-                computed["tests_all_pass"] = 0.0
-            elif total == 0:
-                notes.append("junitxml reports zero collected tests (submission invalid)")
+            parsed = _parse_junit(effective_work_dir / REPORT_FILENAME, notes)
+            if parsed is None:
                 computed["tests_all_pass"] = 0.0
             else:
-                pass_rate = (total - failures - errors) / total
-                all_pass = failures == 0 and errors == 0
-                computed["pass_rate"] = pass_rate
-                computed["tests_all_pass"] = 1.0 if all_pass else 0.0
-                if not all_pass:
+                total, failures, errors, skipped = parsed
+                expected = case.execution.expected_test_count
+                if expected is not None and total != expected:
                     notes.append(
-                        f"tests_all_pass gate failed: {failures} failing, {errors} erroring "
-                        f"of {total} collected tests"
+                        f"collected test total {total} != frozen expected_test_count "
+                        f"{expected} (submission invalid: collection tampering suspected)"
                     )
+                    computed["tests_all_pass"] = 0.0
+                elif total == 0:
+                    notes.append(
+                        "junitxml reports zero collected tests (submission invalid)"
+                    )
+                    computed["tests_all_pass"] = 0.0
+                elif skipped != 0:
+                    notes.append(
+                        f"hidden tests skipped: {skipped} (submission invalid: "
+                        "skipping is never a pass)"
+                    )
+                    computed["tests_all_pass"] = 0.0
+                else:
+                    pass_rate = (total - failures - errors) / total
+                    all_pass = failures == 0 and errors == 0
+                    computed["pass_rate"] = pass_rate
+                    computed["tests_all_pass"] = 1.0 if all_pass else 0.0
+                    if not all_pass:
+                        notes.append(
+                            f"tests_all_pass gate failed: {failures} failing, "
+                            f"{errors} erroring of {total} collected tests"
+                        )
 
-    gates = _evaluate_gates(contract, case, computed, wall_time, notes)
-    valid = all(gates[g] is True for g in contract.validity_gates)
+        gates = _evaluate_gates(contract, case, computed, wall_time, notes)
+        valid = all(gates[g] is True for g in contract.validity_gates)
 
-    metric_values = {k: v for k, v in computed.items() if k == "pass_rate"}
-    score, breakdown = _assemble_score(contract, valid, metric_values, notes)
+        metric_values = {k: v for k, v in computed.items() if k == "pass_rate"}
+        score, breakdown = _assemble_score(contract, valid, metric_values, notes)
 
-    return SubmissionScore(
-        submission_id=submission_dir.name,
-        valid=valid,
-        score=score,
-        breakdown=breakdown,
-        gates=gates,
-        scored_at=datetime.now(timezone.utc).isoformat(),
-        notes=notes,
-        wall_time=WallTimeRecord(value_sec=wall_time),
-        ruler_id=ruler_id,
-    )
+        return SubmissionScore(
+            submission_id=submission_dir.name,
+            valid=valid,
+            score=score,
+            breakdown=breakdown,
+            gates=gates,
+            scored_at=datetime.now(timezone.utc).isoformat(),
+            notes=notes,
+            # Backend-measured wall clock, not submission-supplied
+            # (Codex R0 P2: mislabelling measured timing as self-reported).
+            wall_time=WallTimeRecord(value_sec=wall_time, self_reported=False),
+            ruler_id=ruler_id,
+        )
+    finally:
+        if owned_tmp is not None:
+            owned_tmp.cleanup()

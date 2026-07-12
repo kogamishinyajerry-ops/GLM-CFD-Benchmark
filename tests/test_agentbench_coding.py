@@ -41,13 +41,14 @@ from cfdb.registry import CaseRegistry
 CASE_ID = "coding_case"
 
 
-def _junit_xml(total: int, failures: int = 0, errors: int = 0) -> str:
+def _junit_xml(total: int, failures: int = 0, errors: int = 0, skipped: int = 0) -> str:
     """Build a minimal well-formed junitxml report."""
     cases = "".join(f'<testcase classname="t" name="t{i}"/>' for i in range(total))
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         "<testsuites>"
-        f'<testsuite name="pytest" tests="{total}" failures="{failures}" errors="{errors}">'
+        f'<testsuite name="pytest" tests="{total}" failures="{failures}" '
+        f'errors="{errors}" skipped="{skipped}">'
         f"{cases}"
         "</testsuite>"
         "</testsuites>"
@@ -140,28 +141,37 @@ def bench(tmp_path: Path):
 class TestPytestInvocation:
     """The pytest command/env are frozen verbatim by Architecture v5.0 §3.3."""
 
-    def test_command_matches_blueprint(self) -> None:
+    def test_command_is_isolated_bootstrap(self) -> None:
+        # Codex R0 P1: python -I ignores PYTHONPATH/sitecustomize so pytest
+        # resolves from the judge image only; the submission path is added
+        # inside the bootstrap AFTER pytest is imported.
         cmd = _pytest_command()
-        assert cmd == [
-            "python",
-            "-m",
-            "pytest",
+        assert cmd[:3] == ["python", "-I", "-c"]
+        bootstrap = cmd[3]
+        assert bootstrap.startswith("import sys, pytest; ")
+        assert f"sys.path.insert(0, {JUDGE_SUBMISSION!r})" in bootstrap
+        assert "pytest.main(" in bootstrap
+        for frozen_arg in (
             JUDGE_HIDDEN_TESTS,
             f"--rootdir={JUDGE_HIDDEN_TESTS}",
             f"--confcutdir={JUDGE_HIDDEN_TESTS}",
-            "-p",
             "no:cacheprovider",
             f"--basetemp={WORK_BASETEMP}",
             f"--junitxml={WORK_REPORT}",
-        ]
+        ):
+            assert frozen_arg in bootstrap
+        # sys.path insertion must come after the pytest import.
+        assert bootstrap.index("pytest") < bootstrap.index("sys.path.insert")
 
     def test_env_matches_blueprint(self) -> None:
+        # No PYTHONPATH: -I would ignore it, and its absence is the point
+        # (submission path travels inside the bootstrap instead).
         env = _pytest_env()
         assert env == {
-            "PYTHONPATH": JUDGE_SUBMISSION,
             "PYTHONDONTWRITEBYTECODE": "1",
             "TMPDIR": WORK_TMPDIR,
         }
+        assert "PYTHONPATH" not in env
 
 
 class TestScoreCodingBaseline:
@@ -185,10 +195,13 @@ class TestScoreCodingBaseline:
         assert result.submission_id == "sub_a"
         assert result.wall_time is not None
         assert result.wall_time.value_sec == pytest.approx(1.5)
-        assert result.wall_time.self_reported is True
+        # Backend-measured wall clock is recomputed evidence, not a
+        # submission-supplied number (Codex R0 P2).
+        assert result.wall_time.self_reported is False
         # The stub actually received the frozen command/env (dispatch wiring works).
         assert len(stub.calls) == 1
-        assert stub.calls[0]["env"]["PYTHONPATH"] == JUDGE_SUBMISSION
+        assert stub.calls[0]["command"][:3] == ["python", "-I", "-c"]
+        assert "PYTHONPATH" not in stub.calls[0]["env"]
 
     def test_partial_fail_valid_submission_no_score(self, bench, tmp_path: Path) -> None:
         _, case, case_dir, contract, tmp = bench

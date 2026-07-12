@@ -81,7 +81,11 @@ class Runner:
         run_dir = self._runs_root / run_id
 
         # P2-b: construct backend instance (replaces simple get_backend() factory)
-        backend_inst = self._build_backend(backend, backend_options)
+        backend_inst = self._build_backend(
+            backend,
+            backend_options,
+            requires_sandbox=case.execution.requires_sandbox is True,
+        )
 
         adapter = get_adapter(solver, dry_run=dry_run, backend=backend_inst)
 
@@ -174,12 +178,21 @@ class Runner:
         self,
         name: str,
         options: dict[str, Any] | None,
+        *,
+        requires_sandbox: bool = False,
     ) -> ExecutionBackend:
         """Construct a backend instance from name + options.
 
         Args:
             name: Backend name ('local' or 'docker').
             options: Backend-specific options. For Docker: {'image': ..., 'pull_policy': ...}.
+            requires_sandbox: When True and the backend is docker, construct
+                the sandbox profile so requires_sandbox cases are actually
+                runnable through the public Runner/CLI path (Codex R0 P1:
+                previously no caller ever built a sandbox backend, so such
+                cases were unconditionally rejected). Local backends are
+                never sandboxes — the fail-closed check in execute() still
+                refuses those.
 
         Returns:
             ExecutionBackend instance.
@@ -200,6 +213,7 @@ class Runner:
             return DockerBackend(
                 image=image,
                 pull_policy=opts.get("pull_policy", "missing"),
+                sandbox=requires_sandbox is True,
             )
         else:
             raise ValueError(

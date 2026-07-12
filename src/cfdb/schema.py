@@ -223,6 +223,32 @@ class BudgetSpec(BaseModel):
     """Maximum allowed mesh cell count (not enforced in P0)."""
 
 
+class IoOracleSpec(BaseModel):
+    """Trusted re-execution oracle for a coding case (v5.0 R9, opt-in).
+
+    A second, independent judging signal beside the hidden pytest suite:
+    the judge drives the submission's declared entry function over a
+    held-out input set in an isolated container (no hidden_tests mounted,
+    expected outputs NEVER entering the container) and reconciles the
+    returned values host-side. Forgery is thereby narrowed from "write a
+    passing report file" to "actually compute the correct answers" —
+    inputs are visible, expected outputs are not. See
+    Architecture-v5.0-multi-domain.md §3.5 and §8."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry: str
+    """``"module:function"`` — the submission callable to exercise. Both
+    parts must be Python identifiers (validated at contract admission);
+    frozen via ``case.yaml``, so a submission cannot redirect the entry."""
+
+    cases_file: str
+    """Case-dir-relative path to the held-out IO set, a JSON list of
+    ``{"args": [...], "expected": <value>}`` objects. Lives under
+    ``reference/`` so it is frozen per-file and in the manifest; expected
+    values are read HOST-SIDE only and never mounted into the container."""
+
+
 class ExecutionSpec(BaseModel):
     """Execution requirements for a case (v5.0)."""
 
@@ -239,6 +265,12 @@ class ExecutionSpec(BaseModel):
 
     Scored runs reconcile the junitxml collected-test total against this
     number; mismatch invalidates the submission (collection tampering)."""
+
+    io_oracle: IoOracleSpec | None = None
+    """Coding domain (opt-in, v5.0 R9): trusted re-execution oracle. When
+    set, the case's frozen ``validity_gates`` MUST include
+    ``io_oracle_pass`` and vice versa (enforced at contract admission) —
+    the oracle only bites through that gate."""
 
 
 class CaseSpec(BaseModel):

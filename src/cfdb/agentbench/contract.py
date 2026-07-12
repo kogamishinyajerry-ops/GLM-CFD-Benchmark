@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -476,6 +477,164 @@ def _collect_held_out_files(case: CaseSpec, case_dir: Path) -> dict[str, str]:
     return result
 
 
+MIN_IO_ORACLE_CASES = 3
+"""Minimum held-out IO cases an oracle must declare (R9). An empty or tiny
+oracle gates nothing / is trivially guessable — the same 'an empty ruler
+gates nothing' principle as :meth:`ScoringContract._validate_frozen_nonempty`.
+Three mirrors the golden-admission repeat-count floor."""
+
+IO_ORACLE_GATE = "io_oracle_pass"
+"""Validity-gate name the IO oracle drives. Presence of the gate and of
+``execution.io_oracle`` are coupled both ways at admission."""
+
+
+def _contains_float(value: object) -> bool:
+    """True if a JSON value contains a float anywhere (R9 admission guard).
+
+    ``bool`` is deliberately NOT treated as float. Floats are rejected in
+    held-out expected values because float equality is a false-precision
+    trap — tolerance semantics are a deliberate v2 design, not a silent
+    ``==`` here.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, float):
+        return True
+    if isinstance(value, list):
+        return any(_contains_float(v) for v in value)
+    if isinstance(value, dict):
+        return any(_contains_float(v) for v in value.values())
+    return False
+
+
+def _validate_io_oracle(case: CaseSpec, case_dir: Path, final_gates: list[str]) -> None:
+    """Admission-gate a coding case's IO oracle declaration (R9).
+
+    Enforced at :func:`init_contract` (the mandatory production freeze site,
+    like the agentic checker admission): a malformed, empty, float-bearing,
+    or gate-decoupled oracle is refused BEFORE a ruler is anchored — never
+    left to fail silently at scoring time.
+
+    Args:
+        case: Loaded coding case with ``execution.io_oracle`` set.
+        case_dir: Case directory.
+        final_gates: The gate list about to be frozen.
+
+    Raises:
+        ValueError / FileNotFoundError: On any malformed or decoupled spec.
+    """
+    io = case.execution.io_oracle
+    assert io is not None  # caller guards; narrows type
+
+    if io.entry.count(":") != 1:
+        raise ValueError(f"io_oracle.entry '{io.entry}' must be 'module:function'")
+    module, func = io.entry.split(":", 1)
+    if not module.isidentifier() or not func.isidentifier():
+        raise ValueError(f"io_oracle.entry '{io.entry}': module and function must be identifiers")
+
+    # Gate coupling both ways: an oracle that never gates, or a gate with no
+    # oracle behind it (fail-closed forever), are both refused.
+    if IO_ORACLE_GATE not in final_gates:
+        raise ValueError(
+            f"case '{case.id}' declares execution.io_oracle but '{IO_ORACLE_GATE}' "
+            "is not in its validity_gates — the oracle would run but never gate"
+        )
+
+    cases_path = case_dir / io.cases_file
+    if not cases_path.is_file():
+        raise FileNotFoundError(f"io_oracle.cases_file missing: {cases_path}")
+    try:
+        data = json.loads(cases_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"io_oracle.cases_file is not valid JSON: {cases_path}: {e}") from e
+    if not isinstance(data, list):
+        raise ValueError(f"io_oracle.cases_file must be a JSON list: {cases_path}")
+    if len(data) < MIN_IO_ORACLE_CASES:
+        raise ValueError(
+            f"io_oracle needs >= {MIN_IO_ORACLE_CASES} cases (got {len(data)}): "
+            "an empty/tiny oracle gates nothing and is trivially guessable"
+        )
+    for i, item in enumerate(data):
+        if not isinstance(item, dict) or "args" not in item or "expected" not in item:
+            raise ValueError(f"io_oracle case {i} must be an object with 'args' and 'expected'")
+        if not isinstance(item["args"], list):
+            raise ValueError(f"io_oracle case {i}: 'args' must be a list")
+        if _contains_float(item["expected"]):
+            raise ValueError(
+                f"io_oracle case {i}: float in 'expected' — float equality is a "
+                "false-precision trap; v1 rejects floats (tolerance semantics = v2)"
+            )
+
+    _lint_io_disjoint_from_hidden(data, case_dir, case.id)
+
+
+def _lint_io_disjoint_from_hidden(data: list, case_dir: Path, case_id: str) -> None:
+    """Best-effort author-hygiene check: held-out IO inputs must not appear
+    verbatim in the hidden-test source (R9).
+
+    This is a LINT, not a boundary. The real protection against an
+    input-overlap cheat (harvest a hidden-test assertion, stash it, replay
+    it in the oracle run) is the structural isolation of the oracle run in
+    its OWN work zone — see :func:`cfdb.agentbench.sandbox_scorer._run_io_oracle`.
+    This check only nudges the author away from the obvious overlap.
+
+    Args:
+        data: Parsed held-out IO cases.
+        case_dir: Case directory.
+        case_id: Case id (for the error message).
+
+    Raises:
+        ValueError: If a case's full argument list appears verbatim in the
+            hidden-test source (the author must disambiguate).
+    """
+    hidden_dir = case_dir / "reference" / "hidden_tests"
+    if not hidden_dir.is_dir():
+        return
+    source = "\n".join(
+        p.read_text(encoding="utf-8", errors="replace")
+        for p in sorted(hidden_dir.rglob("*.py"))
+        if p.is_file()
+    )
+    for i, item in enumerate(data):
+        scalars = _arg_scalars(item["args"])
+        # Flag a case only when EVERY scalar of its input tuple appears as a
+        # token in the hidden source — the full input is reconstructible
+        # there, so the expected output beside it is too. Requiring all
+        # scalars keeps false positives low; a single incidental number does
+        # not trip it. Heuristic lint, not a boundary (see docstring).
+        if len(scalars) > 0 and all(_token_in_source(s, source) for s in scalars):
+            raise ValueError(
+                f"io_oracle case {i} args {item['args']!r} all appear in hidden_tests "
+                f"source for case '{case_id}': held-out IO inputs must be disjoint "
+                "from hidden-test inputs (author hygiene)"
+            )
+
+
+def _arg_scalars(value: object) -> list[object]:
+    """Flatten an args value to its scalar leaves (R9 lint helper)."""
+    if isinstance(value, list):
+        return [s for v in value for s in _arg_scalars(v)]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _arg_scalars(v)]
+    return [value]
+
+
+def _token_in_source(scalar: object, source: str) -> bool:
+    """True if a scalar arg appears as a standalone token in the source.
+
+    Numbers use non-word-boundary lookarounds so ``2`` does not match
+    inside ``256``; strings use a plain substring test. bool/None are too
+    generic to be evidence and never match.
+    """
+    if isinstance(scalar, bool) or scalar is None:
+        return False
+    if isinstance(scalar, int):
+        return re.search(rf"(?<![\w.]){re.escape(str(scalar))}(?![\w.])", source) is not None
+    if isinstance(scalar, str) and scalar != "":
+        return scalar in source
+    return False
+
+
 def init_contract(
     case_id: str,
     registry: CaseRegistry,
@@ -519,6 +678,17 @@ def init_contract(
     domain_gates = DOMAIN_DEFAULT_VALIDITY_GATES.get(case.domain, DEFAULT_VALIDITY_GATES)
     final_weights = dict(domain_weights if weights is None else weights)
     final_gates = list(domain_gates if validity_gates is None else validity_gates)
+    # R9: declaring an IO oracle IS the opt-in — the gate that makes it bite
+    # is implied, so a case author never has to remember to list it. Only
+    # this coding-with-oracle case appends it; other coding cases keep their
+    # gates unchanged (so the reverse-coupling check below still guards a
+    # hand-authored bare io_oracle_pass gate with no oracle behind it).
+    if (
+        case.domain == "coding"
+        and case.execution.io_oracle is not None
+        and IO_ORACLE_GATE not in final_gates
+    ):
+        final_gates.append(IO_ORACLE_GATE)
     if "wall_time_sec" in final_weights:
         logger.warning(
             "wall_time_sec is self-reported: weighting it lets submissions "
@@ -543,6 +713,16 @@ def init_contract(
                 f"agentic checker {checker_path} failed admission: "
                 + "; ".join(admission.violations)
             )
+
+    # IO oracle admission (R9): coupled both ways so an oracle always gates
+    # and a gate always has an oracle behind it (else fail-closed forever).
+    if case.domain == "coding" and case.execution.io_oracle is not None:
+        _validate_io_oracle(case, case_dir, final_gates)
+    elif IO_ORACLE_GATE in final_gates:
+        raise ValueError(
+            f"case '{case_id}' lists validity gate '{IO_ORACLE_GATE}' but declares no "
+            "coding execution.io_oracle — the gate would fail closed on every run"
+        )
 
     frozen: dict[str, str] = {}
     for rel in _collect_frozen_files(case, case_dir):

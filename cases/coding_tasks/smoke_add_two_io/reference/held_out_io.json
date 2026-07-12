@@ -1,0 +1,7 @@
+[
+  {"args": [7], "expected": 9},
+  {"args": [-3], "expected": -1},
+  {"args": [0], "expected": 2},
+  {"args": [100], "expected": 102},
+  {"args": [11], "expected": 13}
+]

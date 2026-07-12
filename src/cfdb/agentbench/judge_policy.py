@@ -307,6 +307,14 @@ def evaluate_gates(
             ok = computed.get("sandbox_used") == 1.0
             if not ok:
                 notes.append("gate sandbox_used failed: submission was not scored in a sandbox")
+        elif gate == "io_oracle_pass":
+            # v5.0 R9: coding domain trusted re-execution oracle. sandbox_scorer
+            # encodes the host-side reconciliation verdict as a 1.0/0.0 sentinel
+            # in `computed`, same shape as tests_all_pass — a missing key (oracle
+            # never ran) reads as fail-closed here.
+            ok = computed.get("io_oracle_pass") == 1.0
+            if not ok:
+                notes.append("gate io_oracle_pass failed: trusted re-execution oracle did not pass")
         else:
             ok = False
             notes.append(f"unknown validity gate '{gate}' (fail-closed: cannot pass)")

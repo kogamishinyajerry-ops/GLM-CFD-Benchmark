@@ -30,6 +30,7 @@ Failure semantics are two-tier (Architecture v5.0 §3.3):
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -63,6 +64,13 @@ HIDDEN_TESTS_REL = "reference/hidden_tests"
 JUDGE_HIDDEN_TESTS = "/judge/hidden_tests"
 JUDGE_SUBMISSION = "/judge/submission"
 JUDGE_CANARY = "/judge/canary"
+JUDGE_IO = "/judge/io"
+JUDGE_IO_INPUTS = "/judge/io/inputs.json"
+JUDGE_IO_DRIVER = "/judge/io/driver.py"
+IO_RESULTS_CONTAINER = "/work/io_results.json"
+IO_INPUTS_FILENAME = "inputs.json"
+IO_DRIVER_FILENAME = "driver.py"
+IO_RESULTS_FILENAME = "io_results.json"
 WORK_REPORT = "/work/report.xml"
 WORK_BASETEMP = "/work/pytest-tmp"
 WORK_TMPDIR = "/work/tmp"
@@ -74,6 +82,13 @@ BackendFactory = Callable[[Path, Path], "ExecutionBackend"]
 Production callers leave this at its default (a real sandboxed
 :class:`~cfdb.execution.docker.DockerBackend`); tests inject a stub backend
 that never touches Docker."""
+
+IoBackendFactory = Callable[[Path, Path], "ExecutionBackend"]
+"""``(submission_dir, io_dir) -> ExecutionBackend`` for the IO-oracle run
+(R9). Distinct from :data:`BackendFactory`: its backend mounts the
+submission and the judge-owned io dir but NEVER hidden_tests — the oracle
+container must not carry the expected answers embedded in the test source
+(Codex/loop-auditor R9 P1-4)."""
 
 
 def _default_backend_factory(
@@ -229,6 +244,218 @@ def _verify_canary(report_path: Path, canary_name: str, notes: list[str]) -> boo
     return True
 
 
+# ---------------------------------------------------------------------------
+# IO oracle (R9): trusted re-execution — a second, independent judging signal
+# that narrows forgery from "write a passing report" to "actually compute the
+# correct answers". The driver source below is judging material and is
+# anchored via judge_source:sandbox_scorer (this module).
+# ---------------------------------------------------------------------------
+
+
+def _io_driver_source(entry_module: str, entry_func: str) -> str:
+    """Source of the judge-owned IO driver (R9).
+
+    The driver imports its OWN dependencies (sys, json, traceback,
+    importlib) BEFORE inserting the submission path onto ``sys.path`` —
+    identical to the pytest bootstrap's import-order discipline (Codex R0
+    P1 / loop-auditor R9 P1-2): a submission shipping ``json.py`` (or any
+    driver-dependency shadow) at its tree root cannot hijack the result
+    writer, because those modules are already resolved from the stdlib
+    before the submission path exists on ``sys.path``. ``python -I``
+    additionally ignores PYTHONPATH/site so the driver's own imports come
+    from the judge image only.
+
+    The driver drives ``entry_module:entry_func`` over the inputs-only
+    projection and writes one row per input to the work zone. It NEVER
+    sees the expected outputs (reconciliation is host-side).
+    """
+    return (
+        "import sys, json, traceback, importlib\n"
+        f"with open({JUDGE_IO_INPUTS!r}, encoding='utf-8') as _f:\n"
+        "    _inputs = json.load(_f)\n"
+        f"sys.path.insert(0, {JUDGE_SUBMISSION!r})\n"
+        f"_mod = importlib.import_module({entry_module!r})\n"
+        f"_fn = getattr(_mod, {entry_func!r})\n"
+        "_out = []\n"
+        "for _item in _inputs:\n"
+        "    try:\n"
+        "        _r = _fn(*_item['args'])\n"
+        "        _out.append({'index': _item['index'], 'ok': True, 'result': _r})\n"
+        "    except Exception:\n"
+        "        _out.append({'index': _item['index'], 'ok': False, "
+        "'error': traceback.format_exc()[-400:]})\n"
+        f"with open({IO_RESULTS_CONTAINER!r}, 'w', encoding='utf-8') as _f:\n"
+        "    json.dump(_out, _f)\n"
+    )
+
+
+def _io_command() -> list[str]:
+    """Container command for the IO driver: isolated interpreter, judge-owned
+    driver script (Codex R0 P1 discipline reused)."""
+    return ["python", "-I", JUDGE_IO_DRIVER]
+
+
+def _default_io_backend_factory(
+    submission_dir: Path, io_dir: Path, image: str | None = None
+) -> ExecutionBackend:
+    """Build the real sandboxed backend for the IO-oracle run (R9).
+
+    Mounts ONLY the submission (ro) and the judge-owned io dir (ro) —
+    crucially NOT hidden_tests (loop-auditor R9 P1-4): the oracle container
+    must not carry the expected answers embedded in the test source. Same
+    sandbox profile and immutable-image-ID discipline as the pytest backend.
+    """
+    from cfdb.execution.docker import DockerBackend
+
+    if image is None:
+        image = os.environ.get("CFDB_JUDGE_IMAGE", "cfdb-judge:py312")
+    return DockerBackend(  # type: ignore[call-arg]
+        image=image,
+        sandbox=True,
+        ro_mounts=[
+            (submission_dir, JUDGE_SUBMISSION),
+            (io_dir, JUDGE_IO),
+        ],
+    )
+
+
+def _strict_equal(a: object, b: object) -> bool:
+    """Type-strict recursive equality for IO reconciliation (R9).
+
+    Plain ``==`` would let ``True == 1`` and ``1 == 1.0`` pass — Python's
+    numeric/bool coercion is a forgery surface for an oracle. Every level
+    must match in type AND value; floats are already rejected at admission,
+    so this only ever compares int/str/bool/None/list/dict.
+    """
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_strict_equal(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_strict_equal(a[k], b[k]) for k in a)
+    return a == b
+
+
+def _reconcile_io(results_path: Path, expected: list, notes: list[str]) -> float:
+    """Reconcile the driver's results against held-out expected (host-side).
+
+    Runs entirely outside the container, on data the submission-occupied
+    process can never reach. Any deviation — unreadable/unparseable file,
+    wrong count, misaligned index, a row that did not run, or a value that
+    is not strictly equal to expected — fails closed to 0.0.
+
+    Args:
+        results_path: Host path to the driver-written ``io_results.json``.
+        expected: Held-out expected values, in input order.
+        notes: Audit note sink (mutated in place).
+
+    Returns:
+        1.0 only if every input produced the strictly-equal expected value.
+    """
+    try:
+        results = json.loads(results_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        notes.append(f"io oracle: results unreadable/unparseable: {e} (invalid)")
+        return 0.0
+    if not isinstance(results, list) or len(results) != len(expected):
+        got = len(results) if isinstance(results, list) else "not-a-list"
+        notes.append(f"io oracle: result count {got} != expected {len(expected)} (invalid)")
+        return 0.0
+    for i, (row, exp) in enumerate(zip(results, expected, strict=True)):
+        if not isinstance(row, dict) or row.get("index") != i:
+            notes.append(f"io oracle: result {i} missing/misaligned index (invalid)")
+            return 0.0
+        if row.get("ok") is not True:
+            notes.append(f"io oracle: input {i} raised inside the submission (invalid)")
+            return 0.0
+        if not _strict_equal(row.get("result"), exp):
+            notes.append(f"io oracle: input {i} produced the wrong output (invalid)")
+            return 0.0
+    return 1.0
+
+
+def _run_io_oracle(
+    case: CaseSpec,
+    case_dir: Path,
+    submission_dir: Path,
+    io_factory: IoBackendFactory | None,
+    notes: list[str],
+) -> float:
+    """Run the trusted re-execution oracle and return its 1.0/0.0 verdict (R9).
+
+    The oracle run uses its OWN fresh work zone (loop-auditor R9, deeper
+    than P2-1): the pytest run can read the ro-mounted hidden_tests, so if
+    the two runs shared ``/work`` a submission could stash a harvested
+    expected value during the pytest run and replay it here. A separate
+    work dir closes that cross-container channel structurally; the
+    admission-time input-disjointness lint is only belt-and-suspenders.
+
+    Expected values are loaded HOST-SIDE and never written into any mount.
+
+    Args:
+        case: Coding case with ``execution.io_oracle`` set.
+        case_dir: Case directory (holds the held-out cases file).
+        submission_dir: Submission tree (ro-mounted into the oracle run).
+        io_factory: Builds the oracle backend. None on a stub path with no
+            oracle wiring -> fail-closed 0.0 (the gate then invalidates).
+        notes: Audit note sink.
+
+    Returns:
+        1.0 if every held-out input reproduced its expected output, else 0.0.
+    """
+    io = case.execution.io_oracle
+    assert io is not None  # caller guards
+    if io_factory is None:
+        notes.append("io oracle: no backend available for the oracle run (fail-closed)")
+        return 0.0
+
+    cases_path = case_dir / io.cases_file
+    try:
+        data = json.loads(cases_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        notes.append(f"io oracle: cannot read cases file {io.cases_file}: {e} (invalid)")
+        return 0.0
+    if not isinstance(data, list) or len(data) == 0:
+        notes.append("io oracle: cases file empty or not a list (invalid)")
+        return 0.0
+
+    expected = [item["expected"] for item in data]
+    inputs_projection = [{"index": i, "args": item["args"]} for i, item in enumerate(data)]
+    entry_module, entry_func = io.entry.split(":", 1)
+
+    # Judge-owned io dir (inputs-only + driver) and a SEPARATE oracle work
+    # zone (never the pytest work dir) — both cleaned up on exit.
+    with (
+        tempfile.TemporaryDirectory(prefix="cfdb-io-") as io_tmp,
+        tempfile.TemporaryDirectory(prefix="cfdb-io-work-") as io_work_tmp,
+    ):
+        io_dir = Path(io_tmp)
+        (io_dir / IO_INPUTS_FILENAME).write_text(json.dumps(inputs_projection), encoding="utf-8")
+        (io_dir / IO_DRIVER_FILENAME).write_text(
+            _io_driver_source(entry_module, entry_func), encoding="utf-8"
+        )
+        io_work_dir = Path(io_work_tmp)
+        (io_work_dir / "tmp").mkdir(parents=True, exist_ok=True)
+
+        backend = io_factory(submission_dir, io_dir)
+        run = backend.execute(
+            _io_command(),
+            cwd=io_work_dir,
+            timeout=case.budget.max_runtime_sec,
+            env=_pytest_env(),
+        )
+        # The oracle driver exits 0 on a normal completion; ANY non-zero or
+        # timeout invalidates (stricter than pytest's {0,1} — the driver has
+        # no legitimate non-zero outcome).
+        if run.timed_out is True or run.exit_code != 0:
+            notes.append(
+                f"io oracle: driver exited abnormally (exit_code={run.exit_code}, "
+                f"timed_out={run.timed_out}) (invalid)"
+            )
+            return 0.0
+        return _reconcile_io(io_work_dir / IO_RESULTS_FILENAME, expected, notes)
+
+
 def _pytest_env() -> dict[str, str]:
     """Build the frozen pytest environment (Architecture §3.3, verbatim).
 
@@ -288,6 +515,7 @@ def score_coding(
     ruler_id: str | None = None,
     work_dir: Path | None = None,
     canary_name: str | None = None,
+    io_backend_factory: IoBackendFactory | None = None,
 ) -> SubmissionScore:
     """Score one coding-domain submission by running hidden_tests in a sandbox.
 
@@ -314,6 +542,12 @@ def score_coding(
             pass — a blanket-forged report cannot name it. On stub-backend
             paths the canary is enforced only when a name is passed here
             (unit tests exercise the verification with a known name).
+        io_backend_factory: Overrides IO-oracle backend construction (R9,
+            only used when ``case.execution.io_oracle`` is set). Production
+            callers leave this None to get the real Docker backend built
+            with the same verified immutable image ID as the pytest run;
+            tests inject a stub. A case with an oracle but no factory
+            available fails the oracle closed (the gate then invalidates).
 
     Returns:
         The submission score. A ruler-intact-but-unusable submission (bad
@@ -363,6 +597,13 @@ def score_coding(
         factory: BackendFactory = lambda c, s: _default_backend_factory(  # noqa: E731
             c, s, image=live_image_id, canary_dir=canary_dir
         )
+        # IO oracle backend (R9): same verified immutable image ID (P1-3),
+        # its own no-hidden_tests mount profile (P1-4). Built only when the
+        # case actually declares an oracle.
+        if case.execution.io_oracle is not None and io_backend_factory is None:
+            io_backend_factory = lambda s, d: _default_io_backend_factory(  # noqa: E731
+                s, d, image=live_image_id
+            )
     else:
         canary_tmp = None
         factory = backend_factory
@@ -459,6 +700,16 @@ def score_coding(
                             f"tests_all_pass gate failed: {failures} failing, "
                             f"{errors} erroring of {total} collected tests"
                         )
+
+        # IO oracle (R9): a second, independent judging signal. Computed
+        # before gate evaluation so `io_oracle_pass` reaches evaluate_gates
+        # as a 1.0/0.0 sentinel like the other coding gates. Runs only when
+        # the case opts in; the two signals combine with AND (any failure
+        # invalidates) because contract.validity_gates lists both.
+        if case.execution.io_oracle is not None:
+            computed["io_oracle_pass"] = _run_io_oracle(
+                case, case_dir, submission_dir, io_backend_factory, notes
+            )
 
         gates = evaluate_gates(contract, case, computed, wall_time, notes)
         valid = all(gates[g] is True for g in contract.validity_gates)

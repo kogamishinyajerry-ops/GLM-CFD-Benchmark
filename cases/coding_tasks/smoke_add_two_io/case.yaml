@@ -1,0 +1,35 @@
+id: smoke_add_two_io
+name: Coding Smoke -- add_two (IO oracle)
+category: smoke
+domain: coding
+description: >-
+  R9 pilot for the trusted re-execution (IO) oracle: the same trivial
+  add_two(x) task as smoke_add_two, but the contract also drives the
+  submission's entry function over a held-out input set in an isolated
+  container and reconciles host-side. Exercises the second, independent
+  coding-judging signal end to end. See Architecture-v5.0-multi-domain.md §9.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi:
+    - pass_rate
+reference:
+  type: manufactured
+  qoi_values:
+    pass_rate: 1.0
+metrics:
+  qoi_relative_tolerance:
+    pass_rate: 0.0
+budget:
+  max_runtime_sec: 60
+execution:
+  requires_sandbox: true
+  expected_test_count: 2
+  # R9 pilot: trusted re-execution oracle. Held-out inputs (7/-3/0/100/11)
+  # are disjoint from the hidden-test inputs (2/5) so a submission cannot
+  # replay a harvested assertion. The 'io_oracle_pass' gate is implied by
+  # this declaration (auto-added at contract init).
+  io_oracle:
+    entry: "solution:add_two"
+    cases_file: "reference/held_out_io.json"

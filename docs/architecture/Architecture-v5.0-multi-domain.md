@@ -262,8 +262,23 @@ cases/coding_tasks/<id>/
   不碰冻结 case 树），junitxml 按 testcase 名核验「恰一条且通过」后从计数中扣除——
   只知公开 expected_test_count 的空白伪造报告必被咬。**定位=成本抬升器非边界**：
   进程内敌意代码若观测活体 pytest 会话可读到哨兵名并绕伪——该残差维持声明）；
-  ②受信重执行 oracle（judge 持外部预期输出复跑对账，改变任务形态，仍在 backlog）。
-  同进程判卷颠覆残差本身维持声明，README 验证边界不变。
+  ②受信重执行 oracle（judge 持外部预期输出复跑对账，改变任务形态）——**R9 批已落地**
+  （见下条独立残差）。同进程判卷颠覆残差本身维持声明，README 验证边界不变。
+- **受信重执行 IO oracle（R9 批已落地）——第二条独立判卷信号，如实界定其覆盖面**：
+  judge 驱动提交声明的 entry 函数在**隔离容器**内跑一组 held-out 输入（**不挂
+  hidden_tests，预期输出永不进容器**），结果**宿主侧严格对账**（`_strict_equal`：
+  `True≠1`、无 JSON 类型强转、逐元素递归）。因判决在宿主侧、输入与隐藏测试不相交
+  （试点 7/-3/0/100/11 vs 2/5，准入期 token 级 disjoint lint 强制），进程内伪造
+  report.xml **无法**满足该 gate——提交要判 valid 必须在从未见过的输入上**真算对**。
+  真容器 E2E 实证（试点 smoke_add_two_io）：硬编码 `add_two(2)==4` 的伪造提交
+  **pytest 全过但 io_oracle_pass 咬红→整体 invalid**（tests_all_pass 与 io_oracle_pass
+  AND 合取，任一失败即废）。**覆盖面边界（不 over-claim）**：①只验声明 entry 函数
+  的纯 I/O，非通用恶意代码探测器——entry 函数在 held-out 上真对的提交即按此判分，
+  其它行为不在本 oracle 职责内；②不追溯加固 tests_all_pass 信号本身（同进程 pytest
+  残差对该单信号维持声明），R9 是**新增正交信号**而非改造旧信号；③准入期 disjoint
+  lint 是 token 级启发（belt-and-suspenders），真正的抗重放靠「宿主侧对账+隔离容器
+  +独立 work zone（不复用 pytest /work，封死跨run 藏答通道）」结构性保证。
+  fail-closed：无 backend/驱动异常退出/对账任一不符 → 0.0（gate 判废）。
 - **NACA cp_curve/CSV 参考映射（Codex R0 P2 递延项，R7 批已落地）**：四个 naca0012
   case.yaml 参考键 cp_curve→cp_distribution 对齐 outputs.curves；engine 增严格 CSV
   装载（csv 标准库，首行可为非数值表头，其余行必须恰两列有限浮点，**一行坏整文件拒**，
@@ -274,6 +289,11 @@ cases/coding_tasks/<id>/
   参考 x/c 网格（**参考站点超出采样范围整条拒=绝不外插**；y 值纯仿真，仅借公开
   横坐标=标准 V&V 做法）；装载规格单源化 metrics.curves.load_reference_curve
   （engine 委托+adapter 复用，规格不可分叉）。curve_l2 精确网格契约未动。
+  **cp 容差决策留痕（R9 批复核）**：naca0012_a0 现行 curve_l2_tolerance 0.05
+  维持不动——当前 10.8k cells 欠分辨网格真 L2≈1.9（a5 实测），配任何「能过」
+  的容差=为过而调（Goodhart），紧尺子照红是诚实状态；a5/a10/a15 维持无容差
+  =ungated 披露，直到 y+/GCI 网格研究（长跑另批）产出合格网格后再以真收敛
+  数据议阈值。绝不以现有欠分辨结果反推容差。
 - **判卷政策已抽专职锚定模块（R5 批，backlog 项收口，锚面终态）**：共享政策全部
   迁入 `judge_policy.py`（QoI/wall-time 装载语义、held-out 优先、qoi_error 重算、
   gate 评估、agentic verdict→gates/score 组装、分数组装），`judge_source:judge_policy`
@@ -508,3 +528,28 @@ cases/coding_tasks/<id>/
   见证 +5（31 条），四点 tamper 翻红（含等价性守恒确认）；踩点记录：tamper
   同秒同大小替换会骗过 pyc 缓存（假红一枚，清缓存复验消除）。
   checker_scorer 又变更→csv 尺 #772f977a→#d46df105（守卫先红后绿）。1239 绿。
+- **R9 批：受信重执行 IO oracle（backlog 收口，第二条独立 coding 判卷信号）**——
+  §8 长挂 backlog 的「受信重执行 oracle」落地。机制：judge 驱动提交声明 entry 函数
+  在隔离容器跑 held-out 输入（**不挂 hidden_tests、预期永不进容器**），宿主侧
+  `_strict_equal` 严格对账（`True≠1`/无类型强转/递归）；与 tests_all_pass **AND
+  合取**（任一废即整体 invalid）。**设计先行审（loop-auditor Mode A→BLOCK）**：
+  4P1+4P2 全 grounded 复核为真后折叠入设计，另自查追加 2 条更深加固——①对账
+  严格类型（堵 `True==1`/`1==1.0` JSON 强转漏判）②oracle 用独立 work zone（不复用
+  pytest `/work`，封死「pytest 跑时藏 held-out 答案、oracle 跑时重放」的跨run 通道）。
+  P1 落地：①准入拒空/微 oracle（空 oracle 什么都不 gate）②driver 先 import 依赖
+  再 insert 提交路径（防提交 shadow importlib/json）③oracle 容器用已校验不可变
+  image-ID 构建④oracle 容器**永不挂 hidden_tests**。**试点 case 隔离决策（外科）**：
+  io_oracle 若加在 canonical smoke_add_two 上会逼 canary/admission/image-anchor 等
+  6 个无关安全测试串入 io 管线（run_admission/score_coding 无 io_factory→fail-closed
+  连锁红）——遂立**专属 bundled case `smoke_add_two_io`**（smoke 保持原样零扰动，
+  io oracle 仍进真 bundled 契约受 canon 47 守卫+dogfood）。**真容器 E2E 三场实证**
+  （cfdb-judge:py312，image-ID 锚合）：①golden→Valid=True 双信号全过；②**伪造
+  提交硬编码 `add_two(2)==4` 骗过 pytest 但 io_oracle 咬红→invalid**（R9 核心价值
+  =把伪造从「写通过报告」逼到「在没见过的输入上真算对」）；③篡改被锚 held-out_io.json
+  →exit 3 精确点名 `reference/held_out_io.json`（重锚后字节级还原、链完好）。
+  见证 28 条（test_io_oracle.py），**五点 tamper 全翻红实证**（mount 隔离/import 序/
+  独立 work zone〔构造真跨 run 共享篡改〕/strict-equal 伪造/空拒）。judge_policy.py
+  增 io_oracle_pass 分支（三域通用锚）→smoke/csv/cavity **三尺全漂重锚**
+  （#0a67252b→#bc9dca2b / #d46df105→#ee7951d0 / #7c7e2408→#eacc001d）+新契约
+  smoke_add_two_io #923cd295（validity_gates 由反向耦合自动补 io_oracle_pass）；
+  字节定稿（ruff）在前、重锚在后=canon 47 顺序。canon-47 守卫复绿，全套 1267 绿。

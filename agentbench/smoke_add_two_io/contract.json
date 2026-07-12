@@ -1,16 +1,17 @@
 {
   "contract_version": "2",
-  "case_id": "smoke_add_two",
+  "case_id": "smoke_add_two_io",
   "frozen": {
-    "case.yaml": "c627051e4e8c81db9b9ab92ac5680fa07c5ef12d844d676af4e0d845ce1839c0",
+    "case.yaml": "878f3c1b3746f6fed48b0c727b3f4dfe965d142ab8556d7431004edcc6928615",
     "reference/golden/solution.py": "b46cc13311dcd4fa7d819f26c1095ba7b02e4d3887c800d12157c9e860ac2764",
+    "reference/held_out_io.json": "e8f621598405f2313c37ef4774c1e91292e17a122f31596155205361aa9f9427",
     "reference/hidden_tests/test_fail_to_pass.py": "713df85b45e2b0728e6000588ff47177fa1ed41006d70a79499288633e681438",
     "reference/hidden_tests/test_pass_to_pass.py": "594dd94f304423077fe061c3a3c6bff3fbe6233b41928a185b9839d711f3b47a",
     "visible/README.md": "2ebb103669eec65dd431b347d4cd427603f0727ef9043fc47d23be769645bf95",
     "visible/solution.py": "f034dd1ad74348c68f7bb33d51b4651c5fc2e4d601bc1e1a52a7f24fa66b89ef",
     "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
-    "__validity_gates__": "a01060fa26bbaf79ad2dcbf55327e92627d1bfae7a393fa96885ff5964ca1827",
-    "__file_manifest__": "69026e6a4b7aecccbc13ae76702862ae05226ae8a6891a99b3a4346f86d18b31",
+    "__validity_gates__": "975c64ef020beea4c2bd85f84a9e82a94c7f99074fffbb8d7aee2ffa3d763b6e",
+    "__file_manifest__": "679f2893c414c850b9406881cef4a722f233e532175d800165a5560cf86120b0",
     "judge_source:sandbox_scorer": "972fe890c9559a9fb5bc3e415876329966248207b973ac6742f8ef3113b29884",
     "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
     "__judge_image__": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
@@ -20,6 +21,7 @@
   },
   "validity_gates": [
     "tests_all_pass",
-    "sandbox_used"
+    "sandbox_used",
+    "io_oracle_pass"
   ]
 }

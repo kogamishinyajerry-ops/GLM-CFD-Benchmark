@@ -1,0 +1,12 @@
+# Provenance declaration for smoke_add_two_io (see src/cfdb/provenance/).
+# honesty is NEVER declared here: it is derived mechanically from
+# case.yaml's reference.type ("manufactured" -> HonestyLevel.MANUFACTURED).
+citation: null
+source_url: null
+retrieved: null
+transcription_verified: false
+file_hashes: {}
+notes:
+  - "Self-authored (manufactured) coding-domain smoke case: task
+     description, hidden tests, and golden solution were all written for
+     this benchmark, not transcribed from an external source."

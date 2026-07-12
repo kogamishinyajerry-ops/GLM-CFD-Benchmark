@@ -333,42 +333,72 @@ def _is_rankable(entry: SubmissionScore) -> bool:
     return True
 
 
+PASS_AT_K_DOMAINS: frozenset[str] = frozenset({"coding", "agentic"})
+"""Domains with a BINARY success signal (Codex R6 P1): for coding,
+``valid`` requires ``tests_all_pass``; for agentic it requires the checker
+judging success — so a rankable entry IS a correct one. cfd scores are
+continuous error magnitudes: ``qoi_complete``/``within_budget`` pass for
+arbitrarily wrong answers, so "pass" is undefined and pass@k is refused."""
+
+
 def pass_at_k(
     entries: list[SubmissionScore],
     k: int,
     ruler_id: str | None = None,
+    *,
+    domain: str,
 ) -> tuple[float, int, int] | None:
-    """Unbiased pass@k over ledger entries (Chen et al. 2021 estimator).
+    """Unbiased pass@k over ledger attempts (Chen et al. 2021 estimator).
 
-    Each ledger entry is one independent attempt (n samples total); an
-    attempt counts as a pass only if it is rankable (:func:`_is_rankable` —
-    valid, finite, internally consistent). pass@k = 1 - C(n-c, k)/C(n, k),
-    computed with the numerically stable product form.
+    A sample is one unique submission (attempt), not one scoring event
+    (Codex R6 P1): rescoring the same ``submission_id`` appends ledger rows
+    but adds no independent attempt, so rows are collapsed per id first —
+    a collapsed attempt passes only if EVERY one of its rows is rankable
+    (a deterministic judge produces agreeing rows; disagreement fails
+    closed). pass@k = 1 - C(n-c, k)/C(n, k), stable product form.
 
-    Fail-closed rules: fewer samples than ``k`` (or k < 1) returns None —
-    the metric is never extrapolated from insufficient data. When
-    ``ruler_id`` is given, only entries scored under that exact ruler are
-    samples (like-with-like: attempts against an older ruler are neither
-    passes nor failures of the current one).
+    Fail-closed rules: only domains with a binary success signal are
+    accepted (:data:`PASS_AT_K_DOMAINS` — Codex R6 P1: for cfd, rankable is
+    not correctness and the metric would fabricate a 100% "pass" rate from
+    arbitrarily wrong answers); fewer unique attempts than ``k`` (or
+    k < 1) returns None — never extrapolated. When ``ruler_id`` is given,
+    only rows scored under that exact ruler participate (like-with-like).
 
     Args:
         entries: Ledger entries.
         k: Number of draws.
         ruler_id: When given, restrict samples to this ruler lineage.
+        domain: Case domain; must carry a binary success signal.
 
     Returns:
-        ``(pass_at_k, n_samples, n_passes)``, or None when not honestly
-        computable.
+        ``(pass_at_k, n_unique_attempts, n_passes)``, or None when not
+        honestly computable from the available samples.
+
+    Raises:
+        ValueError: If ``domain`` has no binary success signal.
     """
+    if domain not in PASS_AT_K_DOMAINS:
+        raise ValueError(
+            f"pass@k requires a binary success signal; domain '{domain}' "
+            "scores are continuous (rankable does not mean correct) — refusing "
+            "to fabricate a pass rate"
+        )
     if k < 1:
         return None
-    samples = entries
+    rows = entries
     if ruler_id is not None:
-        samples = [e for e in samples if e.ruler_id == ruler_id]
-    n = len(samples)
+        rows = [e for e in rows if e.ruler_id == ruler_id]
+    by_attempt: dict[str, list[SubmissionScore]] = {}
+    for entry in rows:
+        by_attempt.setdefault(entry.submission_id, []).append(entry)
+    n = len(by_attempt)
     if n < k:
         return None
-    c = sum(1 for e in samples if _is_rankable(e) is True)
+    c = sum(
+        1
+        for attempt_rows in by_attempt.values()
+        if all(_is_rankable(e) is True for e in attempt_rows)
+    )
     if n - c < k:
         return 1.0, n, c
     estimate = 1.0

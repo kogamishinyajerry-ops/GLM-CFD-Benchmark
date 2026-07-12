@@ -377,3 +377,14 @@ cases/coding_tasks/<id>/
   CFDB_JUDGE_IMAGE 指向 ubuntu:22.04→exit 3 双 id 点名、镜像不存在→init/score
   结构化拒、pass@1=1（16 旧尺行如实排除）+pass@99 拒算、showcase 渲出
   data-invalid 列。1163 绿。
+- **R6 治理审（同日，审 f93a19e）：3P1，全坐实即修**——①镜像比对与 `docker run`
+  之间 tag 可被重打（TOCTOU）——修复：判卷容器一律按**已验证的不可变 ID** 启动
+  （_default_backend_factory 加 image 参数，真路径闭包传 live id；账本 note 从此
+  记 ID 非 tag），capture 见证钉死构造参数=锚定 id；②pass@k 把 rankable 当
+  correctness，cfd 连续分域全错也能报 pass@1=1——修复：PASS_AT_K_DOMAINS 限
+  coding/agentic（二元域里 rankable⟹correct），cfd 显式拒算「refusing to
+  fabricate a pass rate」；③同一 submission 重复打分灌水 n——修复：按
+  submission_id 折叠为 attempt，attempt 的全部行都 rankable 才算 pass
+  （复打不一致=fail-closed 不算过），CLI 如实播报 collapsed 行数。
+  smoke 再重锚 #42638717→#af8b8d91；golden 按不可变 ID 真容器判卷 1.0。
+  1166 绿。

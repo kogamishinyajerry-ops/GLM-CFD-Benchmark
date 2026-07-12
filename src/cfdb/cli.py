@@ -1454,19 +1454,29 @@ def agent_eval_ledger_cmd(
 def agent_eval_passk_cmd(
     case: Annotated[str, typer.Option("--case", "-c", help="Case ID whose ledger to analyze.")],
     k: Annotated[int, typer.Option("--k", "-k", help="Number of draws for pass@k.")] = 1,
+    cases_dir: _CasesDirOption = Path("cases"),
     agentbench_dir: _AgentbenchDirOption = Path("agentbench"),
 ) -> None:
     """Compute unbiased pass@k over the case ledger (current ruler only).
 
-    Samples are scoring events under the CURRENT ruler lineage; a sample
-    passes only if it is rankable (valid, finite, internally consistent).
-    Refuses (exit 1) when fewer than k samples exist — pass@k is never
-    extrapolated from insufficient data.
+    Samples are UNIQUE submissions under the CURRENT ruler lineage
+    (rescoring events collapse into their attempt); an attempt passes only
+    if every one of its rows is rankable. Only domains with a binary
+    success signal (coding/agentic) are accepted — for cfd, rankable does
+    not mean correct, and a fabricated pass rate is refused. Exits 1 when
+    not honestly computable.
     """
     import hashlib
 
     from cfdb.agentbench import read_ledger
     from cfdb.agentbench.scorer import pass_at_k
+
+    registry = CaseRegistry(cases_dir)
+    try:
+        spec = registry.load(case)
+    except (KeyError, ValueError, FileNotFoundError) as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
 
     contract_path = agentbench_dir / case / "contract.json"
     if not contract_path.exists():
@@ -1485,12 +1495,16 @@ def agent_eval_passk_cmd(
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    result = pass_at_k(entries, k, ruler_id=current_ruler)
+    try:
+        result = pass_at_k(entries, k, ruler_id=current_ruler, domain=spec.domain)
+    except ValueError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
     if result is None:
-        in_lineage = sum(1 for e in entries if e.ruler_id == current_ruler)
+        unique = len({e.submission_id for e in entries if e.ruler_id == current_ruler})
         typer.echo(
-            f"[FAIL] pass@{k} not computable for '{case}': {in_lineage} sample(s) "
-            f"under current ruler #{current_ruler}, need at least {k} "
+            f"[FAIL] pass@{k} not computable for '{case}': {unique} unique "
+            f"attempt(s) under current ruler #{current_ruler}, need at least {k} "
             "(never extrapolated).",
             err=True,
         )
@@ -1498,8 +1512,15 @@ def agent_eval_passk_cmd(
 
     value, n, c = result
     typer.echo(f"pass@{k} for '{case}' under ruler #{current_ruler}: {value:.6g}")
-    typer.echo(f"  samples: {n} scoring event(s) in current lineage, {c} rankable pass(es)")
-    excluded = len(entries) - n
+    typer.echo(f"  samples: {n} unique attempt(s) in current lineage, {c} pass(es)")
+    in_lineage_events = sum(1 for e in entries if e.ruler_id == current_ruler)
+    collapsed = in_lineage_events - n
+    if collapsed > 0:
+        typer.echo(
+            f"  collapsed: {collapsed} rescoring event(s) folded into their attempt "
+            "(samples must be independent)"
+        )
+    excluded = len(entries) - in_lineage_events
     if excluded > 0:
         typer.echo(f"  excluded: {excluded} row(s) from older/unknown rulers (like-with-like only)")
 

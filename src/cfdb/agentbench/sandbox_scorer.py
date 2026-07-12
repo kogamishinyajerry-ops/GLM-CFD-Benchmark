@@ -73,7 +73,9 @@ Production callers leave this at its default (a real sandboxed
 that never touches Docker."""
 
 
-def _default_backend_factory(case_dir: Path, submission_dir: Path) -> ExecutionBackend:
+def _default_backend_factory(
+    case_dir: Path, submission_dir: Path, image: str | None = None
+) -> ExecutionBackend:
     """Build the real sandboxed Docker backend for a coding submission.
 
     Not exercised by this module's unit tests (they inject a stub) — the
@@ -86,6 +88,12 @@ def _default_backend_factory(case_dir: Path, submission_dir: Path) -> ExecutionB
         case_dir: Case directory (source of the ro ``hidden_tests`` mount).
         submission_dir: Submission directory (source of the ro
             ``submission`` mount).
+        image: Image reference for the container. The verified scoring path
+            passes the anchor-verified IMMUTABLE image ID here (Codex R6
+            P1): a mutable tag could be retagged between the anchor
+            comparison and ``docker run``, silently swapping the judge —
+            running by content-addressed ID closes that window. None falls
+            back to the configured tag (non-scoring/diagnostic use only).
 
     Returns:
         A :class:`~cfdb.execution.docker.DockerBackend` configured with the
@@ -96,9 +104,10 @@ def _default_backend_factory(case_dir: Path, submission_dir: Path) -> ExecutionB
     # The judge image must ship pytest preinstalled: the sandbox runs with
     # --network none, so nothing can be pip-installed at scoring time. A
     # stock python:*-slim image would fail every submission with an abnormal
-    # exit. Overridable for site-local judge images; the image reference is
+    # exit. Overridable for site-local judge images; the image identity is
     # recorded in scoring notes (see score_coding) for ledger traceability.
-    image = os.environ.get("CFDB_JUDGE_IMAGE", "cfdb-judge:py312")
+    if image is None:
+        image = os.environ.get("CFDB_JUDGE_IMAGE", "cfdb-judge:py312")
 
     return DockerBackend(  # type: ignore[call-arg]
         image=image,
@@ -249,8 +258,15 @@ def score_coding(
                     f"{str(anchored_image_id)[:19]}...)"
                 ]
             )
-
-    factory = backend_factory if backend_factory is not None else _default_backend_factory
+        # TOCTOU closure (Codex R6 P1): the container is started by the
+        # verified IMMUTABLE image ID, never the mutable tag — a retag
+        # between the comparison above and `docker run` can no longer swap
+        # the judge.
+        factory: BackendFactory = lambda c, s: _default_backend_factory(  # noqa: E731
+            c, s, image=live_image_id
+        )
+    else:
+        factory = backend_factory
     backend = factory(case_dir, submission_dir)
 
     # Internally-created scratch dirs are cleaned up on success AND

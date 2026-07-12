@@ -109,12 +109,21 @@ class TestJudgeImageAnchor:
 
         expected = case.execution.expected_test_count
         stub = StubBackend(report_xml=_junit_xml(total=expected))
-        monkeypatch.setattr(sbx, "_default_backend_factory", lambda c, s: stub)
+        built_with: list[str | None] = []
+
+        def capturing_factory(c: Path, s: Path, image: str | None = None) -> StubBackend:
+            built_with.append(image)
+            return stub
+
+        monkeypatch.setattr(sbx, "_default_backend_factory", capturing_factory)
 
         anchored = contract.frozen[JUDGE_IMAGE_KEY]
         monkeypatch.setattr(sbx, "resolve_judge_image_id", lambda ref: anchored)
         baseline = sbx.score_coding(case, case_dir, sub, contract)
         assert baseline.valid is True
+        # TOCTOU closure (Codex R6 P1): the container must be constructed
+        # from the verified IMMUTABLE ID, never the mutable tag.
+        assert built_with == [anchored]
 
         # Tamper: daemon now holds a different image under the same tag.
         monkeypatch.setattr(sbx, "resolve_judge_image_id", lambda ref: "sha256:" + "f" * 64)
@@ -127,10 +136,15 @@ class TestJudgeImageAnchor:
 # ============================================================================
 
 
-def _entry(valid: bool, score: float | None, ruler: str | None = "r1") -> SubmissionScore:
+def _entry(
+    valid: bool,
+    score: float | None,
+    ruler: str | None = "r1",
+    sid: str | None = None,
+) -> SubmissionScore:
     breakdown = {"pass_rate": score} if (valid and score is not None) else {}
     return SubmissionScore(
-        submission_id=f"s_{id(object())}",
+        submission_id=sid if sid is not None else f"s_{_entry_counter.__next__()}",
         valid=valid,
         score=score if valid else None,
         breakdown=breakdown,
@@ -139,13 +153,16 @@ def _entry(valid: bool, score: float | None, ruler: str | None = "r1") -> Submis
     )
 
 
+_entry_counter = iter(range(10**9))
+
+
 class TestPassAtK:
     def test_matches_bruteforce_combinatorics(self) -> None:
         from itertools import combinations
 
-        entries = [_entry(True, 1.0)] * 3 + [_entry(False, None)] * 7
+        entries = [_entry(True, 1.0) for _ in range(3)] + [_entry(False, None) for _ in range(7)]
         for k in (1, 2, 3, 5):
-            result = pass_at_k(entries, k, ruler_id="r1")
+            result = pass_at_k(entries, k, ruler_id="r1", domain="coding")
             assert result is not None
             value, n, c = result
             assert (n, c) == (10, 3)
@@ -156,13 +173,44 @@ class TestPassAtK:
 
     def test_insufficient_samples_never_extrapolated(self) -> None:
         entries = [_entry(True, 1.0), _entry(False, None)]
-        assert pass_at_k(entries, 3, ruler_id="r1") is None
-        assert pass_at_k(entries, 0, ruler_id="r1") is None
-        assert pass_at_k([], 1) is None
+        assert pass_at_k(entries, 3, ruler_id="r1", domain="coding") is None
+        assert pass_at_k(entries, 0, ruler_id="r1", domain="coding") is None
+        assert pass_at_k([], 1, domain="agentic") is None
+
+    def test_continuous_domain_refused(self) -> None:
+        # Codex R6 P1: for cfd, rankable does not mean correct — a ledger
+        # of arbitrarily wrong QoIs must never fabricate pass@1 = 1.
+        entries = [_entry(True, 1.0) for _ in range(5)]
+        with pytest.raises(ValueError, match="binary success signal"):
+            pass_at_k(entries, 1, ruler_id="r1", domain="cfd")
+
+    def test_rescoring_events_collapse_into_one_attempt(self) -> None:
+        # Codex R6 P1: rescoring the same submission k times must not
+        # manufacture n >= k "independent" samples.
+        entries = [_entry(True, 1.0, sid="same_sub") for _ in range(5)]
+        assert pass_at_k(entries, 3, ruler_id="r1", domain="coding") is None
+        result = pass_at_k(entries, 1, ruler_id="r1", domain="coding")
+        assert result is not None
+        assert result[1:] == (1, 1)
+
+    def test_disagreeing_rescore_rows_fail_closed(self) -> None:
+        # A deterministic judge produces agreeing rows; if rescoring rows
+        # for one attempt disagree, the attempt is never counted as a pass.
+        entries = [
+            _entry(True, 1.0, sid="flaky"),
+            _entry(False, None, sid="flaky"),
+            _entry(True, 1.0, sid="solid"),
+        ]
+        result = pass_at_k(entries, 1, ruler_id="r1", domain="coding")
+        assert result is not None
+        value, n, c = result
+        assert (n, c) == (2, 1)
 
     def test_stale_ruler_rows_are_not_samples(self) -> None:
-        entries = [_entry(True, 1.0, ruler="old")] * 5 + [_entry(False, None, ruler="r1")] * 2
-        result = pass_at_k(entries, 1, ruler_id="r1")
+        entries = [_entry(True, 1.0, ruler="old") for _ in range(5)] + [
+            _entry(False, None, ruler="r1") for _ in range(2)
+        ]
+        result = pass_at_k(entries, 1, ruler_id="r1", domain="coding")
         assert result is not None
         value, n, c = result
         assert (n, c) == (2, 0)
@@ -179,14 +227,14 @@ class TestPassAtK:
             gates={"tests_all_pass": True},
             ruler_id="r1",
         )
-        result = pass_at_k([forged], 1, ruler_id="r1")
+        result = pass_at_k([forged], 1, ruler_id="r1", domain="coding")
         assert result is not None
         value, n, c = result
         assert (value, n, c) == (0.0, 1, 0)
 
     def test_all_pass_short_circuit(self) -> None:
-        entries = [_entry(True, 1.0)] * 4
-        result = pass_at_k(entries, 3, ruler_id="r1")
+        entries = [_entry(True, 1.0) for _ in range(4)]
+        result = pass_at_k(entries, 3, ruler_id="r1", domain="coding")
         assert result is not None
         assert result[0] == 1.0
 

@@ -38,6 +38,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -211,31 +212,15 @@ def score_submission(
             "content identity — refusing to score"
         )
 
-    # Platform guard (R8 backlog: defensive limits on judged input): an
-    # oversized submission tree is refused BEFORE hashing or judging — the
-    # content digest, the checker and the sandbox mounts all walk this
-    # tree, and an unbounded one is a denial-of-service on the judge host.
-    # Entry COUNT is bounded in the same walk (Codex R8 P2): a million
-    # empty files stay at zero bytes but still cost unbounded CPU/memory
-    # in every tree walk downstream.
-    total_bytes = 0
-    for index, p in enumerate(submission_dir.rglob("*"), start=1):
-        if index > MAX_SUBMISSION_ENTRIES:
-            raise ValueError(
-                f"submission tree has more than {MAX_SUBMISSION_ENTRIES} entries "
-                "— refusing to score"
-            )
-        if p.is_file() or p.is_symlink():
-            total_bytes += p.lstat().st_size
-    if total_bytes > MAX_SUBMISSION_BYTES:
-        raise ValueError(
-            f"submission tree is {total_bytes} bytes, exceeding the platform cap "
-            f"of {MAX_SUBMISSION_BYTES} bytes — refusing to score"
-        )
-
     # Content identity stamped BEFORE judging (Codex R6-R1 P1): the attempt
     # is what was handed in, hashed up front — a submission that mutates
-    # itself during scoring cannot retroactively pick its identity.
+    # itself during scoring cannot retroactively pick its identity. The
+    # platform resource caps (entry count / total bytes, R8) are enforced
+    # INSIDE this same traversal (Codex R8-R1 P2): a separate pre-scan
+    # would not bind the caps to the snapshot actually hashed — a
+    # concurrently growing tree could pass the scan yet be over-limit by
+    # the time it is digested and judged. The post-judging re-digest below
+    # re-enforces the same caps on the judged snapshot.
     attempt_id = _submission_digest(submission_dir)
 
     if case.domain == "coding":
@@ -560,6 +545,54 @@ its scores are continuous error magnitudes — so it is absent here and
 pass@k is refused."""
 
 
+def _bounded_tree_paths(submission_dir: Path) -> list[Path]:
+    """Enumerate a submission tree with the platform caps enforced DURING
+    the walk (Codex R8-R1 P1/P2).
+
+    ``Path.rglob()`` materializes each directory's full listing before
+    yielding (CPython lists the scandir iterator), so a million-entry flat
+    directory would exhaust memory inside the guard itself. This walks
+    with ``os.scandir`` — a streaming iterator — and raises the moment the
+    entry count or byte total crosses its cap, so at most
+    ``MAX_SUBMISSION_ENTRIES`` paths are ever retained.
+
+    Args:
+        submission_dir: Submission directory.
+
+    Returns:
+        All entry paths (files, dirs, symlinks), unsorted.
+
+    Raises:
+        ValueError: On cap violation or unreadable directory.
+    """
+    paths: list[Path] = []
+    total_bytes = 0
+    stack = [submission_dir]
+    try:
+        while stack:
+            current = stack.pop()
+            with os.scandir(current) as it:
+                for entry in it:
+                    paths.append(Path(entry.path))
+                    if len(paths) > MAX_SUBMISSION_ENTRIES:
+                        raise ValueError(
+                            f"submission tree has more than {MAX_SUBMISSION_ENTRIES} "
+                            "entries — refusing to score"
+                        )
+                    if entry.is_symlink() or entry.is_file(follow_symlinks=False):
+                        total_bytes += entry.stat(follow_symlinks=False).st_size
+                        if total_bytes > MAX_SUBMISSION_BYTES:
+                            raise ValueError(
+                                f"submission tree exceeds the platform cap of "
+                                f"{MAX_SUBMISSION_BYTES} bytes — refusing to score"
+                            )
+                    elif entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+    except OSError as e:
+        raise ValueError(f"submission unreadable while enumerating tree: {e}") from e
+    return paths
+
+
 def _submission_digest(submission_dir: Path) -> str:
     """Content identity of a submission tree (Codex R6-R1 P1, hardened R6-R2).
 
@@ -573,6 +606,13 @@ def _submission_digest(submission_dir: Path) -> str:
     record an identity the judge may not reproduce (the link can dangle or
     point elsewhere inside the sandbox mount).
 
+    The platform caps (entries/bytes) are enforced inside this traversal
+    (Codex R8-R1 P2) so they bind to exactly the snapshot being hashed —
+    every digest (pre- and post-judging) re-checks them. Enumeration is
+    streaming (:func:`_bounded_tree_paths`); the retained path list is
+    bounded, then sorted identically to the original ``sorted(rglob)``
+    scheme so already-ledgered identities are unchanged.
+
     Args:
         submission_dir: Submission directory.
 
@@ -580,15 +620,15 @@ def _submission_digest(submission_dir: Path) -> str:
         64-char lowercase hex digest.
 
     Raises:
-        ValueError: If the tree contains a symlink, or an entry cannot be
-            read while hashing (Codex R6-R2 P2: I/O failures surface as a
-            structured input error, never a raw OSError).
+        ValueError: On a symlink, a cap violation, or an entry that cannot
+            be read while hashing (Codex R6-R2 P2: structured input error,
+            never a raw OSError).
     """
     from cfdb.agentbench.contract import canonical_digest, sha256_file
 
     pairs: list[list[str]] = []
     try:
-        for path in sorted(submission_dir.rglob("*")):
+        for path in sorted(_bounded_tree_paths(submission_dir)):
             rel = path.relative_to(submission_dir).as_posix()
             if path.is_symlink():
                 raise ValueError(

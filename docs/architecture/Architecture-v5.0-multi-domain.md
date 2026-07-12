@@ -493,3 +493,18 @@ cases/coding_tasks/<id>/
   ≤10_000（MAX_SUBMISSION_ENTRIES），超限结构化拒。checker_scorer 再变更→
   csv 尺 #80183efd→#772f977a（守卫先红后绿，canon 47 顺序）。
   见证 +5（26 条），三点 tamper 翻红实证。1234 绿。
+- **R8-R1 复审（审 7d6b750）：1P1+2P2+1P3——护栏自身被再打穿，即修（R8-R2 批）**：
+  ①P1 `rglob` 先物化整目录列表才逐条产出（CPython 实现 list(scandir_it)）
+  →百万空文件平铺目录在守卫自身内爆内存——修复：`os.scandir` 流式遍历
+  （`_bounded_tree_paths`），途中即断，保留路径数 ≤ 上限=有界物化，完成后
+  sorted(Path) 复现原 sorted(rglob) 顺序（**等价性见证**含 `a.b`/`a` 边界名
+  多层树，已落账身份零扰动）；②P2 上限独立预扫描与被哈希快照不绑定（并发
+  写方可扫描后增文件）——修复：上限内生进 `_submission_digest` 遍历本身，
+  判前判后两次 digest 各自强制（见证=判卷中长出超限文件→拒绝落账）；
+  ③P2 text read(64KiB) 等满块→cap+1 字符后挂起的 checker 拖到 60s 超时才
+  kill——修复：near-cap 只读 `limit-total+1` 字符，越界即杀（见证=cap+1+
+  sleep30s 场景 <10s 出局，tamper 回退实测 30.1s vs 修复后 0.5s）；
+  ④P3 stderr 超限报错串引用 stdout 常量——修复：cap 随流选择。
+  见证 +5（31 条），四点 tamper 翻红（含等价性守恒确认）；踩点记录：tamper
+  同秒同大小替换会骗过 pyc 缓存（假红一枚，清缓存复验消除）。
+  checker_scorer 又变更→csv 尺 #772f977a→#d46df105（守卫先红后绿）。1239 绿。

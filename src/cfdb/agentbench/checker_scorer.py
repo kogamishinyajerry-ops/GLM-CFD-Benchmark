@@ -75,7 +75,12 @@ def _drain_limited(stream, limit: int, proc: subprocess.Popen, result: dict) -> 
     total = 0
     overflowed = False
     while True:
-        chunk = stream.read(65536)
+        # Near the cap, request only (limit - total + 1) chars: text-mode
+        # read(n) blocks until n chars or EOF, so asking for a full 64 KiB
+        # when one char past the cap suffices would let a just-over-limit
+        # checker stall the kill until the outer timeout (Codex R8-R1 P2).
+        to_read = 65536 if overflowed is True else min(65536, limit - total + 1)
+        chunk = stream.read(to_read)
         if chunk == "":
             break
         if overflowed is False:
@@ -230,10 +235,14 @@ def score_agentic(
     err_thread.join()
 
     if out_box.get("overflowed") is True or err_box.get("overflowed") is True:
-        which = "stdout" if out_box.get("overflowed") is True else "stderr"
+        # Report the cap of the stream that actually overflowed (Codex
+        # R8-R1 P3) — audit output must match enforcement.
+        if out_box.get("overflowed") is True:
+            which, cap = "stdout", MAX_CHECKER_STDOUT_CHARS
+        else:
+            which, cap = "stderr", MAX_CHECKER_STDERR_CHARS
         return _error_verdict(
-            f"checker {which} exceeded its output cap "
-            f"({MAX_CHECKER_STDOUT_CHARS} chars) and was killed: {checker_path}"
+            f"checker {which} exceeded its output cap ({cap} chars) and was killed: {checker_path}"
         )
 
     if returncode != 0:

@@ -249,7 +249,7 @@ class TestPlatformGuards:
 
         monkeypatch.setattr(scorer_mod, "MAX_SUBMISSION_BYTES", 1024)
         ledger = tmp_path / "ledger.jsonl"
-        with pytest.raises(ValueError, match="exceeding the platform cap"):
+        with pytest.raises(ValueError, match="the platform cap"):
             score_submission(contract, case, case_dir, sub, ledger_path=ledger)
         assert ledger.exists() is False  # refused before judging/ledgering
 
@@ -395,3 +395,132 @@ class TestGoldenAdmission:
         run_admission("smoke_add_two", registry, runs=1, backend_factory=lambda c, s: stub)
         payload = json.loads((case_dir / "admission.json").read_text(encoding="utf-8"))
         assert payload["case_id"] == "smoke_add_two"
+
+
+# ============================================================================
+# R8-R2 review fixes (Codex R8-R1: 1P1 + 2P2 + 1P3)
+# ============================================================================
+
+
+class TestR8R2ReviewFixes:
+    def test_caps_enforced_inside_digest_traversal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R8-R1 P2: the caps bind to the hashed snapshot — the
+        # digest traversal itself raises, not a separate pre-scan.
+        import cfdb.agentbench.scorer as scorer_mod
+        from cfdb.agentbench.scorer import _submission_digest
+
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        for i in range(6):
+            (sub / f"f{i}").touch()
+        monkeypatch.setattr(scorer_mod, "MAX_SUBMISSION_ENTRIES", 5)
+        with pytest.raises(ValueError, match="more than 5 entries"):
+            _submission_digest(sub)
+
+    def test_streaming_digest_matches_legacy_rglob_scheme(self, tmp_path: Path) -> None:
+        # Codex R8-R1 P1: the streaming os.scandir walk must reproduce the
+        # original sorted(rglob) identity byte-for-byte — including the
+        # ordering edge between siblings like 'a.b' and 'a' subtrees.
+        from cfdb.agentbench.contract import canonical_digest, sha256_file
+        from cfdb.agentbench.scorer import _submission_digest
+
+        sub = tmp_path / "sub"
+        (sub / "a").mkdir(parents=True)
+        (sub / "a.b").mkdir()
+        (sub / "a" / "x.txt").write_text("ax", encoding="utf-8")
+        (sub / "a.b" / "x.txt").write_text("abx", encoding="utf-8")
+        (sub / "empty_dir").mkdir()
+        (sub / "top.txt").write_text("top", encoding="utf-8")
+
+        legacy_pairs: list[list[str]] = []
+        for path in sorted(sub.rglob("*")):  # the original scheme, inlined
+            rel = path.relative_to(sub).as_posix()
+            if path.is_dir():
+                legacy_pairs.append([rel + "/", "dir"])
+            elif path.is_file():
+                legacy_pairs.append([rel, sha256_file(path)])
+        assert _submission_digest(sub) == canonical_digest(legacy_pairs)
+
+    def test_mutation_past_caps_during_judging_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R8-R1 P2: the post-judging re-digest re-enforces the caps,
+        # so a tree that grows past the limits DURING judging is refused.
+        import cfdb.agentbench.checker_scorer as checker_scorer
+        import cfdb.agentbench.scorer as scorer_mod
+        from cfdb.agentbench.scorer import score_submission
+
+        registry, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        contract = init_contract("csv_field_extract", registry)
+        case = registry.load("csv_field_extract")
+        expected = (case_dir / "reference" / "expected.json").read_text(encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "summary.json").write_text(expected, encoding="utf-8")
+
+        real_score_agentic = checker_scorer.score_agentic
+
+        def growing(case_dir_: Path, submission_dir_: Path):
+            verdict = real_score_agentic(case_dir_, submission_dir_)
+            for i in range(8):
+                (submission_dir_ / f"late_{i}").touch()
+            return verdict
+
+        monkeypatch.setattr(checker_scorer, "score_agentic", growing)
+        monkeypatch.setattr(scorer_mod, "MAX_SUBMISSION_ENTRIES", 5)
+        ledger = tmp_path / "ledger.jsonl"
+        with pytest.raises(ValueError, match="more than 5 entries"):
+            score_submission(contract, case, case_dir, sub, ledger_path=ledger)
+        assert ledger.exists() is False
+
+    def test_just_over_limit_overflow_kills_promptly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R8-R1 P2: a checker that writes cap+1 chars then hangs must
+        # be killed by the boundary-sized read, not carried to the 60s
+        # timeout by a read() waiting to fill a full 64 KiB chunk.
+        import time
+
+        import cfdb.agentbench.checker_scorer as checker_mod
+        from cfdb.agentbench.checker_scorer import score_agentic
+
+        _, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        (case_dir / "reference" / "checker.py").write_text(
+            "import sys, time\nsys.stdout.write('x' * 10001)\nsys.stdout.flush()\ntime.sleep(30)\n",
+            encoding="utf-8",
+        )
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "summary.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(checker_mod, "MAX_CHECKER_STDOUT_CHARS", 10_000)
+        started = time.monotonic()
+        verdict = score_agentic(case_dir, sub)
+        elapsed = time.monotonic() - started
+        assert verdict.mode == "CHECKER_ERROR"
+        assert "exceeded its output cap" in (verdict.error or "")
+        assert elapsed < 10.0  # killed at the boundary, not at the timeout
+
+    def test_overflow_message_names_the_offending_stream_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R8-R1 P3: audit output must cite the cap that was enforced.
+        import cfdb.agentbench.checker_scorer as checker_mod
+        from cfdb.agentbench.checker_scorer import score_agentic
+
+        _, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        (case_dir / "reference" / "checker.py").write_text(
+            "import sys\n"
+            "print('e' * 60000, file=sys.stderr)\n"
+            'print(\'{"success": true, "evidence": []}\')\n',
+            encoding="utf-8",
+        )
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "summary.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(checker_mod, "MAX_CHECKER_STDERR_CHARS", 50_000)
+        verdict = score_agentic(case_dir, sub)
+        assert verdict.mode == "CHECKER_ERROR"
+        assert "stderr" in (verdict.error or "")
+        assert "50000" in (verdict.error or "")  # the stderr cap, not stdout's

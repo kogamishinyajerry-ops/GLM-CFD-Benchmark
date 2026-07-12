@@ -540,6 +540,22 @@ def _validate_io_oracle(case: CaseSpec, case_dir: Path, final_gates: list[str]) 
             "is not in its validity_gates — the oracle would run but never gate"
         )
 
+    # The held-out answers MUST resolve inside the frozen, secret reference/
+    # tree (Codex R9-R0 P1). reference/ is anchored by _collect_frozen_files,
+    # so verify_frozen catches any drift of the expected values; it is also
+    # never shipped to the agent (unlike visible/). A cases_file that is
+    # absolute, escapes via '..', or sits at the case root would be readable
+    # here but NEVER anchored — the oracle would then trust expected answers
+    # that can change while the ruler stays clean, or leak them to the agent.
+    reference_root = (case_dir / "reference").resolve()
+    resolved_cases = (case_dir / io.cases_file).resolve()
+    if not resolved_cases.is_relative_to(reference_root):
+        raise ValueError(
+            f"io_oracle.cases_file '{io.cases_file}' must resolve inside the frozen, "
+            f"secret reference/ tree (resolved to {resolved_cases}); a file outside "
+            "reference/ is not anchored and its expected answers could drift "
+            "undetected or leak to the agent"
+        )
     cases_path = case_dir / io.cases_file
     if not cases_path.is_file():
         raise FileNotFoundError(f"io_oracle.cases_file missing: {cases_path}")
@@ -672,6 +688,18 @@ def init_contract(
             f"refusing to anchor '{case_id}': importable bytecode present in "
             f"judged trees: {cache_artifacts} — python -B keeps legitimate "
             "runs cache-free, so delete these files and re-run init"
+        )
+
+    # R9: the IO oracle is a coding-domain judging primitive. A non-coding
+    # case that declares one would sail through init with the oracle silently
+    # ignored — the gate is only auto-appended for coding, so neither the
+    # coding validation nor the bare-gate check below fires (Codex R9-R0 P2).
+    # Reject the inert declaration outright rather than ship a dead signal.
+    if case.execution.io_oracle is not None and case.domain != "coding":
+        raise ValueError(
+            f"case '{case_id}' (domain '{case.domain}') declares execution.io_oracle, "
+            "but the IO oracle is a coding-domain primitive and would never gate — "
+            "remove the declaration or set domain: coding"
         )
 
     domain_weights = DOMAIN_DEFAULT_WEIGHTS.get(case.domain, DEFAULT_WEIGHTS)

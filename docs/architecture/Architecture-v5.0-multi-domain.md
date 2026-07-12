@@ -553,3 +553,31 @@ cases/coding_tasks/<id>/
   （#0a67252b→#bc9dca2b / #d46df105→#ee7951d0 / #7c7e2408→#eacc001d）+新契约
   smoke_add_two_io #923cd295（validity_gates 由反向耦合自动补 io_oracle_pass）；
   字节定稿（ruff）在前、重锚在后=canon 47 顺序。canon-47 守卫复绿，全套 1267 绿。
+- **R9-R0 治理审（审 87d029c，86gs sol ultra）：3P1+4P2 全 grounded 坐实即修（本批）**——
+  异源审咬中 io oracle 实现层的宿主侧与准入盲区，全部复核为真后逐条落地：
+  ①**P1 结果文件非常规/超大伪造**：结果文件落在容器可写 `/work`，恶意提交可预建
+  `io_results.json` 为 FIFO（宿主 `read_text` 永久阻塞，逃逸容器超时）/symlink（指
+  `/dev/zero` 爆内存）/超大文件——修复：读前 `os.lstat`（不跟随 symlink）强制常规
+  文件 + ≤8MiB 上限，否则 0.0（见证：FIFO/symlink/超大三红 + 常规文件仍收）。
+  ②**P1 cases_file 未锚**：`cases_file` 为绝对路径/`..` 逃逸/案根文件时准入能读但
+  `_collect_frozen_files` 不锚→held-out 答案可漂而 verify_frozen 清白（且可能泄给
+  agent）——修复：准入强制 `cases_file` resolve 进冻结且保密的 `reference/` 树内
+  （见证：案根文件 + `..` 逃逸双红）。③**P1 oracle 后未重验尺**：oracle 是第二次
+  容器跑，把判分窗口拉长过 pytest 后的 verify_frozen；host 在 oracle 运行中篡改冻结
+  料不会被逮——修复：`_run_io_oracle` 后再 verify_frozen 一次，漂即 exit 3（见证：
+  stub 在 oracle 跑中改 held_out→FrozenDriftError 点名）。④**P2 序列化类型坍缩**：
+  `json.dump` 把 tuple→list、int 键→str，宿主 `_strict_equal` 看不到原类型，「类型
+  严格」名不副实——修复：driver 序列化前 `_native` 校验，非 JSON-native 返回（tuple/
+  set/非 str 键 dict）判 ok:False（见证：in-proc exec driver 源，tuple/int 键红、
+  list 收；**真容器 E2E**：tuple-on-held-out 过 pytest 但 driver 拒→io_oracle 红）。
+  ⑤**P2 null 缺键伪造**：held-out 期望为 JSON null 时，缺 `result` 键的伪造行因
+  `row.get("result")` 也返 None 而蒙混——修复：比较前强制 `result` 键在位（见证：
+  缺键+null 期望红、在位 null 值仍收）。⑥**P2 非 coding 域惰性 oracle**：CFD/agentic
+  声明 io_oracle 能过 init 但 gate 从不自动补→oracle 被静默忽略=装饰信号——修复：
+  init 早断非 coding 域的 io_oracle（见证：cfd 案带 io_oracle→拒）。⑦**P2 缺准入
+  证据**：新 case 无 admission.json/md（§3.1 要 3/3 golden sandbox 证据）——修复：
+  跑 `agent-eval admit -c smoke_add_two_io --runs 3` 真容器 3/3 全绿（双信号），
+  机写 admission.json（冻结树外不漂尺）+ 人读 admission.md 披露（真沙箱，非本地）。
+  sandbox_scorer.py 改（判卷源锚）→smoke/smoke_io 双 coding 尺重锚
+  （#bc9dca2b→#1b5aaf53 / #923cd295→#26a85b2a；csv/cavity 锚 judge_policy 未动不漂）。
+  +13 见证（41 条）六点 tamper 全翻红实证；字节定稿在前重锚在后=canon 47。全套 1280 绿。

@@ -15,18 +15,26 @@ witnesses cover the four loop-auditor P1 fixes and two deeper hardenings:
 
 from __future__ import annotations
 
+import builtins
 import json
+import os
 import shutil
+import sys
+import types
 from pathlib import Path
 
 import pytest
 from test_agentbench_coding import StubBackend, _junit_xml
 
+import cfdb.agentbench.sandbox_scorer as ss
 from cfdb.adapters.base import RunResult
 from cfdb.agentbench.contract import FrozenDriftError, init_contract, verify_frozen
 from cfdb.agentbench.sandbox_scorer import (
+    IO_RESULTS_CONTAINER,
+    IO_RESULTS_FILENAME,
     JUDGE_HIDDEN_TESTS,
     JUDGE_IO,
+    JUDGE_IO_INPUTS,
     JUDGE_SUBMISSION,
     _default_io_backend_factory,
     _io_driver_source,
@@ -400,3 +408,200 @@ class TestAnchorCoverage:
         io_path.write_text(io_path.read_text(encoding="utf-8").replace("9", "8"), encoding="utf-8")
         with pytest.raises(FrozenDriftError, match="held_out_io.json"):
             score_submission(contract, case, case_dir, sub)
+
+
+# ============================================================================
+# Codex R9-R0 review fixes (3 P1 + 4 P2)
+# ============================================================================
+
+
+class TestResultArtifactGuard:
+    """P1: the result file lands in a container-writable dir — a hostile
+    submission can plant a FIFO / symlink / oversized file for the host to
+    read. The reader requires a bounded regular non-symlink file."""
+
+    def test_fifo_results_file_rejected(self, tmp_path: Path) -> None:
+        p = tmp_path / IO_RESULTS_FILENAME
+        os.mkfifo(p)  # host read_text() on a FIFO would block forever
+        notes: list[str] = []
+        assert _reconcile_io(p, [9], notes) == 0.0
+        assert any("regular file" in n for n in notes)
+
+    def test_symlink_results_file_rejected(self, tmp_path: Path) -> None:
+        # Even a symlink pointing at a VALID payload is rejected (lstat does
+        # not follow) — the submission could aim it at /dev/zero or a huge file.
+        target = tmp_path / "real.json"
+        target.write_text(json.dumps([{"index": 0, "ok": True, "result": 9}]), encoding="utf-8")
+        link = tmp_path / IO_RESULTS_FILENAME
+        os.symlink(target, link)
+        notes: list[str] = []
+        assert _reconcile_io(link, [9], notes) == 0.0
+        assert any("regular file" in n for n in notes)
+
+    def test_oversized_results_file_rejected(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr(ss, "IO_RESULTS_MAX_BYTES", 8)  # tiny cap for the test
+        p = tmp_path / IO_RESULTS_FILENAME
+        p.write_text(json.dumps([{"index": 0, "ok": True, "result": 9}]), encoding="utf-8")
+        notes: list[str] = []
+        assert _reconcile_io(p, [9], notes) == 0.0
+        assert any("exceeds cap" in n for n in notes)
+
+    def test_regular_bounded_file_still_accepted(self, tmp_path: Path) -> None:
+        # The guard must not reject a legitimate driver-written file.
+        p = tmp_path / IO_RESULTS_FILENAME
+        p.write_text(json.dumps([{"index": 0, "ok": True, "result": 9}]), encoding="utf-8")
+        assert _reconcile_io(p, [9], []) == 1.0
+
+
+class TestReconcileNullResult:
+    """P2: a forged row that omits ``result`` must fail before equality, else
+    ``row.get('result')`` is None and spuriously matches a null expected."""
+
+    def test_missing_result_key_with_null_expected_fails(self, tmp_path: Path) -> None:
+        p = tmp_path / IO_RESULTS_FILENAME
+        p.write_text(json.dumps([{"index": 0, "ok": True}]), encoding="utf-8")  # no result
+        notes: list[str] = []
+        assert _reconcile_io(p, [None], notes) == 0.0
+        assert any("no 'result' field" in n for n in notes)
+
+    def test_present_null_result_with_null_expected_passes(self, tmp_path: Path) -> None:
+        # A genuine null result (key PRESENT) still matches a null expected —
+        # the fix rejects a MISSING key, not a null value.
+        p = tmp_path / IO_RESULTS_FILENAME
+        p.write_text(json.dumps([{"index": 0, "ok": True, "result": None}]), encoding="utf-8")
+        assert _reconcile_io(p, [None], []) == 1.0
+
+
+class TestCasesFileAnchoring:
+    """P1: cases_file must resolve inside the frozen, secret reference/ tree,
+    or the held-out answers are neither anchored nor kept from the agent."""
+
+    def _set_cases_file(self, case_dir: Path, rel: str) -> None:
+        case_yaml = case_dir / "case.yaml"
+        case_yaml.write_text(
+            case_yaml.read_text(encoding="utf-8").replace(
+                'cases_file: "reference/held_out_io.json"', f'cases_file: "{rel}"'
+            ),
+            encoding="utf-8",
+        )
+
+    def test_cases_file_at_case_root_rejected(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        (case_dir / "held_out_root.json").write_text(
+            json.dumps([{"args": [7], "expected": 9}] * 3), encoding="utf-8"
+        )
+        self._set_cases_file(case_dir, "held_out_root.json")  # outside reference/
+        with pytest.raises(ValueError, match="reference/ tree"):
+            init_contract("smoke_add_two_io", registry)
+
+    def test_cases_file_dotdot_escape_rejected(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        self._set_cases_file(case_dir, "../../../etc/passwd")
+        with pytest.raises(ValueError, match="reference/ tree"):
+            init_contract("smoke_add_two_io", registry)
+
+
+class TestNonCodingOracleRejected:
+    """P2: an io_oracle on a non-coding case would be silently ignored (its
+    gate is only auto-appended for coding). Reject the inert declaration."""
+
+    def test_cfd_case_with_io_oracle_rejected(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        case_yaml = case_dir / "case.yaml"
+        case_yaml.write_text(
+            case_yaml.read_text(encoding="utf-8").replace("domain: coding", "domain: cfd"),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="coding-domain primitive"):
+            init_contract("smoke_add_two_io", registry)
+
+
+class TestMidRunDriftReverify:
+    """P1: the oracle is a second container run that extends the scoring
+    window past the post-pytest verify_frozen; a host-side tamper DURING it
+    must still be caught before the verdict is ledgered."""
+
+    def test_host_tamper_during_oracle_run_is_caught(self, tmp_path: Path) -> None:
+        registry, case_dir = _tmp_smoke(tmp_path)
+        held = case_dir / "reference" / "held_out_io.json"
+
+        def tampering_factory(submission_dir: Path, io_dir: Path):
+            class _Tamper:
+                def execute(self, command, cwd, timeout=None, env=None) -> RunResult:
+                    inputs = json.loads((io_dir / "inputs.json").read_text(encoding="utf-8"))
+                    out = [
+                        {"index": it["index"], "ok": True, "result": it["args"][0] + 2}
+                        for it in inputs
+                    ]
+                    (Path(cwd) / "io_results.json").write_text(json.dumps(out), encoding="utf-8")
+                    # a host actor edits a frozen file mid-oracle-run
+                    data = json.loads(held.read_text(encoding="utf-8"))
+                    data[0]["expected"] = 4321
+                    held.write_text(json.dumps(data), encoding="utf-8")
+                    return RunResult(
+                        exit_code=0, stdout="", stderr="", wall_time_sec=0.1, timed_out=False
+                    )
+
+            return _Tamper()
+
+        contract = init_contract("smoke_add_two_io", registry)
+        case = registry.load("smoke_add_two_io")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "solution.py").write_text(
+            "def add_two(x):\n    return x + 2\ndef already_works(x):\n    return x\n",
+            encoding="utf-8",
+        )
+        pytest_stub = StubBackend(report_xml=_junit_xml(total=2))
+        with pytest.raises(FrozenDriftError, match="held_out_io.json"):
+            score_coding(
+                case,
+                case_dir,
+                sub,
+                contract,
+                backend_factory=lambda c, s: pytest_stub,
+                work_dir=tmp_path / "work",
+                io_backend_factory=tampering_factory,
+            )
+
+
+class TestDriverNativeTypes:
+    """P2: json.dump would silently coerce a tuple to a list (and int keys to
+    strings), defeating the type-strict claim. The driver rejects non-native
+    returns BEFORE serialization. Exercised by exec-ing the driver source in
+    process with the two container paths redirected."""
+
+    def _run_driver(self, tmp_path: Path, monkeypatch, ret) -> list:
+        inputs = tmp_path / "inputs.json"
+        inputs.write_text(json.dumps([{"index": 0, "args": [1]}]), encoding="utf-8")
+        results = tmp_path / "io_results.json"
+        fake = types.ModuleType("solmod")
+        fake.f = lambda x: ret  # noqa: ARG005
+        monkeypatch.setitem(sys.modules, "solmod", fake)
+        real_open = builtins.open
+
+        def fake_open(file, *a, **k):
+            if file == JUDGE_IO_INPUTS:
+                file = str(inputs)
+            elif file == IO_RESULTS_CONTAINER:
+                file = str(results)
+            return real_open(file, *a, **k)
+
+        monkeypatch.setattr(builtins, "open", fake_open)
+        exec(compile(_io_driver_source("solmod", "f"), "<driver>", "exec"), {})
+        return json.loads(results.read_text(encoding="utf-8"))
+
+    def test_tuple_return_rejected(self, tmp_path: Path, monkeypatch) -> None:
+        out = self._run_driver(tmp_path, monkeypatch, (1, 2))
+        assert out[0]["ok"] is False
+        assert "non-JSON-native" in out[0]["error"]
+
+    def test_non_str_dict_key_rejected(self, tmp_path: Path, monkeypatch) -> None:
+        out = self._run_driver(tmp_path, monkeypatch, {1: "a"})  # int key -> would coerce
+        assert out[0]["ok"] is False
+        assert "non-JSON-native" in out[0]["error"]
+
+    def test_native_list_return_preserved(self, tmp_path: Path, monkeypatch) -> None:
+        out = self._run_driver(tmp_path, monkeypatch, [1, 2])
+        assert out[0]["ok"] is True
+        assert out[0]["result"] == [1, 2]

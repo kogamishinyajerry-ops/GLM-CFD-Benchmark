@@ -35,6 +35,7 @@ import logging
 import math
 import os
 import secrets
+import stat
 import tempfile
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -71,6 +72,11 @@ IO_RESULTS_CONTAINER = "/work/io_results.json"
 IO_INPUTS_FILENAME = "inputs.json"
 IO_DRIVER_FILENAME = "driver.py"
 IO_RESULTS_FILENAME = "io_results.json"
+# The oracle result file lands in a container-WRITABLE work zone, so the
+# submission can plant a FIFO / symlink / oversized file there (Codex R9-R0
+# P1). The host reader requires a bounded regular non-symlink file; 8 MiB is
+# far above any legitimate result set (a few rows of small JSON scalars).
+IO_RESULTS_MAX_BYTES = 8 * 1024 * 1024
 WORK_REPORT = "/work/report.xml"
 WORK_BASETEMP = "/work/pytest-tmp"
 WORK_TMPDIR = "/work/tmp"
@@ -268,6 +274,15 @@ def _io_driver_source(entry_module: str, entry_func: str) -> str:
     The driver drives ``entry_module:entry_func`` over the inputs-only
     projection and writes one row per input to the work zone. It NEVER
     sees the expected outputs (reconciliation is host-side).
+
+    Type-strictness is enforced BEFORE serialization (Codex R9-R0 P2): the
+    driver rejects any return value that is not strictly JSON-native
+    (tuple/set, or a dict with non-string keys), because ``json.dump`` would
+    silently coerce a tuple to a list and an integer key to a string — the
+    host-side ``_strict_equal`` could then never tell them apart, defeating
+    the advertised strict typing. Values that round-trip JSON losslessly
+    (None/bool/int/float/str/list/str-keyed dict) are preserved and left for
+    the host to compare exactly.
     """
     return (
         "import sys, json, traceback, importlib\n"
@@ -276,11 +291,23 @@ def _io_driver_source(entry_module: str, entry_func: str) -> str:
         f"sys.path.insert(0, {JUDGE_SUBMISSION!r})\n"
         f"_mod = importlib.import_module({entry_module!r})\n"
         f"_fn = getattr(_mod, {entry_func!r})\n"
+        "def _native(_v):\n"
+        "    if _v is None or isinstance(_v, (bool, int, float, str)):\n"
+        "        return True\n"
+        "    if isinstance(_v, list):\n"
+        "        return all(_native(_x) for _x in _v)\n"
+        "    if isinstance(_v, dict):\n"
+        "        return all(isinstance(_k, str) and _native(_x) for _k, _x in _v.items())\n"
+        "    return False\n"
         "_out = []\n"
         "for _item in _inputs:\n"
         "    try:\n"
         "        _r = _fn(*_item['args'])\n"
-        "        _out.append({'index': _item['index'], 'ok': True, 'result': _r})\n"
+        "        if not _native(_r):\n"
+        "            _out.append({'index': _item['index'], 'ok': False, "
+        "'error': 'non-JSON-native return type (would coerce): ' + type(_r).__name__})\n"
+        "        else:\n"
+        "            _out.append({'index': _item['index'], 'ok': True, 'result': _r})\n"
         "    except Exception:\n"
         "        _out.append({'index': _item['index'], 'ok': False, "
         "'error': traceback.format_exc()[-400:]})\n"
@@ -352,6 +379,24 @@ def _reconcile_io(results_path: Path, expected: list, notes: list[str]) -> float
     Returns:
         1.0 only if every input produced the strictly-equal expected value.
     """
+    # The result file sits in a container-writable dir, so a hostile
+    # submission may pre-create it as a FIFO (host read blocks forever,
+    # outside the container timeout), a symlink (host follows it — /dev/zero
+    # exhausts memory), or an oversized regular file. lstat WITHOUT following
+    # symlinks, require a bounded regular file, THEN read (Codex R9-R0 P1).
+    try:
+        st = os.lstat(results_path)
+    except OSError as e:
+        notes.append(f"io oracle: results file not present: {e} (invalid)")
+        return 0.0
+    if not stat.S_ISREG(st.st_mode):
+        notes.append("io oracle: results file is not a regular file (FIFO/symlink?) (invalid)")
+        return 0.0
+    if st.st_size > IO_RESULTS_MAX_BYTES:
+        notes.append(
+            f"io oracle: results file {st.st_size} B exceeds cap {IO_RESULTS_MAX_BYTES} B (invalid)"
+        )
+        return 0.0
     try:
         results = json.loads(results_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
@@ -368,7 +413,14 @@ def _reconcile_io(results_path: Path, expected: list, notes: list[str]) -> float
         if row.get("ok") is not True:
             notes.append(f"io oracle: input {i} raised inside the submission (invalid)")
             return 0.0
-        if not _strict_equal(row.get("result"), exp):
+        # The result file is submission-influenced, so a forged/malformed row
+        # that omits "result" must fail BEFORE equality (Codex R9-R0 P2):
+        # otherwise `row.get("result")` is None and would spuriously match a
+        # held-out expected value of JSON null.
+        if "result" not in row:
+            notes.append(f"io oracle: result {i} has no 'result' field (invalid)")
+            return 0.0
+        if not _strict_equal(row["result"], exp):
             notes.append(f"io oracle: input {i} produced the wrong output (invalid)")
             return 0.0
     return 1.0
@@ -710,6 +762,14 @@ def score_coding(
             computed["io_oracle_pass"] = _run_io_oracle(
                 case, case_dir, submission_dir, io_backend_factory, notes
             )
+            # The oracle is a SECOND container run — it extends the scoring
+            # window past the post-pytest verify_frozen above. Re-verify the
+            # ruler once more so a host-side edit of the held-out answers (or
+            # any frozen material) DURING the oracle run cannot slip an
+            # already-ledgered verdict past drift detection (Codex R9-R0 P1).
+            drifted_after_oracle = verify_frozen(contract, case_dir)
+            if len(drifted_after_oracle) > 0:
+                raise FrozenDriftError(drifted_after_oracle)
 
         gates = evaluate_gates(contract, case, computed, wall_time, notes)
         valid = all(gates[g] is True for g in contract.validity_gates)

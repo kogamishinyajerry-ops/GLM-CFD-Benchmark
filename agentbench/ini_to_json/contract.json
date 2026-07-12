@@ -1,0 +1,23 @@
+{
+  "contract_version": "2",
+  "case_id": "ini_to_json",
+  "frozen": {
+    "case.yaml": "c78596d04f19b6438b9970dfdf30408953c58a6f0d4ca5595c8118bfec52be2a",
+    "reference/checker.py": "9f2e46ffb4a8cf3f497c676681d8d90256b016c5e87c1cf9ebba270d2eec91fe",
+    "reference/expected.json": "44bc2f04d3e62e63b965f11511cb4b06664083fb439161f5168e18fc6803b596",
+    "visible/README.md": "3f49e8463ff3927dd4ff5988ff194dcc4900962b4ebd260ff9e03b03f9160573",
+    "visible/config.ini": "e21aa6648be44b06a1b7ea97084486da1dfeda178139204a8550420d59d603a6",
+    "__weights__": "89f4764a4a60c4de3243d5ba83c99c58862ce79efbb655e144dff233bf4f4173",
+    "__validity_gates__": "1a2479196ccfe68923532a90b45fd7f4b0d1cad5147fcce06e1759a7a60cda1d",
+    "__file_manifest__": "16f9657b85064ba421190e969952a0b882aff32fab630436d1de374ac892c9d6",
+    "judge_source:checker_scorer": "621183bf60a382be1d3dccb5059f479e1b5c10c4d6eb6d8ef36d33bca83c0d13",
+    "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
+    "__normalize_source__": "9032c8bd9eba04ff674a40b86384c08356a61bc5e83a67ef229624cf1938dec7"
+  },
+  "weights": {
+    "checker_success": 1.0
+  },
+  "validity_gates": [
+    "checker_ok"
+  ]
+}

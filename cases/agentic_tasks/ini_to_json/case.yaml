@@ -1,0 +1,23 @@
+id: ini_to_json
+name: Agentic -- INI to Nested JSON Conversion
+category: verification
+domain: agentic
+description: >-
+  State-based agentic task (WorkArena/OSWorld/tau-bench style): read
+  visible/config.ini and write submission_dir/config.json as a nested
+  object (one object per section, string-typed values). Judged mechanically
+  by reference/checker.py (executed by the cfdb process, never by the
+  submission) via exact structural equality, not by the CFD-style
+  qoi/reference/metrics numeric pipeline. A format-conversion task,
+  complementing the aggregation (csv_field_extract) and file-operation
+  (dir_organize) agentic cases. See Architecture-v5.0-multi-domain.md §4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi: []
+reference:
+  type: manufactured
+metrics: {}
+budget:
+  max_runtime_sec: 60

@@ -179,12 +179,15 @@ class TestAdapterCpCollection:
         assert reference is not None
         assert [x for x, _ in manifest.curves["cp_distribution"]] == [x for x, _ in reference]
 
-    def test_missing_sample_leaves_curves_none(self, tmp_path: Path) -> None:
+    def test_missing_sample_reports_attempted_but_failed(self, tmp_path: Path) -> None:
+        # Codex R8 P1: a DECLARED curve whose collection fails must return
+        # an EMPTY mapping — None would leave the engine's curve gate
+        # dormant and silently exempt a configured tolerance.
         adapter, case, run_dir = self._adapter_setup(tmp_path)
         manifest = adapter.collect_outputs(case, run_dir)
-        assert manifest.curves is None
+        assert manifest.curves == {}
 
-    def test_corrupt_sample_leaves_curves_none(self, tmp_path: Path) -> None:
+    def test_corrupt_sample_reports_attempted_but_failed(self, tmp_path: Path) -> None:
         adapter, case, run_dir = self._adapter_setup(tmp_path)
         sample_dir = run_dir / "case" / "postProcessing" / "cpSurface" / "3000"
         sample_dir.mkdir(parents=True)
@@ -192,7 +195,35 @@ class TestAdapterCpCollection:
             "0.0 0.06 0.05 not_a_number\n", encoding="utf-8"
         )
         manifest = adapter.collect_outputs(case, run_dir)
+        assert manifest.curves == {}
+
+    def test_undeclared_curve_stays_none(self, tmp_path: Path) -> None:
+        # None is reserved for "never attempted": a case that declares no
+        # cp curve keeps the engine's backward-compat guard dormant.
+        adapter, case, run_dir = self._adapter_setup(tmp_path)
+        no_curves = case.model_copy(deep=True)
+        no_curves.outputs.curves = []
+        manifest = adapter.collect_outputs(no_curves, run_dir)
         assert manifest.curves is None
+
+    def test_failed_collection_makes_run_incomplete_not_pass(self) -> None:
+        # Codex R8 P1 end-to-end: naca0012 (base) configures a
+        # cp_distribution tolerance; perfect QoI + failed cp collection
+        # ({}) must be 'incomplete', never 'pass'.
+        from cfdb.adapters.base import ArtifactManifest, RunResult
+        from cfdb.metrics.engine import MetricsEngine
+
+        registry = CaseRegistry(PROJECT_CASES)
+        case = registry.load("naca0012_a0")
+        case_dir = registry.get_case_dir("naca0012_a0")
+        ref_qoi = case.reference.qoi_values
+        artifacts = ArtifactManifest(files={}, qoi_values=dict(ref_qoi), curves={})
+        run_result = RunResult(
+            exit_code=0, stdout="", stderr="", wall_time_sec=1.0, timed_out=False
+        )
+        metrics = MetricsEngine().compute(case, artifacts, run_result, case_dir=case_dir)
+        assert metrics.qoi_pass is True  # QoI alone would have passed
+        assert metrics.overall_status == "incomplete"  # the gate is NOT exempt
 
 
 # ============================================================================
@@ -229,18 +260,69 @@ class TestPlatformGuards:
     def test_oversized_checker_stdout_is_checker_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Codex R8 P1: the cap is enforced WHILE reading — the child is
+        # killed on overflow, never fully buffered first.
         import cfdb.agentbench.checker_scorer as checker_mod
         from cfdb.agentbench.checker_scorer import score_agentic
 
         _, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        (case_dir / "reference" / "checker.py").write_text(
+            "import sys\nfor _ in range(100):\n    print('x' * 10000)\n",
+            encoding="utf-8",
+        )
         sub = tmp_path / "sub"
         sub.mkdir()
         (sub / "summary.json").write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(checker_mod, "MAX_CHECKER_STDOUT_CHARS", 10)
+        monkeypatch.setattr(checker_mod, "MAX_CHECKER_STDOUT_CHARS", 50_000)
         verdict = score_agentic(case_dir, sub)
         assert verdict.mode == "CHECKER_ERROR"
         assert verdict.success is None  # could not judge — never a pass/fail
-        assert "exceeding" in (verdict.error or "")
+        assert "exceeded its output cap" in (verdict.error or "")
+
+    def test_oversized_checker_stderr_is_checker_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # stderr is attacker-influencable too (Codex R8 P1) — same bound.
+        import cfdb.agentbench.checker_scorer as checker_mod
+        from cfdb.agentbench.checker_scorer import score_agentic
+
+        _, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        (case_dir / "reference" / "checker.py").write_text(
+            "import sys\n"
+            "for _ in range(100):\n"
+            "    print('e' * 10000, file=sys.stderr)\n"
+            'print(\'{"success": true, "evidence": []}\')\n',
+            encoding="utf-8",
+        )
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "summary.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(checker_mod, "MAX_CHECKER_STDERR_CHARS", 50_000)
+        verdict = score_agentic(case_dir, sub)
+        assert verdict.mode == "CHECKER_ERROR"
+        assert "exceeded its output cap" in (verdict.error or "")
+
+    def test_submission_entry_count_is_bounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex R8 P2: a tree of empty files stays at zero bytes but must
+        # still hit the entry-count bound in the same pre-judging walk.
+        import cfdb.agentbench.scorer as scorer_mod
+        from cfdb.agentbench.scorer import score_submission
+
+        registry, case_dir = _tmp_case_registry(tmp_path, "agentic_tasks", "csv_field_extract")
+        contract = init_contract("csv_field_extract", registry)
+        case = registry.load("csv_field_extract")
+        expected = (case_dir / "reference" / "expected.json").read_text(encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "summary.json").write_text(expected, encoding="utf-8")
+        for i in range(6):
+            (sub / f"empty_{i}").touch()
+
+        monkeypatch.setattr(scorer_mod, "MAX_SUBMISSION_ENTRIES", 5)
+        with pytest.raises(ValueError, match="more than 5 entries"):
+            score_submission(contract, case, case_dir, sub)
 
 
 # ============================================================================

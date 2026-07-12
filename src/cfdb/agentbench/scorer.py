@@ -215,9 +215,18 @@ def score_submission(
     # oversized submission tree is refused BEFORE hashing or judging — the
     # content digest, the checker and the sandbox mounts all walk this
     # tree, and an unbounded one is a denial-of-service on the judge host.
-    total_bytes = sum(
-        p.lstat().st_size for p in submission_dir.rglob("*") if p.is_file() or p.is_symlink()
-    )
+    # Entry COUNT is bounded in the same walk (Codex R8 P2): a million
+    # empty files stay at zero bytes but still cost unbounded CPU/memory
+    # in every tree walk downstream.
+    total_bytes = 0
+    for index, p in enumerate(submission_dir.rglob("*"), start=1):
+        if index > MAX_SUBMISSION_ENTRIES:
+            raise ValueError(
+                f"submission tree has more than {MAX_SUBMISSION_ENTRIES} entries "
+                "— refusing to score"
+            )
+        if p.is_file() or p.is_symlink():
+            total_bytes += p.lstat().st_size
     if total_bytes > MAX_SUBMISSION_BYTES:
         raise ValueError(
             f"submission tree is {total_bytes} bytes, exceeding the platform cap "
@@ -322,6 +331,13 @@ def score_submission(
         append_ledger(ledger_path, result)
     return result
 
+
+MAX_SUBMISSION_ENTRIES = 10_000
+"""Platform cap on a submission tree's entry count (Codex R8 P2): byte
+caps alone let a tree of empty files stay at zero bytes while every
+downstream walk (digest sort, checker traversal, sandbox mount) pays
+per-entry cost — count and bytes are bounded in the same pre-judging
+walk, both as structured input errors."""
 
 MAX_SUBMISSION_BYTES = 64 * 1024 * 1024
 """Platform cap on a submission tree's total file bytes (R8 backlog).

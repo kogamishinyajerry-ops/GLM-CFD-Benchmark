@@ -481,3 +481,15 @@ cases/coding_tasks/<id>/
   `ungated_curves: [cp_distribution]` 披露 note，与离线提取 L2 至小数位一致
   （交叉验证）；overall fail 由欠分辨 QoI 驱动（cl 误差 79%/cd 505%），
   curve gate 端到端激活且未影响既有诚实判定。
+- **R8-R0 治理审（审 e6d319f）：2P1+1P2 即修（R8-R1 批）**——①P1 cp 采集失败
+  返回 None 绕过已配置 gate（engine 只在 curves is not None 时判曲线→naca0012_a0
+  配了 0.05 容差却可在采样坏死时靠 Cl/Cd 静默 pass=真 fail-open）——修复：语义
+  三分（None=未声明未尝试/`{}`=声明了但采集失败→engine 记 missing→incomplete/
+  非空=成功），见证=「QoI 全过+采集失败 → incomplete 非 pass」端到端；
+  ②P1 checker 输出上限在 capture_output 全缓冲后才检查=护栏声明失实——修复：
+  Popen+双线程增量限读（64KiB chunk 累计，越限即 kill 子进程+排水防管道阻塞），
+  stderr 同界（同为敌意产物可影响面），真子进程见证 stdout/stderr 双路超限
+  →CHECKER_ERROR；③P2 空文件树绕过字节上限——修复：同一预判扫描内条目数
+  ≤10_000（MAX_SUBMISSION_ENTRIES），超限结构化拒。checker_scorer 再变更→
+  csv 尺 #80183efd→#772f977a（守卫先红后绿，canon 47 顺序）。
+  见证 +5（26 条），三点 tamper 翻红实证。1234 绿。

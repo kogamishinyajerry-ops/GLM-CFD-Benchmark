@@ -33,6 +33,7 @@ import json
 import logging
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -46,7 +47,47 @@ MAX_CHECKER_STDOUT_CHARS = 1_000_000
 """Defensive cap on checker stdout consumed by the verdict parser (R8):
 oversized output — typically a checker echoing a hostile oversized
 artifact — is CHECKER_ERROR (fail-closed "could not judge"), never
-silently truncated into a parseable-looking tail."""
+silently truncated into a parseable-looking tail. Enforced WHILE reading
+(Codex R8 P1): the pipe is drained in chunks and the child is killed on
+overflow, so the cap bounds the judge's memory during the read — a
+post-``capture_output`` length check would only measure the damage after
+buffering everything."""
+
+MAX_CHECKER_STDERR_CHARS = 1_000_000
+"""Same incremental bound for stderr (Codex R8 P1): both pipes are
+attacker-influencable through hostile artifacts the checker echoes."""
+
+
+def _drain_limited(stream, limit: int, proc: subprocess.Popen, result: dict) -> None:
+    """Thread target: read one checker pipe incrementally up to ``limit``.
+
+    On overflow the child is killed immediately and the rest of the pipe
+    is drained to EOF without accumulating (the child must never block on
+    a full pipe; the judge must never hold more than ``limit`` chars).
+
+    Args:
+        stream: Text-mode pipe from the checker process.
+        limit: Maximum characters to retain.
+        proc: The checker process (killed on overflow).
+        result: Sink dict; gains ``text`` and ``overflowed`` keys.
+    """
+    chunks: list[str] = []
+    total = 0
+    overflowed = False
+    while True:
+        chunk = stream.read(65536)
+        if chunk == "":
+            break
+        if overflowed is False:
+            total += len(chunk)
+            if total > limit:
+                overflowed = True
+                proc.kill()
+            else:
+                chunks.append(chunk)
+    result["text"] = "".join(chunks)
+    result["overflowed"] = overflowed
+
 
 _DENIED_MODULES: frozenset[str] = frozenset({"subprocess", "socket", "ctypes", "importlib"})
 """Module roots whose import trips :func:`validate_checker` (accidental
@@ -156,35 +197,52 @@ def score_agentic(
         # anchored reference/ tree — a bytecode cache appearing mid-scoring
         # would trip the post-run manifest re-verification as a false ruler
         # drift (Codex R2 P2).
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [sys.executable, "-B", str(checker_path), str(submission_dir)],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_sec,
         )
-    except subprocess.TimeoutExpired:
-        return _error_verdict(f"checker timed out after {timeout_sec}s: {checker_path}")
     except OSError as e:
         return _error_verdict(f"checker process could not be started: {e}")
 
-    if proc.returncode != 0:
-        stderr_tail = proc.stderr.strip()[-2000:]
+    # Incremental limited readers (Codex R8 P1): both pipes are bounded
+    # WHILE reading; overflow kills the child instead of buffering it.
+    out_box: dict = {}
+    err_box: dict = {}
+    out_thread = threading.Thread(
+        target=_drain_limited, args=(proc.stdout, MAX_CHECKER_STDOUT_CHARS, proc, out_box)
+    )
+    err_thread = threading.Thread(
+        target=_drain_limited, args=(proc.stderr, MAX_CHECKER_STDERR_CHARS, proc, err_box)
+    )
+    out_thread.start()
+    err_thread.start()
+    try:
+        returncode = proc.wait(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        out_thread.join()
+        err_thread.join()
+        return _error_verdict(f"checker timed out after {timeout_sec}s: {checker_path}")
+    out_thread.join()
+    err_thread.join()
+
+    if out_box.get("overflowed") is True or err_box.get("overflowed") is True:
+        which = "stdout" if out_box.get("overflowed") is True else "stderr"
         return _error_verdict(
-            f"checker exited with code {proc.returncode}: {checker_path} "
-            f"(stderr tail: {stderr_tail!r})"
+            f"checker {which} exceeded its output cap "
+            f"({MAX_CHECKER_STDOUT_CHARS} chars) and was killed: {checker_path}"
         )
 
-    # Defensive output cap (R8 backlog): the checker is trusted material,
-    # but a checker driven into pathological output by a hostile artifact
-    # (e.g. echoing an unbounded file) must not OOM the verdict parser —
-    # oversized stdout is "could not judge", never silently truncated.
-    if len(proc.stdout) > MAX_CHECKER_STDOUT_CHARS:
+    if returncode != 0:
+        stderr_tail = str(err_box.get("text", "")).strip()[-2000:]
         return _error_verdict(
-            f"checker stdout is {len(proc.stdout)} chars, exceeding the "
-            f"{MAX_CHECKER_STDOUT_CHARS}-char cap: {checker_path}"
+            f"checker exited with code {returncode}: {checker_path} (stderr tail: {stderr_tail!r})"
         )
 
-    payload = _extract_json_tail(proc.stdout)
+    payload = _extract_json_tail(str(out_box.get("text", "")))
     if payload is None:
         return _error_verdict(f"checker stdout is not parseable JSON: {checker_path}")
 

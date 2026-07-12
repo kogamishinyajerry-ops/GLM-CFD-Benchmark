@@ -795,7 +795,15 @@ class OpenFOAMAdapter:
         converts kinematic pressure to Cp, extracts the upper surface and
         resamples onto the case reference's x/c grid (strict shared loader
         — only the ABSCISSA of the reference is used; Cp values are purely
-        simulated). Every failure path returns None with a logged reason.
+        simulated).
+
+        Return semantics carry the verdict distinction (Codex R8 P1):
+        None means "collection was never attempted" (the case declares no
+        cp curve) and leaves the engine's curve gate dormant; an EMPTY dict
+        means "attempted for a declared curve but failed" — the engine then
+        counts the declared curve as missing and the run goes 'incomplete',
+        so a broken sample can never silently exempt a configured curve
+        tolerance. Every failure path logs its reason.
 
         Args:
             case: CaseSpec configuration.
@@ -804,17 +812,18 @@ class OpenFOAMAdapter:
             l_ref: Chord length (m).
 
         Returns:
-            ``{"cp_distribution": [(x, cp), ...]}`` or None.
+            ``{"cp_distribution": [(x, cp), ...]}`` on success, ``{}`` on an
+            attempted-but-failed collection, None when not applicable.
         """
         curve_name = "cp_distribution"
         if curve_name not in (case.outputs.curves or []):
-            return None
+            return None  # not declared -> never attempted
         if case.reference is None or curve_name not in (case.reference.files or {}):
-            logger.warning("cp collection skipped: case has no '%s' reference file", curve_name)
-            return None
+            logger.warning("cp collection failed: case has no '%s' reference file", curve_name)
+            return {}
         if self._source_case_dir is None:
-            logger.warning("cp collection skipped: source case dir unknown (prepare not run)")
-            return None
+            logger.warning("cp collection failed: source case dir unknown (prepare not run)")
+            return {}
 
         from cfdb.metrics.curves import load_reference_curve
         from cfdb.post.cp_curve import extract_cp_distribution
@@ -822,8 +831,8 @@ class OpenFOAMAdapter:
         ref_path = self._source_case_dir / case.reference.files[curve_name]
         reference = load_reference_curve(ref_path)
         if reference is None:
-            logger.warning("cp collection skipped: reference %s failed strict load", ref_path)
-            return None
+            logger.warning("cp collection failed: reference %s failed strict load", ref_path)
+            return {}
 
         raw_candidates = sorted(
             case_dir_out.glob("postProcessing/cpSurface/*/p_*.raw"),
@@ -831,10 +840,10 @@ class OpenFOAMAdapter:
         )
         if not raw_candidates:
             logger.warning(
-                "cp collection skipped: no postProcessing/cpSurface/*/p_*.raw for case %s",
+                "cp collection failed: no postProcessing/cpSurface/*/p_*.raw for case %s",
                 case.id,
             )
-            return None
+            return {}
 
         curve = extract_cp_distribution(
             raw_candidates[-1],
@@ -843,7 +852,7 @@ class OpenFOAMAdapter:
             reference_x=[x for x, _ in reference],
         )
         if curve is None:
-            return None
+            return {}
         return {curve_name: curve}
 
 

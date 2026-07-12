@@ -182,7 +182,8 @@ class TestE2ESmoke:
         # v5.0: +3 coding_tasks + 2 agentic_tasks = 15
         # v5.0 R9: +1 coding_task (smoke_add_two_io, IO-oracle pilot) = 16
         # v5.0 R9 rollout: +1 coding_task (roman_to_int, IO-oracle) = 17
-        assert len(cases) == 17
+        # v5.0 R9 rollout: +1 coding_task (merge_intervals, nested-list IO-oracle) = 18
+        assert len(cases) == 18
 
         for name in ["mock_success", "mock_failure", "mock_missing_reference", "mock_missing_qoi"]:
             case = registry.load(name)

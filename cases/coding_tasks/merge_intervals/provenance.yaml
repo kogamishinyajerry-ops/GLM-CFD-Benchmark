@@ -1,0 +1,12 @@
+# Provenance declaration for merge_intervals (see src/cfdb/provenance/).
+# honesty is NEVER declared here: it is derived mechanically from
+# case.yaml's reference.type ("manufactured" -> HonestyLevel.MANUFACTURED).
+citation: null
+source_url: null
+retrieved: null
+transcription_verified: false
+file_hashes: {}
+notes:
+  - "Self-authored (manufactured) coding-domain task: buggy no-sort stub,
+     hidden tests, and golden fix were all written for this benchmark, not
+     transcribed from an external source."

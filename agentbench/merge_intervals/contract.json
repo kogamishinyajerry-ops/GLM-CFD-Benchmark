@@ -1,0 +1,27 @@
+{
+  "contract_version": "2",
+  "case_id": "merge_intervals",
+  "frozen": {
+    "case.yaml": "7341ed448bda4fc992ceeca41a11d0d3c5e079956204704c4e70ea6d00265cd7",
+    "reference/golden/solution.py": "d75093807d1ff7b2311991c2c8246cf9f59c244ba4dc565b4c610688580fffdd",
+    "reference/held_out_io.json": "996c3d72d44701508f1b701977cbf1ab8ae5f2e089c153d5febd5fe916d9c07c",
+    "reference/hidden_tests/test_fail_to_pass.py": "25a4e702196efd23fa6e809b70200c4ae80c2ac1b75a1955b06548de9211c7c7",
+    "reference/hidden_tests/test_pass_to_pass.py": "44e85037b8f469769abb84c3c8b2bc44d56b0a6c3c7d984f64b1d65d3768da0c",
+    "visible/README.md": "0d6d811ea55f7a648654f1d13ee2a87a8a598ae70b30741f654920737c2e88dd",
+    "visible/solution.py": "43980ea43ebf568f55a0f04721cb9f6ce13744a5bf007d62c76b6026a7aca978",
+    "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
+    "__validity_gates__": "975c64ef020beea4c2bd85f84a9e82a94c7f99074fffbb8d7aee2ffa3d763b6e",
+    "__file_manifest__": "679f2893c414c850b9406881cef4a722f233e532175d800165a5560cf86120b0",
+    "judge_source:sandbox_scorer": "64ef6e2c7a90444a736dd6bde9574f15f04376b521f1a0bf554b8ef8057d30d9",
+    "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
+    "__judge_image__": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+  },
+  "weights": {
+    "pass_rate": 1.0
+  },
+  "validity_gates": [
+    "tests_all_pass",
+    "sandbox_used",
+    "io_oracle_pass"
+  ]
+}

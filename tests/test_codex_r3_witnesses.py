@@ -43,7 +43,8 @@ from cfdb.registry import CaseRegistry
 
 PROJECT_CASES = Path(__file__).resolve().parent.parent / "cases"
 
-SCORER_KEY = f"{JUDGE_SOURCE_PREFIX}scorer"
+# Universal shared-policy anchor (post-extraction: judge_policy, not scorer).
+SCORER_KEY = f"{JUDGE_SOURCE_PREFIX}judge_policy"
 
 
 def _tmp_case_registry(tmp_path: Path, family: str, case_id: str) -> tuple[CaseRegistry, Path]:

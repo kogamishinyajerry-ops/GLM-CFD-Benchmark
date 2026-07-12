@@ -42,7 +42,11 @@ from cfdb.registry import CaseRegistry
 
 PROJECT_CASES = Path(__file__).resolve().parent.parent / "cases"
 
-SCORER_KEY = f"{JUDGE_SOURCE_PREFIX}scorer"
+# The shared verdict policy anchor. Originally scorer.py itself was anchored
+# (R3 batch); the policy has since been extracted into the dedicated
+# judge_policy module — the witness property (shared policy anchored for
+# every domain, edits drift every contract) is unchanged.
+SCORER_KEY = f"{JUDGE_SOURCE_PREFIX}judge_policy"
 
 
 def _tmp_case_registry(tmp_path: Path, family: str, case_id: str) -> tuple[CaseRegistry, Path]:
@@ -84,7 +88,7 @@ class TestSharedScorerAnchor:
         monkeypatch.setattr(
             contract_mod,
             "_judge_source_digest",
-            lambda name: "0" * 64 if name == "scorer" else real_digest(name),
+            lambda name: "0" * 64 if name == "judge_policy" else real_digest(name),
         )
         drifted = verify_frozen(contract, case_dir)
         assert SCORER_KEY in drifted

@@ -73,21 +73,25 @@ new verdicts never share a leaderboard. Key form:
 _JUDGE_SOURCE_MODULES: dict[str, str] = {
     "sandbox_scorer": "cfdb.agentbench.sandbox_scorer",
     "checker_scorer": "cfdb.agentbench.checker_scorer",
-    "scorer": "cfdb.agentbench.scorer",
+    "judge_policy": "cfdb.agentbench.judge_policy",
 }
 """Whitelist of anchorable judge modules; an unknown shortname in a contract
-fails closed as drift, never crashes verification."""
+fails closed as drift, never crashes verification. (``scorer`` was briefly
+anchored between the R3 and R5 batches; the shared policy it carried now
+lives in the dedicated ``judge_policy`` module, so contracts anchoring
+``judge_source:scorer`` are pre-extraction rulers and are refused at load
+via the universal-anchor check — re-anchor deliberately.)"""
 
 _DOMAIN_JUDGE_MODULES: dict[str, tuple[str, ...]] = {
-    "cfd": ("scorer",),
-    "coding": ("sandbox_scorer", "scorer"),
-    "agentic": ("checker_scorer", "scorer"),
+    "cfd": ("judge_policy",),
+    "coding": ("sandbox_scorer", "judge_policy"),
+    "agentic": ("checker_scorer", "judge_policy"),
 }
-"""Which judge modules each domain anchors. scorer.py is anchored for every
-domain (Codex R2 P1): gate evaluation, verdict-to-score assembly, and the
-cfd QoI recomputation all live there, so a policy edit anywhere in it must
-drift every contract — the cost that unrelated scorer.py refactors force a
-re-anchor is accepted as correct noise (one CLI command per case)."""
+"""Which judge modules each domain anchors. judge_policy.py holds every
+shared verdict-affecting rule (Codex R2 P1 root-cause fix: policy extracted
+out of the orchestration module so the anchor surface is exact) — a policy
+edit drifts every contract, while ledger/ranking/orchestration edits in
+scorer.py drift nothing, by design."""
 
 _MANIFEST_TREES: tuple[str, ...] = ("reference", "visible")
 """Case-dir subtrees whose file inventory the manifest anchor covers."""
@@ -97,15 +101,16 @@ REQUIRED_UNIVERSAL_ANCHORS: tuple[str, ...] = (
     WEIGHTS_KEY,
     VALIDITY_GATES_KEY,
     FILE_MANIFEST_KEY,
-    f"{JUDGE_SOURCE_PREFIX}scorer",
+    f"{JUDGE_SOURCE_PREFIX}judge_policy",
 )
 """Anchors every v2 contract must carry regardless of domain (Codex R2 P2):
 the version label alone is not proof of migration — a payload claiming v2
-without these anchors is refused at load. ``judge_source:scorer`` is
-universal since the R3 batch anchored the shared scorer for every domain,
-so load-time consumers (showcase included) must require it too (Codex R3
-P2) — otherwise a contract the scoring path would refuse still displays as
-INTACT."""
+without these anchors is refused at load, so load-time consumers (showcase
+included) never display a contract the scoring path would refuse as INTACT
+(Codex R3 P2). ``judge_source:judge_policy`` is the universal judge anchor:
+the shared verdict policy for every domain lives in that dedicated module
+(it briefly lived in scorer.py, anchored as ``judge_source:scorer``, before
+the extraction — such rulers fail this check and must be re-anchored)."""
 
 DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0}
 """Default public scoring weights (negative = lower metric is better).

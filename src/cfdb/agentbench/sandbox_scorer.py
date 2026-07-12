@@ -40,12 +40,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cfdb.agentbench.contract import FrozenDriftError, ScoringContract, verify_frozen
-from cfdb.agentbench.scorer import (
-    SubmissionScore,
-    WallTimeRecord,
-    _assemble_score,
-    _evaluate_gates,
-)
+from cfdb.agentbench.judge_policy import assemble_score, evaluate_gates
+from cfdb.agentbench.scorer import SubmissionScore, WallTimeRecord
 from cfdb.schema import CaseSpec
 
 if TYPE_CHECKING:
@@ -259,9 +255,7 @@ def score_coding(
         judge_image = getattr(backend, "image", None) or getattr(backend, "_image", None)
         if isinstance(judge_image, str):
             notes.append(f"judge image: {judge_image}")
-        wall_time = (
-            run_result.wall_time_sec if math.isfinite(run_result.wall_time_sec) else None
-        )
+        wall_time = run_result.wall_time_sec if math.isfinite(run_result.wall_time_sec) else None
 
         computed: dict[str, float] = {"sandbox_used": 1.0}
 
@@ -290,9 +284,7 @@ def score_coding(
                     )
                     computed["tests_all_pass"] = 0.0
                 elif total == 0:
-                    notes.append(
-                        "junitxml reports zero collected tests (submission invalid)"
-                    )
+                    notes.append("junitxml reports zero collected tests (submission invalid)")
                     computed["tests_all_pass"] = 0.0
                 elif skipped != 0:
                     notes.append(
@@ -311,11 +303,11 @@ def score_coding(
                             f"{errors} erroring of {total} collected tests"
                         )
 
-        gates = _evaluate_gates(contract, case, computed, wall_time, notes)
+        gates = evaluate_gates(contract, case, computed, wall_time, notes)
         valid = all(gates[g] is True for g in contract.validity_gates)
 
         metric_values = {k: v for k, v in computed.items() if k == "pass_rate"}
-        score, breakdown = _assemble_score(contract, valid, metric_values, notes)
+        score, breakdown = assemble_score(contract, valid, metric_values, notes)
 
         return SubmissionScore(
             submission_id=submission_dir.name,

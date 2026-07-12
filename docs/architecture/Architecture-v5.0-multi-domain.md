@@ -243,11 +243,14 @@ cases/coding_tasks/<id>/
   （cp_curve）与 outputs.curves 名（cp_distribution）不一致且为 CSV 格式，engine 的
   curve 判定当前对其保持 fail-closed incomplete（adapters 尚未产 curves 数据，实际 inert）；
   键对齐 + CSV 参考装载进 backlog，绝不为「能跑」而放松装载校验。
-- **共享 scorer.py 已全域入锚（Codex R2 P1 收口，取代 R1 时期的「cfd 不入锚」残差）**：
-  gate 评估/分数组装/cfd QoI 重算全住 scorer.py，R3 批起 `judge_source:scorer` 对三域
-  契约强制——判卷政策任何改动漂移全部契约。代价（scorer.py 无关重构也强制全量重锚，
-  每 case 一条 CLI 命令）**接受为正确噪声**：锚的语义就是「此文件即政策」。判卷逻辑
-  抽专职模块以缩小锚面，仍在 backlog（属降噪优化非安全缺口）。
+- **判卷政策已抽专职锚定模块（R5 批，backlog 项收口，锚面终态）**：共享政策全部
+  迁入 `judge_policy.py`（QoI/wall-time 装载语义、held-out 优先、qoi_error 重算、
+  gate 评估、agentic verdict→gates/score 组装、分数组装），`judge_source:judge_policy`
+  三域通用强制；scorer.py 退为编排+账本（**刻意不入锚**——ledger/ranked 改进不再
+  全量漂移契约）。边界声明：编排层只接线锚定原语并抄录其输出入账，其完整性由测试
+  套件+git 保护（锚校验器无法自锚，回归到与 contract.py 自身相同的信任根）。双向
+  实况见证：scorer.py 加注释→照常判卷零漂移；judge_policy.py 加注释→exit 3 精确
+  点名。pre-extraction 契约（携 `judge_source:scorer` 键）load 即拒须重锚。
 - **manifest 锚形状、逐文件哈希锚内容，合围钉死判卷树**：`__file_manifest__` 咬
   「reference/+visible/ 内文件增/删/改名」；已存在文件的内容改动由逐文件 sha256 咬。
   R1 批次起 visible/ 逐文件锚从 agentic-only 扩到全域（coding 的起始 solution.py 是
@@ -335,3 +338,12 @@ cases/coding_tasks/<id>/
   治理留痕：四轮审同一主题（锚完整性）逐层收紧且条条为真；R3 三条的攻击面均需
   case 目录/契约文件写权限（与重锚同权限级），边际安全价值递减是二次裁决
   「修完即 push」的依据，如实记录。
+- **R5 批（2026-07-12，用户「按建议继续」授权，backlog 项）：判卷政策抽专职模块**。
+  纯搬移重构（行为不变由全量 1150 测试钉死）：scorer.py 的政策函数逐字迁入
+  `judge_policy.py` 并入锚，agentic verdict→gates/score 组装同步抽出（它是政策，
+  之前内联在编排层——正是 R2 P1 的病灶）；scorer.py 退为编排+账本不再入锚。
+  锚拓扑终态见 §8。三契约重锚（smoke #6942c968→#064935ae）。witness=
+  tests/test_judge_policy_extraction.py（5 条：三域锚齐/policy 漂移必咬/
+  pre-extraction 尺 load 必拒/退役 scorer 键 verify fail-closed）+ 双向实况
+  （编排改动零漂移/政策改动 exit 3）。判决链结构变更按「命中即审」送 Codex
+  异源审后 push。

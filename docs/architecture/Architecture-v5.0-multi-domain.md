@@ -279,6 +279,13 @@ cases/coding_tasks/<id>/
   lint 是 token 级启发（belt-and-suspenders），真正的抗重放靠「宿主侧对账+隔离容器
   +独立 work zone（不复用 pytest /work，封死跨run 藏答通道）」结构性保证。
   fail-closed：无 backend/驱动异常退出/对账任一不符 → 0.0（gate 判废）。
+  **R9 收口审（loop-auditor APPROVE）两条如实上报的非阻塞残差（详 §9 收口审残差处置）**：
+  ①**gate-list 自指锚**——`verify_frozen` 从契约自身内存 `validity_gates`/`weights` 重算
+  摘要而非外部根锚；契约 JSON 完整性归 git/文件系统信任根（=保护验证机器自身的同一信任
+  根），每 gate 同构、非 io oracle 引入，文件内容锚（驱动源/held_out）仍是外部根且已验。
+  ②**agentbench 路径 `sandbox_used=1.0` 硬编码**——真判卷路径结构上恒建 Docker 沙箱、提交方
+  无法注入非沙箱 backend 故不可利用，但非派生自 `backend.is_sandbox`（Runner 路径已强制
+  `is_sandbox is True`）；pre-existing、跨 Runner/agentbench 分裂，递延留裁量（不自主重构无关码）。
 - **NACA cp_curve/CSV 参考映射（Codex R0 P2 递延项，R7 批已落地）**：四个 naca0012
   case.yaml 参考键 cp_curve→cp_distribution 对齐 outputs.curves；engine 增严格 CSV
   装载（csv 标准库，首行可为非数值表头，其余行必须恰两列有限浮点，**一行坏整文件拒**，
@@ -635,3 +642,60 @@ cases/coding_tasks/<id>/
   input0 `p,q,r`→期望三段返整串）。回归守卫 TestShippedIoOracleCases 枚举全部 shipped
   io case 逐个跑真准入校验+断言 gate（tamper：把 bb held-out 改成与 hidden 重叠→守卫翻红）。
   bundled 契约从 4 增至 6，canon-47 守卫全覆盖；全套 1290 绿。
+
+- **R9 广度扩充：两个新 coding case（各独立 commit/push，数据批走已审准入门，无判卷边界码改动）**——
+  在 io oracle 机制审定后，扩 coding 域覆盖面与 I/O 形态多样性：
+  - `roman_to_int`（commit 5bcbe74，entry `roman_to_int`，scalar `str→int`）——naive stub 逐符号
+    求和忽略减法记数（`IV`→6/`IX`→11/`XLII`→62 皆错），golden 扫描时前小后大即减。3 个
+    FAIL_TO_PASS + 2 PASS_TO_PASS 证判别力；held-out 5 例（`MCMXCIV`→1994 等）经 disjoint lint。
+    init 契约 #aa6ab1b5（io_oracle_pass 自动补）+ admit 真容器 3/3 双信号。
+  - `merge_intervals`（commit 574cf8a，entry `merge_intervals`，**首个嵌套 `list[list[int]]` I/O**）——
+    naive stub 单趟扫描但不先排序（未排序输入产错区间），golden 按 start 排序后再合。此 case
+    在真数据上驱动 oracle 的 `_native` 结构守卫与 `_strict_equal` 递归比对（此前 scalar/flat 案例
+    未覆盖）。3 FAIL_TO_PASS（均未排序输入）+ 2 PASS_TO_PASS（已排序回归哨兵）；held-out 5 例
+    含未排序 `[[15,18],[12,14],[13,16]]`→`[[12,18]]`。init 契约 #5205cfed + admit 3/3。
+  - `kth_largest`（commit a3fa733，entry `kth_largest`，**首个多参数 entry** `list+int`）——naive
+    stub 升序排序取 `[k-1]`（即第 k 小，退化输入外皆错），golden 降序排序取 `[k-1]`。驱动 oracle
+    的 `*args` 路径于异构位置参（此前均单参）。init 契约 #b587f11f + admit 3/3。
+  - **三 coding case 各跑真容器 E2E 三态**：golden 双信号过／naive stub `tests_all_pass` 咬红
+    ／**harvested 伪造（硬编码 hidden 答案）pytest 全过但 io_oracle 咬红**（roman input0
+    `MCMXCIV`→期望 1994 返 0；merge input0 `[[20,30],[25,35]]` 原样返回；kth input0
+    `[100,50,75,25],3`→naive 返 75≠期望 50）——两信号 AND 的价值反复实证。
+  - **同期 agentic 域第三 case `ini_to_json`（commit a42fbb7，格式转换型）**：与既有两个刻意区隔
+    （csv_field_extract=聚合／dir_organize=文件操作／ini_to_json=INI→嵌套 JSON 转换）。判卷走
+    checker_scorer（正交于 io oracle），checker stdlib-only 过 validate_checker 准入扫描。真 CLI
+    E2E：correct→Valid=True；**int 强转伪造（`port:8080`≠`"8080"`）→checker_ok 过但
+    checker_success=0→Valid=False**。终尺 #9645f95e（init 后 ruff 改字节→重锚定稿,canon-47）。
+  - 回归守卫 TestShippedIoOracleCases 纳入全部新 io case；case 数 15→20；bundled 契约动态 glob
+    自动覆盖（canon-47 committed-bytes 守卫全绿）；全套 1290 绿/ruff 干净。**coding 域现 7 case
+    （6 带 io oracle，scalar/str/flat-list/nested-list/multi-arg 五种 I/O 形全覆盖）；agentic 域现
+    3 case（聚合/文件操作/格式转换三型）。**
+
+- **R9 收口审计：loop-auditor 审 `io_oracle_pass` 门架构 → APPROVE（新 gate 收口前正交审，独立
+  于 3 轮 Codex 码审轴）**——审计对象=验证架构本身（oracle 意图对齐/gate fail-closed/预期输出
+  永不进容器/tamper 必咬/门真入锚），非码级 bug。**混合审：读全相关码 + 跑真单测 + 自写 3 个
+  tamper 探针打真生产函数 + 真 Docker 容器跑真 `score_coding()` 复现伪造场景**。六条威胁模型
+  全闭合并独立复现：①harvested 伪造 pytest 过但 io_oracle 咬（真 Docker 实证：硬编码 5 条 harvested
+  断言的 lookup→`tests_all_pass=True` 但 `io_oracle_pass=False`,真实现同跑得 `1.0`=门判别非全拒）
+  ②预期输出永不进容器（`_run_io_oracle` 只投 `{index,args}`,mount 只 submission+io_dir）③结果
+  文件 FIFO/symlink/超大/null/类型强转全咬 ④fail-open 各路径全落 0.0 ⑤门真入锚（`judge_source:
+  sandbox_scorer` 锚整驱动/对账文件,`cases_file` 强制 reference 树无 symlink 组件；独立重哈希 5
+  契约锚全 MATCH）⑥非 coding 误用 init 即拒。**单一最强保证**：纯 lookup 无算法的提交在真网络隔离
+  容器里被 io_oracle 确定性咬，因为 held-out 期望值结构上从不进容器。
+- **收口审残差处置（grounded 复核后）**：审计如实上报 3 条非阻塞残差——
+  - **残差 2（`_reconcile_io` 的 TOCTOU 形：`os.lstat` 校验后 `read_text` 重解析路径读取）**：审计
+    证不可利用（oracle 容器随 `docker run --rm`+PID-ns SIGKILL 在对账前已退,无对手竞争窗口），
+    但属本会话新写判卷边界码，**已硬化**（commit fae171c）：改单次 `os.open(O_RDONLY|O_NOFOLLOW|
+    O_NONBLOCK)`→`fstat` 同 inode 判 S_ISREG+大小→读同 fd，校验与读取不跨可换 inode。judge_source
+    变→7 coding 契约全重锚。**命中即审送 Codex 治理审**：R0 2P2 全坐实即修（commit d1f1d85）——
+    ①O_NOFOLLOW/O_NONBLOCK POSIX 专属→`getattr(...,0)` 回退防 Windows AttributeError 崩溃
+    ②`f.read(MAX+1)` 后补 `len(raw)>MAX→拒` 防 fstat 谎报尺寸时截断前缀被当完整结果；R1 复审零
+    finding（APPROVE）。2 见证入 tests/test_io_oracle.py（共 53）。
+  - **残差 1（`VALIDITY_GATES_KEY`/`WEIGHTS_KEY` 自指锚：`verify_frozen` 从契约自身内存值重算摘要，
+    非外部根锚）**：契约 JSON 完整性归 git/文件系统信任根（judge_policy §22-26 已声明,=保护验证机器
+    自身的同一信任根），**每 gate 同构,非 io oracle 引入**；文件内容锚（驱动源/held_out）是外部根且已
+    验，gate-list 成员仅自洽。递延（消除需外部契约签名=大架构改）。
+  - **残差 3（agentbench 路径 `sandbox_used=1.0` 硬编码,非派生自 `backend.is_sandbox`）**：真判卷路径
+    结构上恒建 Docker 沙箱（`_default_backend_factory`）,提交方无法注入非沙箱 backend,故不可利用；
+    但属 pre-existing 且跨 Runner（已 `is_sandbox is True` 强制）/agentbench 分裂,8 测面。递延留用户
+    裁量,不自主重构无关码。

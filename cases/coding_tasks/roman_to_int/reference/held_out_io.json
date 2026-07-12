@@ -1,0 +1,32 @@
+[
+  {
+    "args": [
+      "MCMXCIV"
+    ],
+    "expected": 1994
+  },
+  {
+    "args": [
+      "CD"
+    ],
+    "expected": 400
+  },
+  {
+    "args": [
+      "XC"
+    ],
+    "expected": 90
+  },
+  {
+    "args": [
+      "LVIII"
+    ],
+    "expected": 58
+  },
+  {
+    "args": [
+      "MMXXIII"
+    ],
+    "expected": 2023
+  }
+]

@@ -181,7 +181,8 @@ class TestE2ESmoke:
         # P2-c: +3 NACA0012 alpha sweep cases (a5/a10/a15) = 10
         # v5.0: +3 coding_tasks + 2 agentic_tasks = 15
         # v5.0 R9: +1 coding_task (smoke_add_two_io, IO-oracle pilot) = 16
-        assert len(cases) == 16
+        # v5.0 R9 rollout: +1 coding_task (roman_to_int, IO-oracle) = 17
+        assert len(cases) == 17
 
         for name in ["mock_success", "mock_failure", "mock_missing_reference", "mock_missing_qoi"]:
             case = registry.load(name)

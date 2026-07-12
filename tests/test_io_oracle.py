@@ -740,11 +740,12 @@ class TestShippedIoOracleCases:
         io_cases = sorted(
             c.id for c in registry.list_all() if c.execution.io_oracle is not None
         )
-        # the R9 pilot plus the two real coding tasks the oracle rolled out to
+        # the R9 pilot plus the real coding tasks the oracle rolled out to
         assert set(io_cases) >= {
             "smoke_add_two_io",
             "balanced_brackets",
             "csv_field_splitter",
+            "roman_to_int",
         }, io_cases
         for case_id in io_cases:
             contract = init_contract(case_id, registry)  # runs io-oracle admission

@@ -1,0 +1,36 @@
+id: roman_to_int
+name: Roman Numeral to Integer
+category: verification
+domain: coding
+description: >-
+  Manufactured algorithm task: roman_to_int() must be reimplemented from a
+  naive per-symbol summation (buggy: ignores subtractive notation) to a
+  correct scan that subtracts a smaller symbol placed before a larger one.
+  Mechanical correctness is judged purely by hidden tests. See
+  Architecture-v5.0-multi-domain.md §3.4.
+solvers:
+  - name: generic
+    command: "true"
+outputs:
+  qoi:
+    - pass_rate
+reference:
+  type: manufactured
+  qoi_values:
+    pass_rate: 1.0
+metrics:
+  qoi_relative_tolerance:
+    pass_rate: 0.0
+budget:
+  max_runtime_sec: 60
+execution:
+  requires_sandbox: true
+  expected_test_count: 5
+  # R9 rollout: trusted re-execution oracle. Held-out inputs are disjoint from
+  # the hidden-test inputs (verified by the admission disjointness lint), so a
+  # submission cannot replay a harvested assertion — it must actually compute
+  # roman_to_int correctly on inputs it has never seen. The 'io_oracle_pass'
+  # gate is implied by this declaration (auto-added at contract init).
+  io_oracle:
+    entry: "solution:roman_to_int"
+    cases_file: "reference/held_out_io.json"

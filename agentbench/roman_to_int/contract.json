@@ -1,0 +1,27 @@
+{
+  "contract_version": "2",
+  "case_id": "roman_to_int",
+  "frozen": {
+    "case.yaml": "0881d9c760ed6f5fed9e2d4987296919d4a99d7976846e10db88224c99317a2c",
+    "reference/golden/solution.py": "239e82dcd46b48dee99e7147783aca73a1b15653a61dd1286c9b2270025c7ba9",
+    "reference/held_out_io.json": "c3ded6e0286f8afc6624fec4fa160a57ae2507559e9a427ffd64d05113e09f5f",
+    "reference/hidden_tests/test_fail_to_pass.py": "05ac66d9eb2b300bfc39de109910d9bb98b40e6b41635530f6a7f218124fe724",
+    "reference/hidden_tests/test_pass_to_pass.py": "8a1ed9aa7bd657e2dfc2a361e49f2cc021b5a1b508bcff0a6c6c55fb564b0df9",
+    "visible/README.md": "a744667e7848cb9e5ddac5f5d38b58870574f74881128d1274b909a0ebae3e60",
+    "visible/solution.py": "bfb534e948ba725c76aa0c3b66cc8ecf475bea37f8c37490345ed47d534c4f84",
+    "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
+    "__validity_gates__": "975c64ef020beea4c2bd85f84a9e82a94c7f99074fffbb8d7aee2ffa3d763b6e",
+    "__file_manifest__": "679f2893c414c850b9406881cef4a722f233e532175d800165a5560cf86120b0",
+    "judge_source:sandbox_scorer": "64ef6e2c7a90444a736dd6bde9574f15f04376b521f1a0bf554b8ef8057d30d9",
+    "judge_source:judge_policy": "2ae01ba06f4017f0c49efff678f9da8f5c8535a36d691d45abcc98db539afd03",
+    "__judge_image__": "sha256:09e22eb6002adb0f66610dff697cbe5387f44f1b323d66af567705fbc555df09"
+  },
+  "weights": {
+    "pass_rate": 1.0
+  },
+  "validity_gates": [
+    "tests_all_pass",
+    "sandbox_used",
+    "io_oracle_pass"
+  ]
+}

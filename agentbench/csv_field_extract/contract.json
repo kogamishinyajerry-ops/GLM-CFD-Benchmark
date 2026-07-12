@@ -1,5 +1,5 @@
 {
-  "contract_version": "1",
+  "contract_version": "2",
   "case_id": "csv_field_extract",
   "frozen": {
     "case.yaml": "c9cefd970ccbfb3fc37cb11c6726664881fe5d50d62388c1bb4eb3ace4b65e3d",
@@ -9,6 +9,8 @@
     "visible/employees.csv": "0611f35bea6137ba3ed2a7864c1dbeccf86a56b4b89b309ea77fc624ca67ae53",
     "__weights__": "89f4764a4a60c4de3243d5ba83c99c58862ce79efbb655e144dff233bf4f4173",
     "__validity_gates__": "1a2479196ccfe68923532a90b45fd7f4b0d1cad5147fcce06e1759a7a60cda1d",
+    "__file_manifest__": "3c447d614507ccc52d7b034c264c30936ac53421c170abf2ca13e5d1c2df99e1",
+    "judge_source:checker_scorer": "ac18c00344f08de467a2626a21fc9b894a6259720581d6569a78b974aca946bb",
     "__normalize_source__": "9032c8bd9eba04ff674a40b86384c08356a61bc5e83a67ef229624cf1938dec7"
   },
   "weights": {

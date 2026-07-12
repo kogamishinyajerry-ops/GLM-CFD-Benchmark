@@ -53,6 +53,41 @@ but are kept out of the public case surface handed to agents. They get a
 distinct key namespace (``held_out:<relpath>``) so a leaked/renamed public
 reference can never be silently reinterpreted as a held-out anchor."""
 
+FILE_MANIFEST_KEY = "__file_manifest__"
+"""Frozen-map key anchoring the canonical digest of the sorted inventory of
+every file under ``reference/`` and ``visible/`` (Codex R1 P1). Per-file
+hashes alone only pin files that existed at init time: *adding* a file to a
+judged tree (e.g. ``visible/messy/new.txt`` in an agentic case, which shifts
+the checker-derived expected layout) would otherwise verify clean. The
+manifest makes any addition, deletion, or rename in those trees drift the
+ruler."""
+
+JUDGE_SOURCE_PREFIX = "judge_source:"
+"""Frozen-map key prefix anchoring the sha256 of a domain judge module's
+source (Codex R1 P1). The judge's pass/fail policy (skipped-test rejection,
+exit-code whitelist, bootstrap isolation, checker verdict reduction) is
+judging material: hardening it must change the ruler lineage, so old and
+new verdicts never share a leaderboard. Key form:
+``judge_source:<module-shortname>``."""
+
+_JUDGE_SOURCE_MODULES: dict[str, str] = {
+    "sandbox_scorer": "cfdb.agentbench.sandbox_scorer",
+    "checker_scorer": "cfdb.agentbench.checker_scorer",
+}
+"""Whitelist of anchorable judge modules; an unknown shortname in a contract
+fails closed as drift, never crashes verification."""
+
+_DOMAIN_JUDGE_MODULES: dict[str, tuple[str, ...]] = {
+    "coding": ("sandbox_scorer",),
+    "agentic": ("checker_scorer",),
+}
+"""Which judge modules each domain anchors. cfd verdict recomputation lives
+in scorer.py (shared assembly) and is deliberately not anchored — see
+Architecture v5.0 §8 residuals."""
+
+_MANIFEST_TREES: tuple[str, ...] = ("reference", "visible")
+"""Case-dir subtrees whose file inventory the manifest anchor covers."""
+
 DEFAULT_WEIGHTS: dict[str, float] = {"qoi_error": -1.0}
 """Default public scoring weights (negative = lower metric is better).
 
@@ -105,8 +140,13 @@ class ScoringContract(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal["1"] = "1"
-    """Contract schema version."""
+    contract_version: Literal["2"] = "2"
+    """Contract schema version. v2 (Codex R1) adds the judging-material
+    anchors :data:`FILE_MANIFEST_KEY` and ``judge_source:*`` (plus
+    :data:`NORMALIZE_SOURCE_KEY` for agentic, introduced in the same
+    hardening batch); v1 contracts predate them and are refused at load
+    with a re-anchor instruction — a legacy contract must never silently
+    verify without the hardened anchors."""
 
     case_id: str
     """Case this contract scores submissions for."""
@@ -184,16 +224,60 @@ def _normalize_source_digest() -> str:
     return sha256_file(Path(normalize.__file__))
 
 
+def _judge_source_digest(shortname: str) -> str:
+    """sha256 of a whitelisted judge module's live source file.
+
+    Args:
+        shortname: Key into :data:`_JUDGE_SOURCE_MODULES`.
+
+    Returns:
+        64-char lowercase hex digest of the module source.
+
+    Raises:
+        KeyError: If ``shortname`` is not a whitelisted judge module.
+    """
+    import importlib
+
+    module = importlib.import_module(_JUDGE_SOURCE_MODULES[shortname])
+    return sha256_file(Path(module.__file__))  # type: ignore[arg-type]
+
+
+def _tree_manifest(case_dir: Path) -> list[str]:
+    """Sorted inventory of every file under the judged case subtrees.
+
+    Enumerates :data:`_MANIFEST_TREES` (``reference/`` and ``visible/``)
+    recursively, returning case-dir-relative POSIX paths. Used identically
+    at anchor time and at verify time, so any file added to, removed from,
+    or renamed within a judged tree changes the manifest digest.
+
+    Args:
+        case_dir: Directory containing ``case.yaml``.
+
+    Returns:
+        Sorted relative POSIX paths of all files currently present.
+    """
+    paths: list[str] = []
+    for tree in _MANIFEST_TREES:
+        tree_dir = case_dir / tree
+        if tree_dir.is_dir():
+            for path in tree_dir.rglob("*"):
+                if path.is_file():
+                    paths.append(path.relative_to(case_dir).as_posix())
+    return sorted(paths)
+
+
 def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
     """Enumerate the case files that must be frozen.
 
     Includes ``case.yaml``, every file under ``<case_dir>/reference/``
-    (recursive), and every file listed in ``case.reference.files``.
-    For agentic cases, every file under ``<case_dir>/visible/`` is frozen
-    too (Codex R0 P1): a state-based checker derives its expected verdict
-    from the visible inputs, so editing them after contract creation would
-    silently change the accepted output while the checker itself hashes
-    clean.
+    (recursive), every file under ``<case_dir>/visible/`` (recursive), and
+    every file listed in ``case.reference.files``. visible/ was initially
+    agentic-only (Codex R0 P1: a state-based checker derives its expected
+    verdict from the visible inputs) and is frozen for every domain since
+    the R1 batch: the visible tree is the task surface handed to agents,
+    and editing it (e.g. a coding case's starting ``solution.py``) changes
+    what is being measured — scores over different task surfaces must not
+    share a ruler lineage.
 
     Args:
         case: Loaded case spec.
@@ -219,12 +303,11 @@ def _collect_frozen_files(case: CaseSpec, case_dir: Path) -> list[str]:
             if path.is_file():
                 rel_paths.add(path.relative_to(case_dir).as_posix())
 
-    if case.domain == "agentic":
-        visible_dir = case_dir / "visible"
-        if visible_dir.is_dir():
-            for path in sorted(visible_dir.rglob("*")):
-                if path.is_file():
-                    rel_paths.add(path.relative_to(case_dir).as_posix())
+    visible_dir = case_dir / "visible"
+    if visible_dir.is_dir():
+        for path in sorted(visible_dir.rglob("*")):
+            if path.is_file():
+                rel_paths.add(path.relative_to(case_dir).as_posix())
 
     if case.reference is not None:
         for rel in case.reference.files.values():
@@ -328,6 +411,9 @@ def init_contract(
         frozen[held_out_key] = sha256_file(case_dir / rel)
     frozen[WEIGHTS_KEY] = canonical_digest(final_weights)
     frozen[VALIDITY_GATES_KEY] = canonical_digest(final_gates)
+    frozen[FILE_MANIFEST_KEY] = canonical_digest(_tree_manifest(case_dir))
+    for judge_module in _DOMAIN_JUDGE_MODULES.get(case.domain, ()):
+        frozen[f"{JUDGE_SOURCE_PREFIX}{judge_module}"] = _judge_source_digest(judge_module)
     if case.domain == "agentic":
         frozen[NORMALIZE_SOURCE_KEY] = _normalize_source_digest()
 
@@ -363,8 +449,17 @@ def verify_frozen(contract: ScoringContract, case_dir: Path) -> list[str]:
             actual = canonical_digest(contract.validity_gates)
         elif key == NORMALIZE_SOURCE_KEY:
             actual = _normalize_source_digest()
+        elif key == FILE_MANIFEST_KEY:
+            actual = canonical_digest(_tree_manifest(case_dir))
+        elif key.startswith(JUDGE_SOURCE_PREFIX):
+            shortname = key[len(JUDGE_SOURCE_PREFIX) :]
+            if shortname not in _JUDGE_SOURCE_MODULES:
+                logger.error("unknown judge-source anchor '%s' (fail-closed: drift)", key)
+                drifted.append(key)
+                continue
+            actual = _judge_source_digest(shortname)
         else:
-            rel = key[len(HELD_OUT_PREFIX):] if key.startswith(HELD_OUT_PREFIX) else key
+            rel = key[len(HELD_OUT_PREFIX) :] if key.startswith(HELD_OUT_PREFIX) else key
             path = case_dir / rel
             if not path.is_file():
                 logger.error("frozen file missing: %s", path)
@@ -411,7 +506,23 @@ def load_contract(path: Path) -> ScoringContract:
 
     Raises:
         FileNotFoundError: If the file does not exist.
+        ValueError: If the contract predates schema v2 (Codex R1 P2): a
+            legacy contract carries none of the hardened judging-material
+            anchors (file manifest, judge source, normalize source), so
+            letting it verify clean would silently exempt it from the
+            hardening. Rejected loudly with a re-anchor instruction.
         pydantic.ValidationError: If the payload is not a valid contract.
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
+    version = raw.get("contract_version") if isinstance(raw, dict) else None
+    if version != "2":
+        raise ValueError(
+            f"legacy scoring contract (version {version!r}) at {path}: it "
+            "predates the v2 judging-material anchors (file manifest, judge "
+            "source) and cannot be trusted to detect ruler drift. Re-anchor "
+            "deliberately with 'cfdb agent-eval init --case "
+            f"{raw.get('case_id', '<case>') if isinstance(raw, dict) else '<case>'}"
+            " --force' — scores in the existing ledger keep their old "
+            "ruler_id and will not rank against new scores."
+        )
     return ScoringContract.model_validate(raw)

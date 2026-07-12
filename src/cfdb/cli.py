@@ -241,9 +241,7 @@ def run(
 
     # P1-b: Print final residuals
     if manifest.final_residuals:
-        res_parts = ", ".join(
-            f"{k}={v:.2e}" for k, v in manifest.final_residuals.items()
-        )
+        res_parts = ", ".join(f"{k}={v:.2e}" for k, v in manifest.final_residuals.items())
         typer.echo(f"Residuals: {res_parts}")
 
     # P2-b: Print container_digest if available
@@ -251,9 +249,7 @@ def run(
         typer.echo(f"Digest:    {manifest.container_digest}")
 
     if manifest.dry_run_skipped_commands:
-        typer.echo(
-            f"[DRY-RUN] Skipped {len(manifest.dry_run_skipped_commands)} command(s):"
-        )
+        typer.echo(f"[DRY-RUN] Skipped {len(manifest.dry_run_skipped_commands)} command(s):")
         for i, cmd in enumerate(manifest.dry_run_skipped_commands, 1):
             typer.echo(f"  [{i}] {cmd}")
     if manifest.error:
@@ -300,6 +296,7 @@ def report_cmd(
 # P2-b: cfdb data subcommands (DVC wrapper)
 # ============================================================================
 
+
 @data_app.command("status")
 def data_status_cmd(
     cwd: Annotated[
@@ -335,9 +332,7 @@ def data_status_cmd(
 def data_pull_cmd(
     targets: Annotated[
         list[str] | None,
-        typer.Argument(
-            help="Specific .dvc targets (relative paths). If empty, pulls all."
-        ),
+        typer.Argument(help="Specific .dvc targets (relative paths). If empty, pulls all."),
     ] = None,
     cwd: Annotated[
         Path,
@@ -368,6 +363,7 @@ def data_pull_cmd(
 # ============================================================================
 # P2-c: cfdb compare + cfdb report-sweep commands
 # ============================================================================
+
 
 @app.command("compare")
 def compare_cmd(
@@ -413,6 +409,7 @@ def compare_cmd(
     # Load runs from repository
     if storage == "sqlite":
         from cfdb.storage.sqlite_repo import SqliteRepository
+
         actual_db_path = db_path if db_path is not None else (runs_dir / "cfdb.db")
         repo = SqliteRepository(actual_db_path, runs_root=runs_dir)
     else:
@@ -450,15 +447,14 @@ def compare_cmd(
     residual_svg = None
     if manifest1.residuals_history and manifest2.residuals_history:
         from cfdb.reporting.svg_compare import render_residual_comparison_svg
+
         combined = {
             manifest1.solver: manifest1.residuals_history,
             manifest2.solver: manifest2.residuals_history,
         }
         residual_svg = render_residual_comparison_svg(combined)
 
-    html = render_compare_html(
-        manifest1, manifest2, comparisons, residual_svg=residual_svg
-    )
+    html = render_compare_html(manifest1, manifest2, comparisons, residual_svg=residual_svg)
 
     out_path = out or (runs_dir / f"compare_{run_id1}_{run_id2}.html")
     out_path.write_text(html, encoding="utf-8")
@@ -495,6 +491,7 @@ def report_sweep_cmd(
     """Generate a multi-solver HTML report aggregating all runs of a case family."""
     if storage == "sqlite":
         from cfdb.storage.sqlite_repo import SqliteRepository
+
         actual_db_path = db_path if db_path is not None else (runs_dir / "cfdb.db")
         repo = SqliteRepository(actual_db_path, runs_root=runs_dir)
     else:
@@ -536,16 +533,8 @@ def report_sweep_cmd(
                 continue
             # P3-hotfix: read computed values (real Cl/Cd), not relative errors.
             # Fallback: if qoi_computed_values is None (old data), skip the point.
-            cl = (
-                met.qoi_computed_values.get("cl")
-                if met.qoi_computed_values
-                else None
-            )
-            cd = (
-                met.qoi_computed_values.get("cd")
-                if met.qoi_computed_values
-                else None
-            )
+            cl = met.qoi_computed_values.get("cl") if met.qoi_computed_values else None
+            cd = met.qoi_computed_values.get("cd") if met.qoi_computed_values else None
             if cl is not None and cd is not None:
                 solver_points.setdefault(m.solver, []).append(
                     PolarPoint(alpha_deg=alpha, cl=cl, cd=cd)
@@ -865,8 +854,7 @@ def _export_static_site(
     index_html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">'
     index_html += '\n<meta http-equiv="refresh" content="0;url=runs/">'
     index_html += (
-        '\n</head>\n<body><p><a href="runs/">'
-        'CFD-Benchmark Dashboard</a></p></body>\n</html>'
+        '\n</head>\n<body><p><a href="runs/">CFD-Benchmark Dashboard</a></p></body>\n</html>'
     )
     (export_dir / "index.html").write_text(index_html, encoding="utf-8")
 
@@ -1141,9 +1129,7 @@ def baseline_list_cmd(
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=3) from e
     margin = data.regression_margin
-    typer.echo(
-        f"Regression margin: absolute={margin.absolute}, relative={margin.relative}"
-    )
+    typer.echo(f"Regression margin: absolute={margin.absolute}, relative={margin.relative}")
     if not data.baselines:
         typer.echo("No baselines promoted yet.")
         return
@@ -1262,7 +1248,10 @@ def agent_eval_init_cmd(
     registry = CaseRegistry(cases_dir)
     try:
         contract = init_contract(case, registry)
-    except (KeyError, FileNotFoundError) as e:
+    except (KeyError, FileNotFoundError, ValueError) as e:
+        # ValueError covers checker-admission refusals and contract
+        # validation failures (Codex R1 P2): the normal init path must
+        # exit with a structured [FAIL], never an uncaught traceback.
         typer.echo(f"[FAIL] {e}", err=True)
         raise typer.Exit(code=1) from e
 
@@ -1271,8 +1260,7 @@ def agent_eval_init_cmd(
     if old_ruler_id is not None:
         typer.echo("!" * 64, err=True)
         typer.echo(
-            f"[WARNING] RULER RE-ANCHORED for '{case}': "
-            f"#{old_ruler_id} -> #{new_ruler_id}",
+            f"[WARNING] RULER RE-ANCHORED for '{case}': #{old_ruler_id} -> #{new_ruler_id}",
             err=True,
         )
         typer.echo(
@@ -1472,8 +1460,7 @@ def showcase_cmd(
         Path,
         typer.Option(
             "--repo-root",
-            help="Repository root containing cases/, runs/, failures/, "
-            "baselines/ and agentbench/.",
+            help="Repository root containing cases/, runs/, failures/, baselines/ and agentbench/.",
         ),
     ] = Path("."),
 ) -> None:

@@ -1,13 +1,17 @@
 {
-  "contract_version": "1",
+  "contract_version": "2",
   "case_id": "smoke_add_two",
   "frozen": {
     "case.yaml": "c627051e4e8c81db9b9ab92ac5680fa07c5ef12d844d676af4e0d845ce1839c0",
     "reference/golden/solution.py": "b46cc13311dcd4fa7d819f26c1095ba7b02e4d3887c800d12157c9e860ac2764",
     "reference/hidden_tests/test_fail_to_pass.py": "713df85b45e2b0728e6000588ff47177fa1ed41006d70a79499288633e681438",
     "reference/hidden_tests/test_pass_to_pass.py": "594dd94f304423077fe061c3a3c6bff3fbe6233b41928a185b9839d711f3b47a",
+    "visible/README.md": "2ebb103669eec65dd431b347d4cd427603f0727ef9043fc47d23be769645bf95",
+    "visible/solution.py": "f034dd1ad74348c68f7bb33d51b4651c5fc2e4d601bc1e1a52a7f24fa66b89ef",
     "__weights__": "bb4fd96cf7fdbf7840d337ec3bf2d9a64d481815f4af413675cf7eca6688a272",
-    "__validity_gates__": "a01060fa26bbaf79ad2dcbf55327e92627d1bfae7a393fa96885ff5964ca1827"
+    "__validity_gates__": "a01060fa26bbaf79ad2dcbf55327e92627d1bfae7a393fa96885ff5964ca1827",
+    "__file_manifest__": "69026e6a4b7aecccbc13ae76702862ae05226ae8a6891a99b3a4346f86d18b31",
+    "judge_source:sandbox_scorer": "59f5847c5105ff450f25887de682a6ebc5ee23738ca0f6b7e31e55b49e32bfbb"
   },
   "weights": {
     "pass_rate": 1.0

@@ -1,11 +1,13 @@
 {
-  "contract_version": "1",
+  "contract_version": "2",
   "case_id": "lid_driven_cavity",
   "frozen": {
-    "case.yaml": "9d3004725c242d799c5f9ad7d0582c94f16cfe68d03abea22713951e6ad9b9ed",
+    "case.yaml": "e877b6beb4eaeb6cf71100806321573ce34221a68119513a458836b9c8ef1955",
     "reference/ghia1982_centerline.csv": "e0910951fdead12384e8a96b058b5dad8d21db0a0ef4c3ffb59d47f1b3a1d220",
+    "held_out:held_out/qoi.json": "52ecc81b2254237081012fdd5325f4ec7f4afd48d53c08a55bda0b1284d2fa14",
     "__weights__": "8126f570b7b068d917a534fa06679059ccd303da6e5f297c9bcbef278db36cb5",
-    "__validity_gates__": "7503fa9b41d4111273ae43d63328b95b393d0f9587ee6bbcef6ad4d25015adff"
+    "__validity_gates__": "7503fa9b41d4111273ae43d63328b95b393d0f9587ee6bbcef6ad4d25015adff",
+    "__file_manifest__": "bf0450407cff3d3ff93e4f9f3c4ad3d2f22016dd93bb300cfa77d38bf481b06c"
   },
   "weights": {
     "qoi_error": -1.0

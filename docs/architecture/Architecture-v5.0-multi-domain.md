@@ -243,6 +243,16 @@ cases/coding_tasks/<id>/
   （cp_curve）与 outputs.curves 名（cp_distribution）不一致且为 CSV 格式，engine 的
   curve 判定当前对其保持 fail-closed incomplete（adapters 尚未产 curves 数据，实际 inert）；
   键对齐 + CSV 参考装载进 backlog，绝不为「能跑」而放松装载校验。
+- **cfd 域判卷源不入锚（Codex R1 后如实声明）**：coding/agentic 的判卷器是专职模块
+  （sandbox_scorer/checker_scorer），源码 sha256 已入 `judge_source:*` 锚；cfd 的 QoI/curve
+  重算逻辑住在共享 scorer.py（同文件还承载 ledger/ranked 等非判卷代码），入锚会让无关
+  重构漂移全部 cfd 契约。当前依赖：cfd 判卷语义自 v4 冻结未变 + contract_version 升版
+  作为手动血统闸门；若未来改 cfd 判卷语义，必须手动升 contract_version（治理约定，
+  非机械强制）。判卷逻辑抽出为专职模块后入锚，进 backlog。
+- **manifest 锚形状、逐文件哈希锚内容，合围钉死判卷树**：`__file_manifest__` 咬
+  「reference/+visible/ 内文件增/删/改名」；已存在文件的内容改动由逐文件 sha256 咬。
+  R1 批次起 visible/ 逐文件锚从 agentic-only 扩到全域（coding 的起始 solution.py 是
+  任务面，改它=改被测对象，不同任务面的分数不得同血统）。
 
 ## 9. 设计审查记录
 
@@ -265,3 +275,26 @@ cases/coding_tasks/<id>/
   接线声明经源码核验站得住；两级失败语义压力测试无新漏洞（跑后重验与容器 ro 层
   防不同威胁不冗余）。三条增补已落本版：TMPDIR/--basetemp（§3.2）、纯 Python 范围
   声明（§3.4）、INVALID 率展示 backlog（§7）。
+
+### 治理审查记录（Codex 86gs gpt-5.6-sol ultra，异源）
+
+- **Codex R0（2026-07-11，审 e2c0a5c）：CHANGES_REQUIRED**——6P1+10P2，核心为
+  同进程判卷可颠覆面（bootstrap 劫持 / PYTHONPATH / skipped 懒作弊 / 退出码宽容）。
+  13 条修复落 1f699d8（`python -I -c` bootstrap、skipped==0 强制、退出码白名单 {0,1}、
+  收集计数对账、visible/ 冻结、normalize 源锚、checker 准入、17 条 witness）；
+  同进程 monkeypatch 残差如实声明（§8），路线=逐测试进程隔离。
+- **Codex R1（同日，审 1f699d8）：CHANGES_REQUIRED**——2P1+2P2，全部 grounded 坐实：
+  ①判卷语义变了但 ruler 血统未变（ledger 新旧行同 `#8d9e98eb` 可同榜）——修复：
+  `judge_source:<module>` 锚（coding→sandbox_scorer / agentic→checker_scorer 源码
+  sha256 入 frozen map），判卷器任何改动必然改变 contract 字节→新 ruler_id；
+  ②visible/ 只锚初始化时存在的文件，事后**新增**文件不咬——修复：`__file_manifest__`
+  锚（reference/+visible/ 全树排序清单的 canonical digest，init 与 verify 同法重算，
+  增/删/改名必咬）；③legacy 契约无声豁免加固——修复：contract_version 升 "2"，
+  v1 契约 load 即拒并给重锚指引；④checker 准入失败在 CLI 裸抛 ValueError——修复：
+  init 命令捕获为结构化 [FAIL] exit 1。三仓契约已重锚（smoke_add_two
+  `#8d9e98eb→#ff191738` / csv_field_extract `#bcc90fd1→#81020c17` /
+  lid_driven_cavity `#d1955288→#342203d3`），旧 ledger 行按 ruler 过滤不再与新分同榜。
+  witness：tests/test_codex_r1_witnesses.py（14 条）+ 真 CLI 实况（visible/ 塞文件
+  →exit 3 指名 `__file_manifest__`；v1 契约→[FAIL] exit 1）。
+  注：cfd 域判卷逻辑住在共享 scorer.py，刻意不做源锚（避免无关重构全量漂移），
+  属已声明残差（§8）。

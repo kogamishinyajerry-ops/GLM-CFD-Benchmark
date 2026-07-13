@@ -53,6 +53,23 @@ class TestGalleryAgainstShippedCases:
         assert "tests_all_pass" in c["gates"]
         assert c["frozen_status"] == "INTACT"
 
+    def test_legend_explains_only_present_badges(self, tmp_path: Path) -> None:
+        data = _collect_gallery(PROJECT_ROOT)
+        levels = {h["level"] for h in data["honesty_legend"]}
+        # the three levels the shipped cases actually carry are explained
+        assert {"REAL", "ANALYTIC", "MANUFACTURED"} <= levels
+        # levels no shipped card carries must NOT appear (no phantom legend)
+        assert "PREVIOUS_RUN" not in levels
+        assert "SURROGATE" not in levels
+        gates = {g["gate"] for g in data["gate_legend"]}
+        assert "io_oracle_pass" in gates
+        assert next(g for g in data["gate_legend"] if g["gate"] == "io_oracle_pass")["io"] is True
+        # every legend entry carries an explanatory blurb
+        for h in data["honesty_legend"]:
+            assert h["blurb"]
+        for g in data["gate_legend"]:
+            assert g["blurb"]
+
     def test_render_self_contained_with_all_domains(self, tmp_path: Path) -> None:
         out = render_gallery(PROJECT_ROOT, tmp_path / "gallery.html")
         html = out.read_text(encoding="utf-8")

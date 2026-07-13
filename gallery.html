@@ -60,6 +60,16 @@ h2 .count{color:var(--clay);font-family:var(--mono);font-size:14px;margin-left:1
 .frozen .ok{color:var(--evidence)} .frozen .bad{color:var(--risk)}
 .nogate{font-family:var(--mono);font-size:11px;color:#8a8073;margin:12px 0 0;padding-top:11px;
   border-top:1px dashed #d3c8b4}
+.legend{background:var(--panel);border:1px solid #ddd3c2;border-radius:6px;padding:18px 22px;margin:28px 0 8px}
+.legend h2{font-size:15px;border:0;padding:0;margin:0 0 12px}
+.legend .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px}
+.legend .lab{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:#8a8073;margin:0 0 8px}
+.legend .row{display:flex;gap:9px;align-items:baseline;margin:0 0 7px;font-size:13px}
+.legend .row .k{flex:0 0 auto}
+.legend .gk{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid #ddd3c2;
+  color:#6f675c;white-space:nowrap}
+.legend .gk.io{color:var(--clay);border-color:var(--clay);font-weight:600}
 footer{border-top:1px solid #d8ccb6;margin-top:48px;padding-top:18px;padding-bottom:44px}
 footer p{font-size:13px;color:#6f675c;margin:0 0 8px;max-width:70em}
 footer b{color:var(--ink)}
@@ -73,10 +83,44 @@ footer b{color:var(--ink)}
   <p class="thesis">共 14 个能力测试，分三域。每张卡片说明：这题考察 AI 的什么<b>能力</b>、
     一个正确提交的<b>预期结果</b>、以及好坏怎么<b>判定</b>（判定门＝冻结尺子上机械重算的关卡，
     绝不看提交自报）。卡片文案取自各 case 真文件，判定门与冻结状态渲染时实时重读/重算。</p>
-  <p class="meta">generated 2026-07-13T03:23:23+00:00 · 数据源 .</p>
+  <p class="meta">generated 2026-07-13T03:29:09+00:00 · 数据源 .</p>
 </header>
 
 <main>
+
+<section class="legend">
+  <h2>图例 · 怎么读这些卡片</h2>
+  <div class="cols">
+    <div>
+      <p class="lab">出处诚实等级（provenance 机械派生，绝非自报）</p>
+      
+      <div class="row"><span class="k badge h-real">REAL</span><span>真实来源——实验 / 已发表参考数据，sha256 机械锚定校验通过（如 Ghia 1982 / Ladson 1988 NASA）。</span></div>
+      
+      <div class="row"><span class="k badge h-mid">ANALYTIC</span><span>解析解基准——闭式理论解（如 Blasius 平板边界层），非实验、非自研。</span></div>
+      
+      <div class="row"><span class="k badge h-mid">MANUFACTURED</span><span>自研题——buggy stub / hidden tests / golden 均本 benchmark 手写，非外部转录。</span></div>
+      
+    </div>
+    <div>
+      <p class="lab">判定门（冻结尺子上机械重算的关卡）</p>
+      
+      <div class="row"><span class="k gk">tests_all_pass</span><span>沙箱内 pytest 跑隐藏测试全绿，且收集到的用例数严格等于冻结值（防篡改 collection）。</span></div>
+      
+      <div class="row"><span class="k gk">sandbox_used</span><span>判卷确实发生在隔离 Docker 沙箱——所有跑提交代码的 backend 都核验 is_sandbox is True。</span></div>
+      
+      <div class="row"><span class="k gk io">io_oracle_pass</span><span>受信重执行：在从未见过的 held-out 输入上直接调提交函数真算对（第二独立信号，与 tests_all_pass 取 AND）。</span></div>
+      
+      <div class="row"><span class="k gk">checker_ok</span><span>仅用标准库的 checker 在 cfdb 进程内机械核对产物；checker 自身出错一律 fail-closed（判「无法判定」）。</span></div>
+      
+      <div class="row"><span class="k gk">qoi_complete</span><span>提交的 qoi.json 含 case 声明的 QoI key（只查在不在，不看数值对错）。</span></div>
+      
+      <div class="row"><span class="k gk">within_budget</span><span>提交自报 wall_time_sec ≤ 预算；没报直接 fail-closed。</span></div>
+      
+      <div class="row"><span class="k gk">冻结尺子</span><span>INTACT＝case 文件与冻结锚一致；DRIFTED＝有人改了被测材料（渲染时实时重算）。</span></div>
+    </div>
+  </div>
+</section>
+
 
   <section id="dom-coding">
     <h2>Coding · 算法实现<span class="count">5 题</span></h2>

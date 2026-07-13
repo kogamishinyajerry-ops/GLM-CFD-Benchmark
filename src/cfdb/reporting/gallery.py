@@ -70,6 +70,32 @@ _GATE_NOTE_BY_DOMAIN: dict[str, str] = {
     "但本 case 尚未 init 冻结为签名 contract.json）",
 }
 
+# Legend glossaries. Only entries actually present on the page are rendered
+# (no phantom badges) — the legend is assembled from the real cards, so it can
+# never claim an honesty level or gate the benchmark does not actually use.
+_HONESTY_GLOSSARY: dict[str, str] = {
+    "REAL": "真实来源——实验 / 已发表参考数据，"
+    "sha256 机械锚定校验通过（如 Ghia 1982 / Ladson 1988 NASA）。",
+    "ANALYTIC": "解析解基准——闭式理论解（如 Blasius 平板边界层），非实验、非自研。",
+    "MANUFACTURED": "自研题——buggy stub / hidden tests / golden 均本 benchmark 手写，非外部转录。",
+    "PREVIOUS_RUN": "以过往运行结果为参考——弱于实验/解析，仅作回归锚点。",
+    "SURROGATE": "代理 / 占位参考——最弱，仅供机制打通，不作可信度背书。",
+    "DECLARED-NOT-VERIFIED": "仅声明未验证——provenance 未能机械锚定，最低可信。",
+}
+
+_GATE_GLOSSARY: dict[str, str] = {
+    "tests_all_pass": "沙箱内 pytest 跑隐藏测试全绿，"
+    "且收集到的用例数严格等于冻结值（防篡改 collection）。",
+    "sandbox_used": "判卷确实发生在隔离 Docker 沙箱——"
+    "所有跑提交代码的 backend 都核验 is_sandbox is True。",
+    "io_oracle_pass": "受信重执行：在从未见过的 held-out 输入上直接调提交函数真算对"
+    "（第二独立信号，与 tests_all_pass 取 AND）。",
+    "checker_ok": "仅用标准库的 checker 在 cfdb 进程内机械核对产物；"
+    "checker 自身出错一律 fail-closed（判「无法判定」）。",
+    "qoi_complete": "提交的 qoi.json 含 case 声明的 QoI key（只查在不在，不看数值对错）。",
+    "within_budget": "提交自报 wall_time_sec ≤ 预算；没报直接 fail-closed。",
+}
+
 
 def _collect_gallery(repo_root: Path) -> dict[str, Any]:
     """Assemble gallery cards from real artifacts + per-case card.yaml prose.
@@ -166,11 +192,32 @@ def _collect_gallery(repo_root: Path) -> dict[str, Any]:
         )
 
     total = sum(len(g["cards"]) for g in groups)
+
+    # Legend assembled from what is actually on the page (no phantom badges):
+    # only honesty levels and gate types carried by a real card appear.
+    all_cards = [c for g in groups for c in g["cards"]]
+    honesty_present = {c["honesty"] for c in all_cards}
+    honesty_legend = [
+        {"level": lvl, "cls": _HONESTY_BADGE_CLASS.get(lvl, "h-risk"), "blurb": blurb}
+        for lvl, blurb in _HONESTY_GLOSSARY.items()
+        if lvl in honesty_present
+    ]
+    gates_present: set[str] = set()
+    for c in all_cards:
+        gates_present.update(c["gates"] or [])
+    gate_legend = [
+        {"gate": g, "blurb": blurb, "io": g == "io_oracle_pass"}
+        for g, blurb in _GATE_GLOSSARY.items()
+        if g in gates_present
+    ]
+
     return {
         "groups": groups,
         "total": total,
         "n_smoke": n_smoke,
         "missing_card": sorted(missing_card),
+        "honesty_legend": honesty_legend,
+        "gate_legend": gate_legend,
     }
 
 

@@ -62,13 +62,25 @@ class _IoStub:
     writes a caller-supplied payload verbatim (to exercise reconciliation).
     """
 
-    def __init__(self, io_dir: Path, mode: str, fn, forged, exit_code: int, timed_out: bool):
+    def __init__(
+        self,
+        io_dir: Path,
+        mode: str,
+        fn,
+        forged,
+        exit_code: int,
+        timed_out: bool,
+        is_sandbox: bool = True,
+    ):
         self._io_dir = io_dir
         self._mode = mode
         self._fn = fn
         self._forged = forged
         self._exit_code = exit_code
         self._timed_out = timed_out
+        # Mimics DockerBackend(sandbox=True): the score path now holds the
+        # oracle backend to the same sandbox_used requirement (residual 3 P2).
+        self.is_sandbox = is_sandbox
         self.seen_cwd: Path | None = None
 
     def execute(self, command, cwd, timeout=None, env=None) -> RunResult:
@@ -92,11 +104,13 @@ class _IoStub:
         )
 
 
-def _io_factory(mode="golden", fn=lambda x: x + 2, forged=None, exit_code=0, timed_out=False):
+def _io_factory(
+    mode="golden", fn=lambda x: x + 2, forged=None, exit_code=0, timed_out=False, is_sandbox=True
+):
     holder = {}
 
     def factory(submission_dir: Path, io_dir: Path) -> _IoStub:
-        stub = _IoStub(io_dir, mode, fn, forged, exit_code, timed_out)
+        stub = _IoStub(io_dir, mode, fn, forged, exit_code, timed_out, is_sandbox)
         holder["stub"] = stub
         return stub
 
@@ -239,6 +253,24 @@ class TestScoreCodingWithOracle:
         assert result.gates["tests_all_pass"] is True
         assert result.valid is True
         assert result.score == 1.0
+
+    def test_witness_non_sandbox_oracle_backend_fails_sandbox_gate(self, tmp_path: Path) -> None:
+        """Residual-3 P2 witness (Codex R0): the oracle re-runs submission code
+        through a SECOND backend, so sandbox_used must span BOTH backends.
+
+        Golden oracle (correct results) + a sandboxed primary pytest run, but
+        the oracle backend reports is_sandbox=False. sandbox_used bites and the
+        submission is invalid — a sandboxed pytest run does not license an
+        un-sandboxed oracle re-run. Submission code never executes through the
+        non-sandbox oracle backend (verified before execute).
+        """
+        registry, case_dir = _tmp_smoke(tmp_path)
+        result = _score(tmp_path, registry, case_dir, _io_factory(mode="golden", is_sandbox=False))
+        assert result.gates["tests_all_pass"] is True  # primary sandbox run fine
+        assert result.gates["sandbox_used"] is False  # oracle backend not a sandbox
+        assert result.gates["io_oracle_pass"] is False  # oracle refused to run unsandboxed
+        assert result.valid is False
+        assert result.score is None
 
     def test_off_by_one_impl_fails_oracle_even_if_tests_stub_passes(self, tmp_path: Path) -> None:
         # The oracle is an INDEPENDENT signal: a wrong implementation the
@@ -592,6 +624,10 @@ class TestMidRunDriftReverify:
 
         def tampering_factory(submission_dir: Path, io_dir: Path):
             class _Tamper:
+                # A legitimate (sandboxed) oracle backend; the attack under test
+                # is a host-side ruler edit mid-run, not a sandbox escape.
+                is_sandbox = True
+
                 def execute(self, command, cwd, timeout=None, env=None) -> RunResult:
                     inputs = json.loads((io_dir / "inputs.json").read_text(encoding="utf-8"))
                     out = [

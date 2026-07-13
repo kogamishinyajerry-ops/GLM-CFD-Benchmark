@@ -483,8 +483,8 @@ def _run_io_oracle(
     submission_dir: Path,
     io_factory: IoBackendFactory | None,
     notes: list[str],
-) -> float:
-    """Run the trusted re-execution oracle and return its 1.0/0.0 verdict (R9).
+) -> tuple[float, bool]:
+    """Run the trusted re-execution oracle (R9); return (verdict, oracle_sandboxed).
 
     The oracle run uses its OWN fresh work zone (loop-auditor R9, deeper
     than P2-1): the pytest run can read the ro-mounted hidden_tests, so if
@@ -504,23 +504,32 @@ def _run_io_oracle(
         notes: Audit note sink.
 
     Returns:
-        1.0 if every held-out input reproduced its expected output, else 0.0.
+        ``(verdict, oracle_sandboxed)``. ``verdict`` is 1.0 iff every held-out
+        input reproduced its expected output, else 0.0. ``oracle_sandboxed`` is
+        False iff a second backend was built to run submission code and it did
+        NOT report ``is_sandbox is True`` — the caller ANDs this into the
+        ``sandbox_used`` gate so the oracle's OWN execution backend is held to
+        the same sandbox requirement as the pytest backend (residual 3: the
+        oracle re-runs submission code through a distinct backend). Paths where
+        no second backend executes submission code return True (nothing ran
+        un-sandboxed via the oracle); the accompanying 0.0 verdict invalidates
+        on its own ``io_oracle_pass`` gate.
     """
     io = case.execution.io_oracle
     assert io is not None  # caller guards
     if io_factory is None:
         notes.append("io oracle: no backend available for the oracle run (fail-closed)")
-        return 0.0
+        return 0.0, True
 
     cases_path = case_dir / io.cases_file
     try:
         data = json.loads(cases_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         notes.append(f"io oracle: cannot read cases file {io.cases_file}: {e} (invalid)")
-        return 0.0
+        return 0.0, True
     if not isinstance(data, list) or len(data) == 0:
         notes.append("io oracle: cases file empty or not a list (invalid)")
-        return 0.0
+        return 0.0, True
 
     expected = [item["expected"] for item in data]
     inputs_projection = [{"index": i, "args": item["args"]} for i, item in enumerate(data)]
@@ -541,6 +550,17 @@ def _run_io_oracle(
         (io_work_dir / "tmp").mkdir(parents=True, exist_ok=True)
 
         backend = io_factory(submission_dir, io_dir)
+        # The oracle re-runs submission code through THIS backend; hold it to
+        # the same sandbox requirement as the pytest backend (residual 3 P2,
+        # Codex R0). Verified BEFORE execution so submission code never runs
+        # through a non-sandbox oracle backend at all. Signalled to the caller
+        # (oracle_sandboxed=False) to fail-close the sandbox_used gate.
+        if getattr(backend, "is_sandbox", False) is not True:
+            notes.append(
+                "io oracle: oracle backend did not report is_sandbox is True "
+                "(not a sandboxed run): sandbox_used fail-closed"
+            )
+            return 0.0, False
         run = backend.execute(
             _io_command(),
             cwd=io_work_dir,
@@ -555,8 +575,8 @@ def _run_io_oracle(
                 f"io oracle: driver exited abnormally (exit_code={run.exit_code}, "
                 f"timed_out={run.timed_out}) (invalid)"
             )
-            return 0.0
-        return _reconcile_io(io_work_dir / IO_RESULTS_FILENAME, expected, notes)
+            return 0.0, True
+        return _reconcile_io(io_work_dir / IO_RESULTS_FILENAME, expected, notes), True
 
 
 def _pytest_env() -> dict[str, str]:
@@ -824,9 +844,15 @@ def score_coding(
         # the case opts in; the two signals combine with AND (any failure
         # invalidates) because contract.validity_gates lists both.
         if case.execution.io_oracle is not None:
-            computed["io_oracle_pass"] = _run_io_oracle(
+            io_pass, oracle_sandboxed = _run_io_oracle(
                 case, case_dir, submission_dir, io_backend_factory, notes
             )
+            computed["io_oracle_pass"] = io_pass
+            # sandbox_used spans BOTH backends that execute submission code
+            # (residual 3 P2): a sandboxed pytest run does not license an
+            # un-sandboxed oracle re-run. AND the oracle's sandbox status in.
+            if oracle_sandboxed is not True:
+                computed["sandbox_used"] = 0.0
             # The oracle is a SECOND container run — it extends the scoring
             # window past the post-pytest verify_frozen above. Re-verify the
             # ruler once more so a host-side edit of the held-out answers (or

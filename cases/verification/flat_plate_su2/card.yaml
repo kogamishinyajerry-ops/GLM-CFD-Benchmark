@@ -5,11 +5,11 @@
 # (domain, gates, honesty, frozen status) are recomputed at render.
 title: Flat Plate (SU2 Verification)
 capability: 用 SU2 跑平板层流边界层 verification case，考求解器能否复现 Blasius 解析解的表面摩擦系数——无湍流模型的纯层流，对解析基准而非风洞实验做 code-verification。
-expected: SU2_CFD 跑通，skin_friction_coeff≈0.00297，在 10% 相对容差内。参考=Blasius 平板平均摩阻 C_F=1.328/√(Re_L)
-  在 Re_L=2×10⁵（也即 blasius_cf.csv 的 Cf=0.664/√(Re_x) 分布，sha256 锚定），正是 SU2 adapter method="average" 提取的量。
+expected: SU2_CFD 跑通，skin_friction_coeff≈0.0026，在 10% 相对容差内。SU2 adapter 的 method="average" 取壁面各点局部
+  Cf 的**简单平均**，其 Blasius 值在 Re_L=2×10⁵、已解析平板段（x/L 0.05..1.0）约 0.0025，故 0.0026 是该提取的合理参考（reference/blasius_cf.csv sha256 锚定）。
 criteria: category=verification（对解析解），无 agent-eval 契约，走 cfdb run → MetricsEngine：skin_friction_coeff 相对误差
-  |computed−0.00297|/0.00297 ≤ 0.10 才 qoi_pass；NaN/Inf→fail、缺失→incomplete。outputs.curves 为空、预算 900s 超时只警告不翻判定、max_cells=null。
-what_makes_it_bite: 「验证案例本身反而拒绝正解」的坑——已修（2026-07-12）：原 case 声明 Re=1×10⁶ 但参考数据实为 Re=2×10⁵（0.36% 吻合），
-  且 Re=1e6 对层流设定（turbulence=none）已过转捩（~5e5）；qoi 原锚 0.0026，一个**正确**层流解（Blasius 均值 0.00297）反而以 14.2%>10% 被判 FAIL。
-  现 Re/qoi 均校正到 Blasius 自洽值（Re=2e5、C_F=0.00297），正确解可 PASS。诚实残差（已收窄）：本 case 迄今从未真跑过（runs/ 无记录），
-  故「SU2 的 method=average 提取是否真落在 0.00297 附近」尚未经真跑实证——参考值是解析推导，非实测标定。
+  |computed−0.0026|/0.0026 ≤ 0.10 才 qoi_pass；NaN/Inf→fail、缺失→incomplete。outputs.curves 为空、预算 900s 超时只警告不翻判定、max_cells=null。
+what_makes_it_bite: 「验证案例声明的 Re 与参考数据/物理不自洽」的坑——已修 Re（2026-07-12）：原声明 Re=1×10⁶，但参考数据实为 Re=2×10⁵
+  （Cf=0.664/√(Re_x) 吻合 0.36%），且 Re=1e6 对层流设定（turbulence=none）已过转捩（~5e5）。真 bug 在此：Re=1e6 下正确解 Cf(~1/√Re)≈0.0011
+  会以远超 10% 判 FAIL；校正到 Re=2e5 后正确解 ~0.0025 才能 PASS 0.0026 参考。诚实残差（已收窄）：本 case 迄今从未真跑（runs/ 无记录），
+  method=average 是壁点简单均值、mesh 相关，0.0026 是解析近似非实测标定——真跑一次才能钉死确切值（10% 容差吸收残余不确定）。

@@ -45,12 +45,13 @@ reference:
   files:
     blasius: reference/blasius_cf.csv
   qoi_values:
-    # Blasius plate-average skin-friction coefficient C_F = 1.328/sqrt(Re_L) at
-    # Re_L=2e5 = 0.002969 (this is the quantity the SU2 adapter extracts:
-    # method="average" over the surface). The old 0.0026 was inconsistent with
-    # its own analytical basis — a CORRECT laminar run (~0.00297) failed it at
-    # 14.2% > the 10% tol, i.e. the verification case rejected correct solvers.
-    skin_friction_coeff: 0.00297
+    # The SU2 adapter extracts this via method="average" = the SIMPLE MEAN of
+    # local Cf over the wall surface points (qoi_extractor.py), NOT the
+    # drag-integral plate-average. At Re_L=2e5 the simple mean of Blasius Cf
+    # over the resolved plate (x/L 0.05..1.0) is ~0.0025, so 0.0026 is a
+    # reasonable reference for that extraction. (It is NOT 1.328/sqrt(Re_L)=
+    # 0.00297, the integral average — that quantity is not what is measured.)
+    skin_friction_coeff: 0.0026
 metrics:
   qoi_relative_tolerance:
     skin_friction_coeff: 0.1

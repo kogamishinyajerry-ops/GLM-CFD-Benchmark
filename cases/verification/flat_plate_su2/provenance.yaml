@@ -13,13 +13,15 @@ notes:
   - "blasius_cf.csv matches Cf = 0.664/sqrt(Re_x) with Re_L = 2.0e5 (max rel err
     0.36%, 3-sig-fig rounding). RESOLVED 2026-07-12: case.yaml Re was 1.0e6
     (inconsistent with this reference AND with the laminar 'turbulence: none'
-    declaration — 1e6 is past transition ~5e5); corrected to 2.0e5 to match."
-  - "qoi skin_friction_coeff RESOLVED 2026-07-12: was 0.0026, which a CORRECT
-    laminar run (~0.00297) failed at 14.2% > 10% tol (the verification case
-    rejected correct solvers). Corrected to the analytical Blasius plate-average
-    C_F = 1.328/sqrt(2.0e5) = 0.00297, the quantity the SU2 adapter's
-    method='average' extraction targets."
-  - "transcription_verified stays false: values are analytically DERIVED (not
-    transcribed from a table), and the case has NEVER been run (runs/ has no
-    flat_plate entry), so empirical agreement between a real SU2 method='average'
-    extraction and the 0.00297 reference is not yet confirmed."
+    declaration — 1e6 is past transition ~5e5); corrected to 2.0e5. This was the
+    real bug: at Re=1e6 a correct run's Cf (~1/sqrt(Re)) is ~0.0011 and fails the
+    0.0026 reference; at Re=2e5 it is ~0.0025 and passes."
+  - "qoi skin_friction_coeff = 0.0026 RETAINED. The SU2 adapter's method='average'
+    is the SIMPLE MEAN of local Cf over the wall points (qoi_extractor.py), whose
+    Blasius value at Re=2e5 over the resolved plate is ~0.0025 — 0.0026 matches
+    that (~3%). It is deliberately NOT the integral plate-average 1.328/sqrt(2e5)=
+    0.00297, which is a different quantity than what is extracted."
+  - "transcription_verified stays false: the case has NEVER been run (runs/ has no
+    flat_plate entry), so the exact simple-mean an SU2 run yields is mesh-dependent
+    and not yet empirically pinned; 0.0026 is an analytical approximation and the
+    10% tol absorbs the residual mesh/sampling uncertainty."

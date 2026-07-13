@@ -83,7 +83,7 @@ footer b{color:var(--ink)}
   <p class="thesis">共 14 个能力测试，分三域。每张卡片说明：这题考察 AI 的什么<b>能力</b>、
     一个正确提交的<b>预期结果</b>、以及好坏怎么<b>判定</b>（判定门＝冻结尺子上机械重算的关卡，
     绝不看提交自报）。卡片文案取自各 case 真文件，判定门与冻结状态渲染时实时重读/重算。</p>
-  <p class="meta">generated 2026-07-13T03:29:09+00:00 · 数据源 .</p>
+  <p class="meta">generated 2026-07-13T04:14:29+00:00 · 数据源 .</p>
 </header>
 
 <main>
@@ -421,7 +421,7 @@ footer b{color:var(--ink)}
         <div class="field"><p class="lab">考察能力</p><p class="val">复现 NACA0012 α=5°、Re=6×10⁶、M=0.3 的风洞实验气动力（OpenFOAM simpleFoam+SA，n_iter=3000；或 SU2 RANS-SA），命中中等迎角、附着流下的升/阻系数。考 CFD 求解器的物理保真度。</p></div>
         <div class="field"><p class="lab">预期结果</p><p class="val">管线跑通，cl≈0.456、cd≈0.0095（Ladson 1988 / NASA TM-4074 实测），各在 10% 相对容差带内。Cp 曲线应贴合 ladson1988_a5.csv（吸力峰 x/c=0.025 处 Cp=-1.521）。是 α 扫描（0/5/10/15°）里唯一 runs/ 有真实执行记录的一档（3 次 OpenFOAM 跑）——但这 3 次都如实 FAIL（见「怎么咬中」）。</p></div>
         <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">无 agent-eval 契约，走 cfdb run → MetricsEngine。真正的门：cl、cd 各自 |computed−ref|/|ref| ≤ 0.10（10%），两个都在带内才 qoi_pass；出 NaN/Inf 直接 fail、缺失判 incomplete。曲线门未配 curve_l2_tolerance 且 adapter 恒不产 curves，双重不参与判分；预算/max_cells 声明但不咬人。</p></div>
-        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">「欠分辨网格如实 FAIL」在这里是**已发生的实测事实**，不是假设——3 次真实 OpenFOAM 跑（最新 20260712，656s 跑到 iter 3000、forceCoeffs 真出了 coefficient.dat）算出 cl≈0.094、cd≈0.0575，对实测 cl=0.456 / cd=0.0095 分别偏 79% / 505%，两门都冲出 ±10% 带，overall_status=fail。流程完全正常 （无报错、无 NaN、预算内、cl/cd 都提取到了），却因粗网格（唯一 coarse 档、target_y_plus=1.0 只是目标）没解好边界层而物理算错——对照 sha256 锚定的真实 NASA 数据无处遁形。 （要让它 pass 需要真正的网格细化/y+ 收敛研究，非放松尺子。）</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">「欠分辨网格如实 FAIL」在这里是**已发生的实测事实**，不是假设——3 次真实 OpenFOAM 跑（最新 20260712，656s 跑到 iter 3000、forceCoeffs 真出了 coefficient.dat）算出 cl≈0.094、cd≈0.0575，对实测 cl=0.456 / cd=0.0095 分别偏 79% / 505%，两门都冲出 ±10% 带，overall_status=fail。诊断已从 run 产物 坐实根因=**纯网格欠分辨，非配置 bug**：freestream U=(99.6, 8.7, 0) 即 α=5° 正确施加、forceCoeffs 归一化正确（Aref=0.1=弦长×展长，展长实测 z∈[-0.05,0.05]）、 解也收敛良好（p 残差~1e-7）——48584 cells 在 Re=6e6 下近壁远达不到 y+~1，边界层解不开→cl 偏低 cd 偏高（欠分辨经典特征）。要让它 pass 需真正的 y+~1 边界层网格细化/收敛研究（compute-heavy），非放松尺子、也没有一处配置能一改就好。</p></div>
         
         <div class="nogate" data-domain="cfd">判定 · QoI 相对容差 / 预算门（cfdb run 流水线 · MetricsEngine 逐门重算，非 agent-eval 冻结契约）</div>
         

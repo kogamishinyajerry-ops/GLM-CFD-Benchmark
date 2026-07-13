@@ -8,7 +8,11 @@ physics:
   dimensionality: 2d
   steady: true
 conditions:
-  reynolds: 1000000.0
+  # Re_L=2e5: the ONLY value consistent with both the reference data and the
+  # physics. blasius_cf.csv matches Cf=0.664/sqrt(Re_L*x/L) at Re_L=2e5 (0.36%
+  # max err; 55% at the old 1e6), and a laminar plate (turbulence: none) must
+  # sit below transition (~5e5) — 1e6 would already be transitional/turbulent.
+  reynolds: 200000.0
   mach: 0.3
   alpha_deg: 0.0
 geometry:
@@ -29,7 +33,7 @@ solvers:
         critical: true
     parameters:
       mach: 0.3
-      reynolds: 1000000.0
+      reynolds: 200000.0  # matches conditions.reynolds (see note above)
       aoa: 0.0
 outputs:
   fields: ["U", "p"]
@@ -41,7 +45,12 @@ reference:
   files:
     blasius: reference/blasius_cf.csv
   qoi_values:
-    skin_friction_coeff: 0.0026
+    # Blasius plate-average skin-friction coefficient C_F = 1.328/sqrt(Re_L) at
+    # Re_L=2e5 = 0.002969 (this is the quantity the SU2 adapter extracts:
+    # method="average" over the surface). The old 0.0026 was inconsistent with
+    # its own analytical basis — a CORRECT laminar run (~0.00297) failed it at
+    # 14.2% > the 10% tol, i.e. the verification case rejected correct solvers.
+    skin_friction_coeff: 0.00297
 metrics:
   qoi_relative_tolerance:
     skin_friction_coeff: 0.1

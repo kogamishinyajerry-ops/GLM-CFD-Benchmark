@@ -695,7 +695,39 @@ cases/coding_tasks/<id>/
     非外部根锚）**：契约 JSON 完整性归 git/文件系统信任根（judge_policy §22-26 已声明,=保护验证机器
     自身的同一信任根），**每 gate 同构,非 io oracle 引入**；文件内容锚（驱动源/held_out）是外部根且已
     验，gate-list 成员仅自洽。递延（消除需外部契约签名=大架构改）。
-  - **残差 3（agentbench 路径 `sandbox_used=1.0` 硬编码,非派生自 `backend.is_sandbox`）**：真判卷路径
-    结构上恒建 Docker 沙箱（`_default_backend_factory`）,提交方无法注入非沙箱 backend,故不可利用；
-    但属 pre-existing 且跨 Runner（已 `is_sandbox is True` 强制）/agentbench 分裂,8 测面。递延留用户
-    裁量,不自主重构无关码。
+  - **残差 3（agentbench 路径 `sandbox_used=1.0` 硬编码,非派生自 `backend.is_sandbox`）——已关闭
+    （commit 77f2598 + f8c6add，用户裁量后授权）**：原真判卷路径结构上恒建 Docker 沙箱、不可利用，
+    但门「断言自己而非核验」。现按 Runner 纪律（`core/runner.py`）派生：`sandbox_used = 1.0 if
+    getattr(backend,"is_sandbox",False) is True else 0.0`（严格 `is True`，truthy-non-True 的 1 也不放过，
+    fail-closed）。**Codex 治理审 R0 咬中半闭合缺口（grounded 坐实，P2）**：io oracle 经
+    `io_backend_factory` 建**第二 backend** 重跑 submission 代码，原修复只覆盖主 pytest backend——
+    若 io backend 非沙箱、主 backend 沙箱，submission 代码会在非沙箱执行而 sandbox_used 仍 1.0。修复：
+    `_run_io_oracle` 返 `(verdict, oracle_sandboxed)`，建 io backend 后**执行前**校验 `is_sandbox is True`
+    （非沙箱 fail-fast 返 `(0.0, False)`，submission 代码绝不在非沙箱 oracle backend 里跑），caller 把
+    `oracle_sandboxed` AND 进 `sandbox_used`——门现覆盖**所有跑 submission 代码的 backend**。R1 复审
+    APPROVE。3 tamper witness（主 backend `is_sandbox=False`→红、truthy-non-True→红、io backend
+    非沙箱→红，均 `tests_all_pass` 仍 True 证独立咬中）。judge_source:sandbox_scorer 变→7 coding 契约重锚。
+
+## 10. 测试展览厅（`cfdb gallery`）+ 下一步建议的诚实处置
+
+- **卡片展览厅（新只读报告面，commit 462d927）**：`cfdb gallery` 把 14 个能力测试（coding 5 /
+  agentic 3 / cfd 6）渲成一页自包含 HTML，每卡说明「考察能力 · 预期结果 · 判定标准（好/坏）· 怎么咬中
+  看似对的提交」。散文取自各 case 真文件（逐条 grounded），结构性事实（domain / validity gates /
+  honesty / 冻结状态）渲染时从真 artifact 重读/重算，绝不自报。card.yaml 落 case 根目录（冻结树之外，
+  写它不 drift 尺子）。smoke/mock 6 个夹具排除但页脚如实披露数量；无契约 case 按 domain 给判定说明。
+  上架当天该面即自证有效——它渲染时重算 `verify_frozen`，如实把 balanced_brackets/csv_field_splitter
+  本地 `__pycache__/*.pyc` 污染（canon #48）标成 DRIFTED，清理后 committed 尺子实为 INTACT。
+- **下一步建议 (b) showcase 加 pass@k / completeness——如实拒做（否则假绿）**：pass@k 需每 task
+  **k 个独立模型样本**；现有 ledger 是 demo 夹具（每 case 2–4 行，submission_id 形如 `sub1`/`ag_bad`/
+  `ini_wrong`，甚至有重复 `sub1`），不是真实模型作答分布。在其上算 pass@k = 把 demo 数据当 benchmark
+  头条数字呈现 = 假绿。真做需一次真实评测：N 个独立模型样本逐个过冻结 judge，产真 ledger——数据不存在前
+  不加此列。completeness 同理递延。
+- **下一步建议 (c) NACA y+/GCI 网格研究——grounded 复核后重定义为「先修物理，非先做 GCI」**：
+  naca0012_a5 是 α 扫描里唯一有真实 run 的一档（runs/ 3 次 OpenFOAM，最新 20260712，656s 跑到 iter
+  3000），**3 次都如实 FAIL**：forceCoeffs 真出了 coefficient.dat，提取到 cl≈0.094、cd≈0.0575，对
+  Ladson 实测 cl=0.456 / cd=0.0095 偏 79% / 505%，两门冲出 ±10%、overall_status=fail。这是「欠分辨网格
+  如实 FAIL」的**已发生实测**（流程全正常、cl/cd 都提取到、无 NaN/超时，纯物理算错）——不是 QoI 提取
+  bug（提取链路正常工作）。GCI（网格收敛指数）研究**预设一个能产 QoI 的收敛序列**，而当前单一 coarse
+  网格连基础 QoI 都远离实验；故正确的下一步是先补细/中网格 + y+ 收敛把物理修对（一项 compute-heavy 的真
+  CFD 工作，每 run ~11min），而非在一个物理未收敛的 case 上强套 GCI。a0/a10/a15 迄今无 run，卡片如实标
+  「描述契约怎么判、非真实 pass/fail」。诚实边界：不为「能过」放松尺子，欠分辨就如实 FAIL 挂在展览厅上。

@@ -1,0 +1,15 @@
+# Gallery card copy for ini_to_json (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: INI to Nested JSON Conversion
+capability: 'state-based agentic 任务：读 visible/config.ini，把结果真正写到 submission_dir/config.json。难点在几条易被想当然跳过的细节：区分
+  ; 与 # 注释、trim key/value 两端空白但保留值内部空白、以及所有 value 必须保持 string 类型（不把 8080 自作聪明转成数字）。'
+expected: config.json 与 expected.json 逐字段结构相同，如 "server":{"host":"0.0.0.0","port":"8080","workers":"4"}——其中
+  port、pool_size 必须是字符串 "8080" / "10" 而非数字。
+criteria: 唯一冻结门 checker_ok，两层叠加：① checker_ok 只查判卷基建是否完好（reference/checker.py 子进程正常跑完、非超时、stdout 尾行是带 bool
+  success 的 JSON），坏了归 CHECKER_ERROR fail-closed；② checker.py 判决 = exact structural equality：section 名集合完全一致、逐
+  section 用 Python == 比较（类型也要对，8080 != "8080"）。valid = checker_ok AND success。
+what_makes_it_bite: ledger 真实记录 ini_wrong：checker_ok=true（裁判没坏）但把 port 转成了数字 8080、workers 却仍是字符串 "4"（疑似对
+  port 字段名做了特判），checker 咬 mismatch、valid=false——单看 checker_ok 判不出对错，必须叠加 verdict.success。

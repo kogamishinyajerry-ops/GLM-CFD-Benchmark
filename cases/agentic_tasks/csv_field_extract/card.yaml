@@ -1,0 +1,16 @@
+# Gallery card copy for csv_field_extract (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: CSV Employee Roster Extraction
+capability: 完成一个 state-based 日常任务（WorkArena/OSWorld/tau-bench 范式）：读懂 employees.csv，做总行数计数、按 department
+  分组计数、按 salary 取 argmax。只看任务结束后 submission_dir 里的最终产物 summary.json，不监督过程。
+expected: summary.json 精确产出 total_employees=5、by_department={"Engineering":2,"Marketing":1,"Sales":2}、highest_paid_name="Carol
+  Nguyen"（5 人里 salary 101000 最高）。
+criteria: 唯一冻结门 checker_ok，实为两层叠加：① checker_ok 只问「裁判有没有正常跑完」——reference/checker.py 当子进程跑（sys.executable
+  -B，提交摸不到）、exit 0、60s 内、stdout 尾行是带 bool success 的 JSON；坏了归 CHECKER_ERROR 第三态 fail-closed（既不算 pass 也不算普通
+  fail）。② checker.py 自己三项 AND 比对：计数精确相等、分组字典精确相等（key 拼写/大小写零容忍）、人名走 GAIA quasi-exact match。最终 valid =
+  checker_ok AND verdict.success is True。
+what_makes_it_bite: 忘了把 csv 的 salary 从字符串转 int、直接 max() 按字典序比，首字符 "9"(95000) 大于 "1"(101000)，会把 Alice Chen
+  误当最高薪——其余两项都对，仅 highest_paid_name 被咬，但 checker 内部硬 AND，一项错整体 success=False。

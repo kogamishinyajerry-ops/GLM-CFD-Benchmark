@@ -1,0 +1,16 @@
+# Gallery card copy for lid_driven_cavity (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: Lid-Driven Cavity (Re=100)
+capability: 搭建并跑通经典 lid-driven cavity 层流验证（Re=100，OpenFOAM icoFoam，32×32×1=1024 cells 粗网格 demo），从流场提取
+  centerline_umax（竖直中心线 |U|/U_lid 的最大值）并逼近 Ghia, Ghia & Shin (1982) 已发表参考解。
+expected: 交 qoi.json={"centerline_umax":值}（+可选 manifest.json 报 wall_time_sec）。冻结参考 0.665（held_out/qoi.json，从
+  Ghia 1982 在 y/H=0.95 插值）；仓库里真实 baseline 一次 OpenFOAM 跑出 0.6765（1.73% 误差），2026-07-08 被工程师人工签署。
+criteria: 冻结两门 AND：① qoi_complete——只查 qoi.json 有没有声明的 key（在即过，不看数值对错）；② within_budget——manifest 自报 wall_time_sec
+  ≤ 600s，没报则 fail-closed。两门过才给连续分 score=−qoi_error。⚠ QoI 准确度本身在 agent-eval 里是 ungated 的连续指标：case.yaml
+  的 10% 容差只服务另一条 cfdb run 的 V&V 路径（grep agentbench/ 零命中 qoi_relative_tolerance），算得再离谱只要 key 在、时间够仍判 valid、仍被排名，只是分数难看。
+what_makes_it_bite: 两个显式残差：(1) probe 解析只抓每行第一个向量的 bug 曾把值算成 0.032（95% 误差），旧 V&V 路径判 fail 并钉了回归——但 agent-eval
+  连续排名会把它压到垫底而非二元拒绝；(2) README 明说 agent-eval 只验「贴近 reference」、不验「数字真是跑 CFD 算的」，手写 qoi.json=0.665 两门照过——held_out
+  机制本该堵此洞，但当前 held-out 值刻意等于公开 reference，案文自承尚未提供独立重算的 anti-copy 价值。

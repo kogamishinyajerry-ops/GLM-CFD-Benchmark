@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLM-CFD-Benchmark · 测试展览厅</title>
+<style>
+:root{
+  --paper:#F6F2EA; --panel:#EFE9DD; --ink:#2B2620; --clay:#C15F3C;
+  --evidence:#3D7A50; --amber:#A8722C; --risk:#B3362A;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:Georgia,"Times New Roman","Songti SC",serif;line-height:1.65;font-size:16px}
+header.hero,main,footer{max-width:1180px;margin:0 auto;padding:0 28px}
+header.hero{padding-top:52px;padding-bottom:8px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--clay);margin:0 0 14px}
+h1{font-size:32px;line-height:1.3;margin:0 0 12px;font-weight:700}
+h1 .accent{color:var(--clay)}
+.thesis{font-size:17px;max-width:60em;margin:0 0 10px}
+.meta{font-family:var(--mono);font-size:12px;color:#6f675c;margin:8px 0 0}
+main{padding-bottom:24px}
+section{margin:40px 0}
+h2{font-size:21px;margin:0 0 4px;border-bottom:2px solid var(--clay);
+  padding-bottom:8px;font-weight:700}
+h2 .count{color:var(--clay);font-family:var(--mono);font-size:14px;margin-left:10px;font-weight:600}
+.blurb{font-size:14px;color:#6f675c;margin:10px 0 18px;max-width:64em}
+.mono{font-family:var(--mono);font-size:13px}
+.risk{color:var(--risk)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;
+  letter-spacing:.04em;padding:2px 9px;border-radius:3px;border:1px solid;white-space:nowrap}
+.h-real{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.h-mid{color:var(--ink);border-color:#b0a692;background:rgba(43,38,32,.05)}
+.h-warn{color:var(--amber);border-color:var(--amber);background:rgba(168,114,44,.09)}
+.h-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.v-pass{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.v-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px;margin:0}
+.card{background:var(--panel);border:1px solid #ddd3c2;border-left:4px solid var(--clay);
+  border-radius:5px;padding:18px 20px;display:flex;flex-direction:column}
+.card .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.card h3{font-size:16px;margin:0;font-weight:700;line-height:1.35}
+.card .cid{font-family:var(--mono);font-size:11px;color:#8a8073;margin:2px 0 0}
+.tags{margin:10px 0 4px;display:flex;gap:6px;flex-wrap:wrap}
+.dom{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  padding:1px 7px;border-radius:3px;border:1px solid #b0a692;color:var(--ink);
+  background:rgba(43,38,32,.05);white-space:nowrap}
+.field{margin:11px 0 0}
+.field .lab{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--clay);margin:0 0 3px;font-weight:600}
+.field .val{font-size:14px;margin:0}
+.field.bite .lab{color:var(--amber)}
+.gates{margin:12px 0 0;padding-top:11px;border-top:1px dashed #d3c8b4}
+.gate{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:3px;
+  border:1px solid #ddd3c2;color:#6f675c;margin:0 4px 3px 0;display:inline-block;white-space:nowrap}
+.gate.io{color:var(--clay);border-color:var(--clay);font-weight:600}
+.frozen{font-family:var(--mono);font-size:10.5px;margin:8px 0 0}
+.frozen .ok{color:var(--evidence)} .frozen .bad{color:var(--risk)}
+.nogate{font-family:var(--mono);font-size:11px;color:#8a8073;margin:12px 0 0;padding-top:11px;
+  border-top:1px dashed #d3c8b4}
+footer{border-top:1px solid #d8ccb6;margin-top:48px;padding-top:18px;padding-bottom:44px}
+footer p{font-size:13px;color:#6f675c;margin:0 0 8px;max-width:70em}
+footer b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <p class="kicker">GLM-CFD-Benchmark · 测试展览厅 · cfdb v0.1.0</p>
+  <h1>这个 benchmark 在考什么？<span class="accent">一题一卡，说清能力 · 预期 · 判定</span></h1>
+  <p class="thesis">共 14 个能力测试，分三域。每张卡片说明：这题考察 AI 的什么<b>能力</b>、
+    一个正确提交的<b>预期结果</b>、以及好坏怎么<b>判定</b>（判定门＝冻结尺子上机械重算的关卡，
+    绝不看提交自报）。卡片文案取自各 case 真文件，判定门与冻结状态渲染时实时重读/重算。</p>
+  <p class="meta">generated 2026-07-13T01:16:40+00:00 · 数据源 .</p>
+</header>
+
+<main>
+
+  <section id="dom-coding">
+    <h2>Coding · 算法实现<span class="count">5 题</span></h2>
+    <p class="blurb">给定 buggy stub 与隐藏测试，判 AI 能否把它改对；带 IO oracle 的还要在从未见过的 held-out 输入上真算对（受信重执行）——两信号 AND，只会写通过报告不算数。</p>
+    <div class="grid">
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>First Unbalanced Bracket Index</h3>
+            <p class="cid">balanced_brackets</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="coding">coding</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">把一个只比较开/闭括号「总数」、无视嵌套顺序的 buggy stub，改成真正用栈追踪 ()、[]、{} 开合顺序的匹配算法，在 first_unbalanced_index(s) 里定位第一个打破平衡的下标。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">正确实现让 README 的例子全部成立：first_unbalanced_index(&#34;()[]{}&#34;)==-1、(&#34;([)]&#34;)==2、(&#34;(]&#34;)==1、(&#34;(()&#34;)==0、(&#34;()(&#34;)==2。golden 用 (index, char) 栈实现。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">三门 AND，任一 False 即 invalid、不给部分分：① tests_all_pass——沙箱内 pytest 跑 5 条隐藏测试（3 FAIL_TO_PASS + 2 PASS_TO_PASS 回归哨兵）全绿，且收集到的用例数严格等于冻结的 expected_test_count=5（零容差、防篡改 collection）；② sandbox_used——判卷确实发生在隔离 Docker 沙箱（--network none / --cap-drop ALL / 只读根）；③ io_oracle_pass——受信重执行：judge 在独立容器里用 5 组 held-out 输入直接调提交函数，期望值只留宿主侧严格比对。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">把 5 条隐藏测试的输入→输出背成查找表能骗过 pytest，但 io_oracle 的 held-out 输入（如 &#34;(((&#34;→0）不在表里，只有真追踪嵌套顺序才算得对——tests_all_pass AND io_oracle_pass 直接判红。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="tests_all_pass">tests_all_pass</span><span class="gate" data-gate="sandbox_used">sandbox_used</span><span class="gate io" data-gate="io_oracle_pass">io_oracle_pass</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>CSV Field Splitter (Quoted-Field Bug Fix)</h3>
+            <p class="cid">csv_field_splitter</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="coding">coding</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">把只会 line.split(&#34;,&#34;) 的朴素实现，改成正确处理 RFC4180 双引号字段的状态机——引号内的逗号不拆分字段，连续两个双引号 &#34;&#34; 在字段内还原成一个转义的 &#34;。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">split_csv_line(&#39;a,b,c&#39;)==[&#39;a&#39;,&#39;b&#39;,&#39;c&#39;]、(&#39;&#34;a,b&#34;,c&#39;)==[&#39;a,b&#39;,&#39;c&#39;]、(&#39;&#34;say &#34;&#34;hi&#34;&#34;&#34;,ok&#39;)==[&#39;say &#34;hi&#34;&#39;,&#39;ok&#39;]。golden 用单趟 in_quotes 状态机逐字符扫描。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">三门 AND（pass_rate 相对参考 1.0 的容差为 0.0，必须全过）：① tests_all_pass——沙箱 pytest 跑 5 条隐藏测试全绿 + 用例数对上冻结的 5；② sandbox_used——真在 Docker 沙箱内判卷；③ io_oracle_pass——5 组 held-out 输入受信重执行严格比对，且这批输入经准入期 token 级 disjoint lint 强制核验，与隐藏测试字面不重叠。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">只针对隐藏测试里「带引号」模式硬编码的伪造提交能过 pytest，却在 held-out 的普通行 &#34;p,q,r&#34;（完全不带引号）上翻车——没真正实现状态机就露馅，io_oracle 咬红。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="tests_all_pass">tests_all_pass</span><span class="gate" data-gate="sandbox_used">sandbox_used</span><span class="gate io" data-gate="io_oracle_pass">io_oracle_pass</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>K-th Largest Element</h3>
+            <p class="cid">kth_largest</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="coding">coding</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">把「结构对、方向反」的 stub（升序排序取 [k-1]，实为第 k 小）改成降序取 [k-1]（第 k 大）；多参数 entry（list + int），重复值按位置计数不去重。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">kth_largest([3,1,4,1,5,9,2,6],2)==6、([10,20,30],1)==30、([7,2,7,2],2)==7、([42],1)==42。golden 一行：sorted(nums, reverse=True)[k-1]。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">三门 AND（sandbox_scorer.py: valid = all(gates)）：① tests_all_pass——沙箱 pytest 5 条隐藏测试全绿 + 用例数对上冻结的 5、0 skip；② sandbox_used——真在沙箱判卷；③ io_oracle_pass——本 case 是 coding 域首个多参数 entry，judge 喂 5 组 held-out (nums, k)，expected 全程不进容器、只在宿主侧严格比对，5/5 全对才算过。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">背下隐藏测试答案的提交能过 pytest，但 held-out [100,50,75,25], k=3 落回 buggy 升序逻辑算出 75 ≠ 真实第 3 大 50，io_oracle 咬红、整体 invalid。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="tests_all_pass">tests_all_pass</span><span class="gate" data-gate="sandbox_used">sandbox_used</span><span class="gate io" data-gate="io_oracle_pass">io_oracle_pass</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>Merge Overlapping Intervals</h3>
+            <p class="cid">merge_intervals</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="coding">coding</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">看穿「看似已写完」的 stub 藏的隐藏假设——不排序的单遍 sweep 只在输入本就按 start 有序时才碰巧对；正确解须先按 start 排序再单趟合并。benchmark 首个嵌套 list[list[int]] 输入输出的 coding case。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">merge_intervals([[2,6],[1,3]])==[[1,6]]（乱序也要合对）、([[1,3],[2,6],[8,10]])==[[1,6],[8,10]]、([])==[]。golden 先 sorted(key=start) 再单趟 sweep。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">三门 AND：① tests_all_pass——沙箱 pytest 5 条隐藏测试全绿 + 用例数对上冻结的 5；② sandbox_used；③ io_oracle_pass——用另一个独立容器 work zone 回放（不与 pytest 共享 /work，堵住跨容器偷渡），返回值经 _native 守卫拒绝会被 json 悄悄强转的 tuple/非串 key，再 _strict_equal 递归严格比对。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">硬编码隐藏测试答案能过 pytest，但 held-out [[20,30],[25,35]]（期望 [[20,35]]）不在表里、伪造提交原样返回未合并，io_oracle 咬红。（对照：原样交 buggy stub 会在 tests_all_pass 阶段就先如实挂掉。）</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="tests_all_pass">tests_all_pass</span><span class="gate" data-gate="sandbox_used">sandbox_used</span><span class="gate io" data-gate="io_oracle_pass">io_oracle_pass</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>Roman Numeral to Integer</h3>
+            <p class="cid">roman_to_int</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="coding">coding</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">修复「只加不减」缺陷，正确实现罗马数字 subtractive notation（当前符号值 &lt; 紧邻右侧符号值时应相减，IV=4 / IX=9 / XLII=42，而非逐符号求和），且修复要真正泛化到没见过的输入。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">roman_to_int(&#34;IV&#34;)==4（不是 6）、(&#34;IX&#34;)==9、(&#34;XLII&#34;)==42、(&#34;MCMXCIV&#34;)==1994、(&#34;MMXXIII&#34;)==2023。golden 左→右扫描，小于右邻则减、否则加。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">三门 AND（架构文档 §3.3 明确「拒绝部分分」）：① tests_all_pass——沙箱 pytest 5 条隐藏测试全绿、pass_rate 零容差、用例数对上冻结的 5；② sandbox_used——真在 Docker 沙箱内跑；③ io_oracle_pass——绕开 pytest 直接调 roman_to_int，喂 5 个 held-out（MCMXCIV/CD/XC/LVIII/MMXXIII，经 disjoint lint 核实与隐藏测试输入不重叠）严格比对。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">把隐藏测试断言（IV→4 等）背成查找表能过 pytest 与 sandbox_used，但 held-out key 不在表里，只有真实现 subtractive 算法才算得对——io_oracle 咬红。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="tests_all_pass">tests_all_pass</span><span class="gate" data-gate="sandbox_used">sandbox_used</span><span class="gate io" data-gate="io_oracle_pass">io_oracle_pass</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+    </div>
+  </section>
+
+  <section id="dom-agentic">
+    <h2>Agentic · 状态型日常任务<span class="count">3 题</span></h2>
+    <p class="blurb">读一组文件、产出一个产物（summary.json / config.json / 整理后的目录），由仅用标准库的 checker 在 cfdb 进程内机械核对；checker 自身出错一律 fail-closed（判「无法判定」，绝不算过）。</p>
+    <div class="grid">
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>CSV Employee Roster Extraction</h3>
+            <p class="cid">csv_field_extract</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="agentic">agentic</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">完成一个 state-based 日常任务（WorkArena/OSWorld/tau-bench 范式）：读懂 employees.csv，做总行数计数、按 department 分组计数、按 salary 取 argmax。只看任务结束后 submission_dir 里的最终产物 summary.json，不监督过程。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">summary.json 精确产出 total_employees=5、by_department={&#34;Engineering&#34;:2,&#34;Marketing&#34;:1,&#34;Sales&#34;:2}、highest_paid_name=&#34;Carol Nguyen&#34;（5 人里 salary 101000 最高）。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">唯一冻结门 checker_ok，实为两层叠加：① checker_ok 只问「裁判有没有正常跑完」——reference/checker.py 当子进程跑（sys.executable -B，提交摸不到）、exit 0、60s 内、stdout 尾行是带 bool success 的 JSON；坏了归 CHECKER_ERROR 第三态 fail-closed（既不算 pass 也不算普通 fail）。② checker.py 自己三项 AND 比对：计数精确相等、分组字典精确相等（key 拼写/大小写零容忍）、人名走 GAIA quasi-exact match。最终 valid = checker_ok AND verdict.success is True。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">忘了把 csv 的 salary 从字符串转 int、直接 max() 按字典序比，首字符 &#34;9&#34;(95000) 大于 &#34;1&#34;(101000)，会把 Alice Chen 误当最高薪——其余两项都对，仅 highest_paid_name 被咬，但 checker 内部硬 AND，一项错整体 success=False。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="checker_ok">checker_ok</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>Reorganize Files by Extension</h3>
+            <p class="cid">dir_organize</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="agentic">agentic</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">在真实文件系统上把一批混合扩展名的文件，按（小写、去前导点的）扩展名分组搬进对应子目录，且搬运过程不改动任何文件的字节。只看最终目录树终态，考真实文件操作的执行力。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">提交目录恰好长出 csv/ jpg/ png/ py/ txt/ 五个子目录，6 个源文件各就位（如 report.txt→txt/report.txt、photo.jpg→jpg/photo.jpg），文件名不变、内容与 messy/ 源文件逐字节相同；不允许多余顶层子目录或混入不该有的文件。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">agentic 域默认门 checker_ok（reference/checker.py 真实执行、判卷子进程正常跑完）叠加 checker 自身判决 success：三层精确比对——顶层子目录集合须恰等于 {csv,jpg,png,py,txt}、每目录文件名集合须恰好匹配、每文件与源逐字节相同。valid = checker_ok AND success。⚠ 本 case 尚未 `agent-eval init` 冻结成签名 contract.json（同域 sibling 已有）——这里描述的是 init 时会采用的 domain-default 门；reference/checker.py 本身真实存在且被执行。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">分类、文件名全对，但搬运时用文本模式重写 notes.txt（悄悄改了换行符）或用图像库重新编码 photo.jpg——前两层比对全过，第三层逐字节比对精确咬住 content mismatch，success 翻红。README 原话要求 byte-for-byte identical。</p></div>
+        
+        <div class="nogate" data-domain="agentic">判定 · checker_ok（agentic 域默认门 · reference/checker.py 真实执行，但本 case 尚未 init 冻结为签名 contract.json）</div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>INI to Nested JSON Conversion</h3>
+            <p class="cid">ini_to_json</p>
+          </div>
+          <span class="badge h-mid" data-honesty="MANUFACTURED">MANUFACTURED</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="agentic">agentic</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">state-based agentic 任务：读 visible/config.ini，把结果真正写到 submission_dir/config.json。难点在几条易被想当然跳过的细节：区分 ; 与 # 注释、trim key/value 两端空白但保留值内部空白、以及所有 value 必须保持 string 类型（不把 8080 自作聪明转成数字）。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">config.json 与 expected.json 逐字段结构相同，如 &#34;server&#34;:{&#34;host&#34;:&#34;0.0.0.0&#34;,&#34;port&#34;:&#34;8080&#34;,&#34;workers&#34;:&#34;4&#34;}——其中 port、pool_size 必须是字符串 &#34;8080&#34; / &#34;10&#34; 而非数字。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">唯一冻结门 checker_ok，两层叠加：① checker_ok 只查判卷基建是否完好（reference/checker.py 子进程正常跑完、非超时、stdout 尾行是带 bool success 的 JSON），坏了归 CHECKER_ERROR fail-closed；② checker.py 判决 = exact structural equality：section 名集合完全一致、逐 section 用 Python == 比较（类型也要对，8080 != &#34;8080&#34;）。valid = checker_ok AND success。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">ledger 真实记录 ini_wrong：checker_ok=true（裁判没坏）但把 port 转成了数字 8080、workers 却仍是字符串 &#34;4&#34;（疑似对 port 字段名做了特判），checker 咬 mismatch、valid=false——单看 checker_ok 判不出对错，必须叠加 verdict.success。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="checker_ok">checker_ok</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+    </div>
+  </section>
+
+  <section id="dom-cfd">
+    <h2>CFD · 求解器验证 (V&amp;V)<span class="count">6 题</span></h2>
+    <p class="blurb">真跑 CFD 求解器，把 QoI（阻力系数 / 中心线速度 / cp 分布）对已发表的实验或解析参考，按相对容差判定；欠分辨的网格如实 FAIL，绝不为「能过」放松尺子。</p>
+    <div class="grid">
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>Flat Plate (SU2 Verification)</h3>
+            <p class="cid">flat_plate_su2</p>
+          </div>
+          <span class="badge h-mid" data-honesty="ANALYTIC">ANALYTIC</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="cfd">cfd</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">用 SU2 跑平板层流边界层 verification case，考求解器能否复现 Blasius 解析解的表面摩擦系数——无湍流模型的纯层流，对解析基准而非风洞实验做 code-verification。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">SU2_CFD 跑通，skin_friction_coeff≈0.0026，在 10% 相对容差内。参考来自 Blasius 解析解 Cf=0.664/√(Re_x)（reference/blasius_cf.csv，sha256 锚定）。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">category=verification（对解析解），无 agent-eval 契约，走 cfdb run → MetricsEngine：skin_friction_coeff 相对误差 |computed−0.0026|/0.0026 ≤ 0.10 才 qoi_pass；NaN/Inf→fail、缺失→incomplete。outputs.curves 为空、预算 900s 超时只警告不翻判定、max_cells=null。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">显式残差（provenance 自承）：blasius_cf.csv 的数据吻合 Cf=0.664/√(Re_x) 在 Re_L=2.0×10⁵（最大相对误差 0.36%），却与 case.yaml 声明的 Re=1.0×10⁶ 不一致，discrepancy 未解决、transcription_verified 保持 false。这道 10% 容差门当前锚在一个 Re 基准尚未核清的参考值上——是本 case 显式记录、非隐藏的未解决残差。</p></div>
+        
+        <div class="nogate" data-domain="cfd">判定 · QoI 相对容差 / 预算门（cfdb run 流水线 · MetricsEngine 逐门重算，非 agent-eval 冻结契约）</div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>Lid-Driven Cavity (Re=100)</h3>
+            <p class="cid">lid_driven_cavity</p>
+          </div>
+          <span class="badge h-real" data-honesty="REAL">REAL</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="cfd">cfd</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">搭建并跑通经典 lid-driven cavity 层流验证（Re=100，OpenFOAM icoFoam，32×32×1=1024 cells 粗网格 demo），从流场提取 centerline_umax（竖直中心线 |U|/U_lid 的最大值）并逼近 Ghia, Ghia &amp; Shin (1982) 已发表参考解。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">交 qoi.json={&#34;centerline_umax&#34;:值}（+可选 manifest.json 报 wall_time_sec）。冻结参考 0.665（held_out/qoi.json，从 Ghia 1982 在 y/H=0.95 插值）；仓库里真实 baseline 一次 OpenFOAM 跑出 0.6765（1.73% 误差），2026-07-08 被工程师人工签署。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">冻结两门 AND：① qoi_complete——只查 qoi.json 有没有声明的 key（在即过，不看数值对错）；② within_budget——manifest 自报 wall_time_sec ≤ 600s，没报则 fail-closed。两门过才给连续分 score=−qoi_error。⚠ QoI 准确度本身在 agent-eval 里是 ungated 的连续指标：case.yaml 的 10% 容差只服务另一条 cfdb run 的 V&amp;V 路径（grep agentbench/ 零命中 qoi_relative_tolerance），算得再离谱只要 key 在、时间够仍判 valid、仍被排名，只是分数难看。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">两个显式残差：(1) probe 解析只抓每行第一个向量的 bug 曾把值算成 0.032（95% 误差），旧 V&amp;V 路径判 fail 并钉了回归——但 agent-eval 连续排名会把它压到垫底而非二元拒绝；(2) README 明说 agent-eval 只验「贴近 reference」、不验「数字真是跑 CFD 算的」，手写 qoi.json=0.665 两门照过——held_out 机制本该堵此洞，但当前 held-out 值刻意等于公开 reference，案文自承尚未提供独立重算的 anti-copy 价值。</p></div>
+        
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          <span class="gate" data-gate="qoi_complete">qoi_complete</span><span class="gate" data-gate="within_budget">within_budget</span>
+          <div class="frozen">冻结尺子 · <span class="ok" data-frozen="INTACT">INTACT</span></div>
+        </div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>NACA0012 Airfoil α=0° (Ladson 1988)</h3>
+            <p class="cid">naca0012_a0</p>
+          </div>
+          <span class="badge h-real" data-honesty="REAL">REAL</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="cfd">cfd</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">在给定网格/物理设置下复现 NACA0012 对称翼型 α=0°、Re=6×10⁶、M=0.3 的真实风洞实验气动特性（OpenFOAM simpleFoam+SA 或 SU2 RANS-SA），同时命中零升力 cl≈0 与阻力 cd≈0.0086。考数值/网格/湍流建模的物理保真度，不是代码正确性。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">两条求解器管线跑通，cl≈0.0（对称翼型零攻角零升力）、cd≈0.0086（Ladson 1988 / NASA TM-4074 实测）。Cp(x/c) 应逼近 ladson1988.csv 的 18 点曲线（吸力峰 x/c=0.025 处 Cp=-1.214）。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">无 agent-eval 契约，走 cfdb run → MetricsEngine 逐门重算。真正决定 pass/fail 的两门：① cl 绝对容差——参考值为 0，引擎检测 ref==0 时切到 |computed−0|≤0.01；② cd 相对容差——|computed−0.0086|/0.0086≤0.10。⚠ cp 曲线 L2 门（0.05）目前是死信——engine.py 自承所有 shipped adapter 恒把 curves 设 None，守卫 `curves is not None` 永假、curve_pass 恒真；预算超时只警告、max_cells 未强制。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">cl 这门区分力弱——对称翼型+0° 靠物理对称天然接近 0，网格再差也易白捡过关；真正该体现网格质量的 cd（±10%）和 Cp 形状里，曲线门却死信不参与。于是一个没捕捉到吸力峰、Cp 形状明显错的欠分辨解，只要 cd 凑巧落进 ±10% 仍被判 pass（engine.py 注释自承的已知状态）。诚实注：runs/ 里 α=0° 从未真跑过，本卡描述「契约怎么判」而非真实 pass/fail。</p></div>
+        
+        <div class="nogate" data-domain="cfd">判定 · QoI 相对容差 / 预算门（cfdb run 流水线 · MetricsEngine 逐门重算，非 agent-eval 冻结契约）</div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>NACA0012 Airfoil α=10° (Ladson 1988)</h3>
+            <p class="cid">naca0012_a10</p>
+          </div>
+          <span class="badge h-real" data-honesty="REAL">REAL</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="cfd">cfd</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">在接近失速迎角的 α=10°、Re=6×10⁶、M=0.3 下对 NACA0012 完整跑通 steady RANS-SA（OpenFOAM 或 SU2），算出与真实风洞实验相符的气动力系数。考「算得准」，不是「跑得完」。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">管线跑通，cl≈0.862、cd≈0.0125（Ladson 1988），各在 10% 相对容差内。Cp 曲线 ladson1988_a10.csv（吸力峰 x/c=0.025 处 Cp=-2.105），但原始场/曲线目前不参与判分。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">无契约，走 MetricsEngine。唯一真门：cl、cd 各 10% 相对误差，任一超出即 fail；NaN/Inf→fail、缺失→incomplete。预算超时只警告不翻 pass/fail；max_cells 声明未强制；cp 曲线自身没配容差且 adapter 恒不产 curves，双重不参与。regression gate 因 baselines 里无 a10 条目判 NO_BASELINE（明确「不等于 PASS」）尚未激活。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">α=10° 已近失速，粗网格/分离预测不准会让 cl/cd 系统性偏离实验值——流水线诚实跑完也诚实报错，QoI 门只认离实验值够不够近，超 10% 即如实 fail（非造假被抓包）。反向：max_cells 未强制、曲线门没接上，「网格偏粗但 cl/cd 蒙对」拦不住。诚实注：runs/ 无 a10 记录。</p></div>
+        
+        <div class="nogate" data-domain="cfd">判定 · QoI 相对容差 / 预算门（cfdb run 流水线 · MetricsEngine 逐门重算，非 agent-eval 冻结契约）</div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>NACA0012 Airfoil α=15° (Ladson 1988)</h3>
+            <p class="cid">naca0012_a15</p>
+          </div>
+          <span class="badge h-real" data-honesty="REAL">REAL</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="cfd">cfd</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">在失速起始点 α=15°、Re=6×10⁶、M=0.3 下跑写死参数的固定 pipeline，考一方程 Spalart-Allmaras RANS 湍流模型在 α 扫描里物理上最难一档的保真度（求解器参数全写死，本质考求解器/湍流模型而非 agent 自主决策）。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">跑通 pipeline，cl≈1.096、cd≈0.0185（Ladson 1988），各在 15% 相对容差内——比 a5/a10 的 10% 更松，case 自承「α=15° 近失速，RANS-SA 易低估分离」，主动放宽而非掩盖误差。Cp 曲线 ladson1988_a15.csv（吸力峰 x/c=0.025 处 Cp=-2.654）不参与判分。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">无契约，走 MetricsEngine：cl、cd 各 15% 相对误差；出 NaN/Inf（发散解）优先级最高直接 fail、缺失判 incomplete。曲线门未配容差 + adapter 恒不产 curves 双重不参与；预算超时只警告、max_cells 未强制，都不咬人。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">更贴近 CFD 域「欠分辨网格如实 FAIL」：粗网格（共用 coarse 档）在失速起始处对近壁/尾迹分辨最敏感，一次流程完全正常（无报错、残差收敛、无 NaN、预算内）的提交仍可能因粗网格+SA 结构性低估分离而真实落到 ±15% 外，无法靠「跑完」掩盖——对照的是 sha256 锚定的真实 NASA 数据。诚实注：runs/ 无 a15 记录。</p></div>
+        
+        <div class="nogate" data-domain="cfd">判定 · QoI 相对容差 / 预算门（cfdb run 流水线 · MetricsEngine 逐门重算，非 agent-eval 冻结契约）</div>
+        
+      </article>
+    
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>NACA0012 Airfoil α=5° (Ladson 1988)</h3>
+            <p class="cid">naca0012_a5</p>
+          </div>
+          <span class="badge h-real" data-honesty="REAL">REAL</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="cfd">cfd</span></div>
+        <div class="field"><p class="lab">考察能力</p><p class="val">复现 NACA0012 α=5°、Re=6×10⁶、M=0.3 的风洞实验气动力（OpenFOAM simpleFoam+SA，n_iter=3000；或 SU2 RANS-SA），命中中等迎角、附着流下的升/阻系数。考 CFD 求解器的物理保真度。</p></div>
+        <div class="field"><p class="lab">预期结果</p><p class="val">管线跑通，cl≈0.456、cd≈0.0095（Ladson 1988 / NASA TM-4074 实测），各在 10% 相对容差带内。Cp 曲线应贴合 ladson1988_a5.csv（吸力峰 x/c=0.025 处 Cp=-1.521）。是 α 扫描（0/5/10/15°）里唯一 runs/ 有真实执行记录的一档（3 次 OpenFOAM 跑）。</p></div>
+        <div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">无 agent-eval 契约，走 cfdb run → MetricsEngine。真正的门：cl、cd 各自 |computed−ref|/|ref| ≤ 0.10（10%），两个都在带内才 qoi_pass；出 NaN/Inf 直接 fail、缺失判 incomplete。曲线门未配 curve_l2_tolerance 且 adapter 恒不产 curves，双重不参与判分；预算/max_cells 声明但不咬人。</p></div>
+        <div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">α=5° 附着流对 RANS-SA 不算难，但粗网格（唯一 coarse 档，target_y_plus=1.0 只是目标非保证）若欠分辨，cl/cd 会系统性偏离实测、冲出 ±10% 带被如实判 fail——对照的是 sha256 锚定的真实 NASA 实验数据，非可协商软指标。反向也说清：max_cells 未强制、曲线门没接上，「网格偏粗但 cl/cd 恰好蒙对」目前拦不住。</p></div>
+        
+        <div class="nogate" data-domain="cfd">判定 · QoI 相对容差 / 预算门（cfdb run 流水线 · MetricsEngine 逐门重算，非 agent-eval 冻结契约）</div>
+        
+      </article>
+    
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p><b>诚实边界：</b>本页每张卡片的能力/预期/判定文案取自对应 case 的真文件（case.yaml · README ·
+    golden/checker · hidden_tests · held-out），判定门与冻结状态在渲染时实时重读/重算——DRIFTED 即改了尺子。
+    绝不编造预期数值或容差；出处诚实等级（REAL / ANALYTIC / MANUFACTURED …）如实标注。</p>
+  <p><b>未列入的：</b>另有 6 个 smoke / mock 冒烟夹具（category=smoke）是<b>测 harness 自身</b>
+    的内部脚手架（如 mock_success / smoke_add_two），不是考 AI 能力的 benchmark 测试，故不进展览厅——
+    如实披露其数量，不静默隐藏。</p>
+</footer>
+
+</body>
+</html>

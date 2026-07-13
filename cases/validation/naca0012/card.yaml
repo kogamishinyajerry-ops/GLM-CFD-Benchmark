@@ -1,0 +1,15 @@
+# Gallery card copy for naca0012_a0 (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: NACA0012 Airfoil α=0° (Ladson 1988)
+capability: 在给定网格/物理设置下复现 NACA0012 对称翼型 α=0°、Re=6×10⁶、M=0.3 的真实风洞实验气动特性（OpenFOAM simpleFoam+SA 或 SU2 RANS-SA），同时命中零升力
+  cl≈0 与阻力 cd≈0.0086。考数值/网格/湍流建模的物理保真度，不是代码正确性。
+expected: 两条求解器管线跑通，cl≈0.0（对称翼型零攻角零升力）、cd≈0.0086（Ladson 1988 / NASA TM-4074 实测）。Cp(x/c) 应逼近 ladson1988.csv
+  的 18 点曲线（吸力峰 x/c=0.025 处 Cp=-1.214）。
+criteria: 无 agent-eval 契约，走 cfdb run → MetricsEngine 逐门重算。真正决定 pass/fail 的两门：① cl 绝对容差——参考值为 0，引擎检测 ref==0
+  时切到 |computed−0|≤0.01；② cd 相对容差——|computed−0.0086|/0.0086≤0.10。⚠ cp 曲线 L2 门（0.05）目前是死信——engine.py 自承所有
+  shipped adapter 恒把 curves 设 None，守卫 `curves is not None` 永假、curve_pass 恒真；预算超时只警告、max_cells 未强制。
+what_makes_it_bite: cl 这门区分力弱——对称翼型+0° 靠物理对称天然接近 0，网格再差也易白捡过关；真正该体现网格质量的 cd（±10%）和 Cp 形状里，曲线门却死信不参与。于是一个没捕捉到吸力峰、Cp
+  形状明显错的欠分辨解，只要 cd 凑巧落进 ±10% 仍被判 pass（engine.py 注释自承的已知状态）。诚实注：runs/ 里 α=0° 从未真跑过，本卡描述「契约怎么判」而非真实 pass/fail。

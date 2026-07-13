@@ -1,0 +1,14 @@
+# Gallery card copy for csv_field_splitter (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: CSV Field Splitter (Quoted-Field Bug Fix)
+capability: 把只会 line.split(",") 的朴素实现，改成正确处理 RFC4180 双引号字段的状态机——引号内的逗号不拆分字段，连续两个双引号 "" 在字段内还原成一个转义的 "。
+expected: split_csv_line('a,b,c')==['a','b','c']、('"a,b",c')==['a,b','c']、('"say ""hi""",ok')==['say "hi"','ok']。golden
+  用单趟 in_quotes 状态机逐字符扫描。
+criteria: 三门 AND（pass_rate 相对参考 1.0 的容差为 0.0，必须全过）：① tests_all_pass——沙箱 pytest 跑 5 条隐藏测试全绿 + 用例数对上冻结的
+  5；② sandbox_used——真在 Docker 沙箱内判卷；③ io_oracle_pass——5 组 held-out 输入受信重执行严格比对，且这批输入经准入期 token 级 disjoint
+  lint 强制核验，与隐藏测试字面不重叠。
+what_makes_it_bite: 只针对隐藏测试里「带引号」模式硬编码的伪造提交能过 pytest，却在 held-out 的普通行 "p,q,r"（完全不带引号）上翻车——没真正实现状态机就露馅，io_oracle
+  咬红。

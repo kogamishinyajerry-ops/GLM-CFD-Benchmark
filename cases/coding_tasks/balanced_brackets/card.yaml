@@ -1,0 +1,15 @@
+# Gallery card copy for balanced_brackets (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: First Unbalanced Bracket Index
+capability: 把一个只比较开/闭括号「总数」、无视嵌套顺序的 buggy stub，改成真正用栈追踪 ()、[]、{} 开合顺序的匹配算法，在 first_unbalanced_index(s)
+  里定位第一个打破平衡的下标。
+expected: 正确实现让 README 的例子全部成立：first_unbalanced_index("()[]{}")==-1、("([)]")==2、("(]")==1、("(()")==0、("()(")==2。golden
+  用 (index, char) 栈实现。
+criteria: 三门 AND，任一 False 即 invalid、不给部分分：① tests_all_pass——沙箱内 pytest 跑 5 条隐藏测试（3 FAIL_TO_PASS + 2 PASS_TO_PASS
+  回归哨兵）全绿，且收集到的用例数严格等于冻结的 expected_test_count=5（零容差、防篡改 collection）；② sandbox_used——判卷确实发生在隔离 Docker 沙箱（--network
+  none / --cap-drop ALL / 只读根）；③ io_oracle_pass——受信重执行：judge 在独立容器里用 5 组 held-out 输入直接调提交函数，期望值只留宿主侧严格比对。
+what_makes_it_bite: 把 5 条隐藏测试的输入→输出背成查找表能骗过 pytest，但 io_oracle 的 held-out 输入（如 "((("→0）不在表里，只有真追踪嵌套顺序才算得对——tests_all_pass
+  AND io_oracle_pass 直接判红。

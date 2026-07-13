@@ -1,0 +1,14 @@
+# Gallery card copy for dir_organize (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: Reorganize Files by Extension
+capability: 在真实文件系统上把一批混合扩展名的文件，按（小写、去前导点的）扩展名分组搬进对应子目录，且搬运过程不改动任何文件的字节。只看最终目录树终态，考真实文件操作的执行力。
+expected: 提交目录恰好长出 csv/ jpg/ png/ py/ txt/ 五个子目录，6 个源文件各就位（如 report.txt→txt/report.txt、photo.jpg→jpg/photo.jpg），文件名不变、内容与
+  messy/ 源文件逐字节相同；不允许多余顶层子目录或混入不该有的文件。
+criteria: agentic 域默认门 checker_ok（reference/checker.py 真实执行、判卷子进程正常跑完）叠加 checker 自身判决 success：三层精确比对——顶层子目录集合须恰等于
+  {csv,jpg,png,py,txt}、每目录文件名集合须恰好匹配、每文件与源逐字节相同。valid = checker_ok AND success。⚠ 本 case 尚未 `agent-eval
+  init` 冻结成签名 contract.json（同域 sibling 已有）——这里描述的是 init 时会采用的 domain-default 门；reference/checker.py 本身真实存在且被执行。
+what_makes_it_bite: 分类、文件名全对，但搬运时用文本模式重写 notes.txt（悄悄改了换行符）或用图像库重新编码 photo.jpg——前两层比对全过，第三层逐字节比对精确咬住 content
+  mismatch，success 翻红。README 原话要求 byte-for-byte identical。

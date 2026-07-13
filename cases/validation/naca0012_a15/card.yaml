@@ -1,0 +1,14 @@
+# Gallery card copy for naca0012_a15 (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: NACA0012 Airfoil α=15° (Ladson 1988)
+capability: 在失速起始点 α=15°、Re=6×10⁶、M=0.3 下跑写死参数的固定 pipeline，考一方程 Spalart-Allmaras RANS 湍流模型在 α 扫描里物理上最难一档的保真度（求解器参数全写死，本质考求解器/湍流模型而非
+  agent 自主决策）。
+expected: 跑通 pipeline，cl≈1.096、cd≈0.0185（Ladson 1988），各在 15% 相对容差内——比 a5/a10 的 10% 更松，case 自承「α=15° 近失速，RANS-SA
+  易低估分离」，主动放宽而非掩盖误差。Cp 曲线 ladson1988_a15.csv（吸力峰 x/c=0.025 处 Cp=-2.654）不参与判分。
+criteria: 无契约，走 MetricsEngine：cl、cd 各 15% 相对误差；出 NaN/Inf（发散解）优先级最高直接 fail、缺失判 incomplete。曲线门未配容差 + adapter
+  恒不产 curves 双重不参与；预算超时只警告、max_cells 未强制，都不咬人。
+what_makes_it_bite: 更贴近 CFD 域「欠分辨网格如实 FAIL」：粗网格（共用 coarse 档）在失速起始处对近壁/尾迹分辨最敏感，一次流程完全正常（无报错、残差收敛、无 NaN、预算内）的提交仍可能因粗网格+SA
+  结构性低估分离而真实落到 ±15% 外，无法靠「跑完」掩盖——对照的是 sha256 锚定的真实 NASA 数据。诚实注：runs/ 无 a15 记录。

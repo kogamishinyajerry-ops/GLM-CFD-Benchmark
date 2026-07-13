@@ -1,0 +1,14 @@
+# Gallery card copy for kth_largest (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: K-th Largest Element
+capability: 把「结构对、方向反」的 stub（升序排序取 [k-1]，实为第 k 小）改成降序取 [k-1]（第 k 大）；多参数 entry（list + int），重复值按位置计数不去重。
+expected: kth_largest([3,1,4,1,5,9,2,6],2)==6、([10,20,30],1)==30、([7,2,7,2],2)==7、([42],1)==42。golden
+  一行：sorted(nums, reverse=True)[k-1]。
+criteria: '三门 AND（sandbox_scorer.py: valid = all(gates)）：① tests_all_pass——沙箱 pytest 5 条隐藏测试全绿 + 用例数对上冻结的
+  5、0 skip；② sandbox_used——真在沙箱判卷；③ io_oracle_pass——本 case 是 coding 域首个多参数 entry，judge 喂 5 组 held-out
+  (nums, k)，expected 全程不进容器、只在宿主侧严格比对，5/5 全对才算过。'
+what_makes_it_bite: 背下隐藏测试答案的提交能过 pytest，但 held-out [100,50,75,25], k=3 落回 buggy 升序逻辑算出 75 ≠ 真实第 3 大 50，io_oracle
+  咬红、整体 invalid。

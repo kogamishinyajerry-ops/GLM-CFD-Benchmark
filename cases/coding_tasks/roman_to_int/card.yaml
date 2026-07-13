@@ -1,0 +1,14 @@
+# Gallery card copy for roman_to_int (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: Roman Numeral to Integer
+capability: 修复「只加不减」缺陷，正确实现罗马数字 subtractive notation（当前符号值 < 紧邻右侧符号值时应相减，IV=4 / IX=9 / XLII=42，而非逐符号求和），且修复要真正泛化到没见过的输入。
+expected: roman_to_int("IV")==4（不是 6）、("IX")==9、("XLII")==42、("MCMXCIV")==1994、("MMXXIII")==2023。golden
+  左→右扫描，小于右邻则减、否则加。
+criteria: 三门 AND（架构文档 §3.3 明确「拒绝部分分」）：① tests_all_pass——沙箱 pytest 5 条隐藏测试全绿、pass_rate 零容差、用例数对上冻结的 5；②
+  sandbox_used——真在 Docker 沙箱内跑；③ io_oracle_pass——绕开 pytest 直接调 roman_to_int，喂 5 个 held-out（MCMXCIV/CD/XC/LVIII/MMXXIII，经
+  disjoint lint 核实与隐藏测试输入不重叠）严格比对。
+what_makes_it_bite: 把隐藏测试断言（IV→4 等）背成查找表能过 pytest 与 sandbox_used，但 held-out key 不在表里，只有真实现 subtractive
+  算法才算得对——io_oracle 咬红。

@@ -1,0 +1,15 @@
+# Gallery card copy for merge_intervals (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: Merge Overlapping Intervals
+capability: 看穿「看似已写完」的 stub 藏的隐藏假设——不排序的单遍 sweep 只在输入本就按 start 有序时才碰巧对；正确解须先按 start 排序再单趟合并。benchmark
+  首个嵌套 list[list[int]] 输入输出的 coding case。
+expected: merge_intervals([[2,6],[1,3]])==[[1,6]]（乱序也要合对）、([[1,3],[2,6],[8,10]])==[[1,6],[8,10]]、([])==[]。golden
+  先 sorted(key=start) 再单趟 sweep。
+criteria: 三门 AND：① tests_all_pass——沙箱 pytest 5 条隐藏测试全绿 + 用例数对上冻结的 5；② sandbox_used；③ io_oracle_pass——用另一个独立容器
+  work zone 回放（不与 pytest 共享 /work，堵住跨容器偷渡），返回值经 _native 守卫拒绝会被 json 悄悄强转的 tuple/非串 key，再 _strict_equal
+  递归严格比对。
+what_makes_it_bite: 硬编码隐藏测试答案能过 pytest，但 held-out [[20,30],[25,35]]（期望 [[20,35]]）不在表里、伪造提交原样返回未合并，io_oracle
+  咬红。（对照：原样交 buggy stub 会在 tests_all_pass 阶段就先如实挂掉。）

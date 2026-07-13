@@ -1671,5 +1671,28 @@ def showcase_cmd(
     typer.echo(f"[OK] Showcase: {written}")
 
 
+@app.command("gallery")
+def gallery_cmd(
+    out: Annotated[
+        Path,
+        typer.Option("--out", help="Output path for the self-contained gallery HTML."),
+    ] = Path("gallery.html"),
+    repo_root: Annotated[
+        Path,
+        typer.Option("--repo-root", help="Repository root containing cases/ and agentbench/."),
+    ] = Path("."),
+) -> None:
+    """Render the benchmark card-gallery HTML: one card per test explaining the
+    capability it probes, the expected result and the pass/fail criteria."""
+    from cfdb.reporting.gallery import render_gallery
+
+    try:
+        written = render_gallery(repo_root, out)
+    except ValueError as e:
+        typer.echo(f"[FAIL] {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"[OK] Gallery: {written}")
+
+
 if __name__ == "__main__":
     app()

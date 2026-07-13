@@ -1,0 +1,13 @@
+# Gallery card copy for naca0012_a10 (cfdb showcase gallery).
+# Case-root metadata OUTSIDE the frozen reference/visible trees:
+# editing it never drifts a ruler (same discipline as provenance.yaml).
+# Prose is grounded in this case's real files; structural facts
+# (domain, gates, honesty, frozen status) are recomputed at render.
+title: NACA0012 Airfoil α=10° (Ladson 1988)
+capability: 在接近失速迎角的 α=10°、Re=6×10⁶、M=0.3 下对 NACA0012 完整跑通 steady RANS-SA（OpenFOAM 或 SU2），算出与真实风洞实验相符的气动力系数。考「算得准」，不是「跑得完」。
+expected: 管线跑通，cl≈0.862、cd≈0.0125（Ladson 1988），各在 10% 相对容差内。Cp 曲线 ladson1988_a10.csv（吸力峰 x/c=0.025 处 Cp=-2.105），但原始场/曲线目前不参与判分。
+criteria: 无契约，走 MetricsEngine。唯一真门：cl、cd 各 10% 相对误差，任一超出即 fail；NaN/Inf→fail、缺失→incomplete。预算超时只警告不翻 pass/fail；max_cells
+  声明未强制；cp 曲线自身没配容差且 adapter 恒不产 curves，双重不参与。regression gate 因 baselines 里无 a10 条目判 NO_BASELINE（明确「不等于
+  PASS」）尚未激活。
+what_makes_it_bite: α=10° 已近失速，粗网格/分离预测不准会让 cl/cd 系统性偏离实验值——流水线诚实跑完也诚实报错，QoI 门只认离实验值够不够近，超 10% 即如实 fail（非造假被抓包）。反向：max_cells
+  未强制、曲线门没接上，「网格偏粗但 cl/cd 蒙对」拦不住。诚实注：runs/ 无 a10 记录。

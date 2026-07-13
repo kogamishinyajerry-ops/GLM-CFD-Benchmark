@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLM-CFD-Benchmark · 测试展览厅</title>
+<style>
+:root{
+  --paper:#F6F2EA; --panel:#EFE9DD; --ink:#2B2620; --clay:#C15F3C;
+  --evidence:#3D7A50; --amber:#A8722C; --risk:#B3362A;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:Georgia,"Times New Roman","Songti SC",serif;line-height:1.65;font-size:16px}
+header.hero,main,footer{max-width:1180px;margin:0 auto;padding:0 28px}
+header.hero{padding-top:52px;padding-bottom:8px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--clay);margin:0 0 14px}
+h1{font-size:32px;line-height:1.3;margin:0 0 12px;font-weight:700}
+h1 .accent{color:var(--clay)}
+.thesis{font-size:17px;max-width:60em;margin:0 0 10px}
+.meta{font-family:var(--mono);font-size:12px;color:#6f675c;margin:8px 0 0}
+main{padding-bottom:24px}
+section{margin:40px 0}
+h2{font-size:21px;margin:0 0 4px;border-bottom:2px solid var(--clay);
+  padding-bottom:8px;font-weight:700}
+h2 .count{color:var(--clay);font-family:var(--mono);font-size:14px;margin-left:10px;font-weight:600}
+.blurb{font-size:14px;color:#6f675c;margin:10px 0 18px;max-width:64em}
+.mono{font-family:var(--mono);font-size:13px}
+.risk{color:var(--risk)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;
+  letter-spacing:.04em;padding:2px 9px;border-radius:3px;border:1px solid;white-space:nowrap}
+.h-real{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.h-mid{color:var(--ink);border-color:#b0a692;background:rgba(43,38,32,.05)}
+.h-warn{color:var(--amber);border-color:var(--amber);background:rgba(168,114,44,.09)}
+.h-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.v-pass{color:var(--evidence);border-color:var(--evidence);background:rgba(61,122,80,.09)}
+.v-risk{color:var(--risk);border-color:var(--risk);background:rgba(179,54,42,.08)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px;margin:0}
+.card{background:var(--panel);border:1px solid #ddd3c2;border-left:4px solid var(--clay);
+  border-radius:5px;padding:18px 20px;display:flex;flex-direction:column}
+.card .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.card h3{font-size:16px;margin:0;font-weight:700;line-height:1.35}
+.card .cid{font-family:var(--mono);font-size:11px;color:#8a8073;margin:2px 0 0}
+.tags{margin:10px 0 4px;display:flex;gap:6px;flex-wrap:wrap}
+.dom{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  padding:1px 7px;border-radius:3px;border:1px solid #b0a692;color:var(--ink);
+  background:rgba(43,38,32,.05);white-space:nowrap}
+.field{margin:11px 0 0}
+.field .lab{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--clay);margin:0 0 3px;font-weight:600}
+.field .val{font-size:14px;margin:0}
+.field.bite .lab{color:var(--amber)}
+.gates{margin:12px 0 0;padding-top:11px;border-top:1px dashed #d3c8b4}
+.gate{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:3px;
+  border:1px solid #ddd3c2;color:#6f675c;margin:0 4px 3px 0;display:inline-block;white-space:nowrap}
+.gate.io{color:var(--clay);border-color:var(--clay);font-weight:600}
+.frozen{font-family:var(--mono);font-size:10.5px;margin:8px 0 0}
+.frozen .ok{color:var(--evidence)} .frozen .bad{color:var(--risk)}
+.nogate{font-family:var(--mono);font-size:11px;color:#8a8073;margin:12px 0 0;padding-top:11px;
+  border-top:1px dashed #d3c8b4}
+footer{border-top:1px solid #d8ccb6;margin-top:48px;padding-top:18px;padding-bottom:44px}
+footer p{font-size:13px;color:#6f675c;margin:0 0 8px;max-width:70em}
+footer b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <p class="kicker">GLM-CFD-Benchmark · 测试展览厅 · cfdb v{{ version }}</p>
+  <h1>这个 benchmark 在考什么？<span class="accent">一题一卡，说清能力 · 预期 · 判定</span></h1>
+  <p class="thesis">共 {{ gallery.total }} 个能力测试，分三域。每张卡片说明：这题考察 AI 的什么<b>能力</b>、
+    一个正确提交的<b>预期结果</b>、以及好坏怎么<b>判定</b>（判定门＝冻结尺子上机械重算的关卡，
+    绝不看提交自报）。卡片文案取自各 case 真文件，判定门与冻结状态渲染时实时重读/重算。</p>
+  <p class="meta">generated {{ generated_at }} · 数据源 {{ repo_root }}</p>
+</header>
+
+<main>
+{% for g in gallery.groups %}
+  <section id="dom-{{ g.domain }}">
+    <h2>{{ g.label }}<span class="count">{{ g.cards|length }} 题</span></h2>
+    <p class="blurb">{{ g.blurb }}</p>
+    <div class="grid">
+    {% for c in g.cards %}
+      <article class="card">
+        <div class="top">
+          <div>
+            <h3>{{ c.title }}</h3>
+            <p class="cid">{{ c.case_id }}</p>
+          </div>
+          <span class="badge {{ c.honesty_class }}" data-honesty="{{ c.honesty }}">{{ c.honesty }}</span>
+        </div>
+        <div class="tags"><span class="dom" data-domain="{{ c.domain }}">{{ c.domain }}</span></div>
+        {% if c.capability %}<div class="field"><p class="lab">考察能力</p><p class="val">{{ c.capability }}</p></div>{% endif %}
+        {% if c.expected %}<div class="field"><p class="lab">预期结果</p><p class="val">{{ c.expected }}</p></div>{% endif %}
+        {% if c.criteria %}<div class="field"><p class="lab">判定标准（好 / 坏）</p><p class="val">{{ c.criteria }}</p></div>{% endif %}
+        {% if c.what_makes_it_bite %}<div class="field bite"><p class="lab">怎么咬中「看似对」的提交</p><p class="val">{{ c.what_makes_it_bite }}</p></div>{% endif %}
+        {% if c.gates %}
+        <div class="gates">
+          <span class="mono" style="color:#8a8073">判定门 </span>
+          {% for gate in c.gates %}<span class="gate{% if gate == 'io_oracle_pass' %} io{% endif %}" data-gate="{{ gate }}">{{ gate }}</span>{% endfor %}
+          {% if c.frozen_status %}<div class="frozen">冻结尺子 · <span class="{{ 'ok' if c.frozen_status == 'INTACT' else 'bad' }}" data-frozen="{{ c.frozen_status }}">{{ c.frozen_status }}</span></div>{% endif %}
+        </div>
+        {% elif c.gate_note %}
+        <div class="nogate" data-domain="{{ c.domain }}">判定 · {{ c.gate_note }}</div>
+        {% endif %}
+      </article>
+    {% endfor %}
+    </div>
+  </section>
+{% endfor %}
+</main>
+
+<footer>
+  <p><b>诚实边界：</b>本页每张卡片的能力/预期/判定文案取自对应 case 的真文件（case.yaml · README ·
+    golden/checker · hidden_tests · held-out），判定门与冻结状态在渲染时实时重读/重算——DRIFTED 即改了尺子。
+    绝不编造预期数值或容差；出处诚实等级（REAL / ANALYTIC / MANUFACTURED …）如实标注。</p>
+  <p><b>未列入的：</b>另有 {{ gallery.n_smoke }} 个 smoke / mock 冒烟夹具（category=smoke）是<b>测 harness 自身</b>
+    的内部脚手架（如 mock_success / smoke_add_two），不是考 AI 能力的 benchmark 测试，故不进展览厅——
+    如实披露其数量，不静默隐藏。{% if gallery.missing_card %} 另有 {{ gallery.missing_card|length }} 个 case 尚无 card.yaml 文案（{{ gallery.missing_card|join('、') }}），已跳过。{% endif %}</p>
+</footer>
+
+</body>
+</html>

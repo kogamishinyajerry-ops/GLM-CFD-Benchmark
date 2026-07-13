@@ -746,7 +746,21 @@ def score_coding(
             notes.append(f"judge image: {judge_image}")
         wall_time = run_result.wall_time_sec if math.isfinite(run_result.wall_time_sec) else None
 
-        computed: dict[str, float] = {"sandbox_used": 1.0}
+        # sandbox_used is DERIVED from the backend's own is_sandbox property,
+        # not asserted (residual 3 close-out). Mirrors the Runner discipline
+        # (core/runner.py): read defensively via getattr, require the literal
+        # ``is True`` (a truthy-but-not-True value must not pass), fail-closed
+        # to 0.0 otherwise. The real path's _default_backend_factory always
+        # builds a sandboxed DockerBackend, so this stays 1.0 in production; a
+        # non-sandbox backend now scores 0.0 and fails the sandbox_used gate
+        # instead of being rubber-stamped by a hardcoded constant.
+        sandbox_used = 1.0 if getattr(backend, "is_sandbox", False) is True else 0.0
+        if sandbox_used != 1.0:
+            notes.append(
+                "sandbox_used: scoring backend did not report is_sandbox is True "
+                "(not a sandboxed run): submission invalid"
+            )
+        computed: dict[str, float] = {"sandbox_used": sandbox_used}
 
         # Exit-code policy (Codex R0 P2): only pytest's own outcomes may
         # reach report-based scoring — 0 (all passed) and 1 (ordinary test

@@ -111,6 +111,10 @@ class StubBackend:
     exit_code: int = 0
     timed_out: bool = False
     wall_time_sec: float = 1.5
+    # Mimics DockerBackend(sandbox=True): the score path now DERIVES the
+    # sandbox_used gate from this (residual 3), so a valid-run stub must
+    # declare it True. Non-sandbox witnesses set it False / omit it.
+    is_sandbox: bool = True
     calls: list[dict] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -216,6 +220,52 @@ class TestScoreCodingBaseline:
         assert len(stub.calls) == 1
         assert stub.calls[0]["command"][:3] == ["python", "-I", "-c"]
         assert "PYTHONPATH" not in stub.calls[0]["env"]
+
+    def test_witness_sandbox_used_derived_non_sandbox_backend_invalid(
+        self, bench, tmp_path: Path
+    ) -> None:
+        """Residual-3 witness: sandbox_used is DERIVED from the backend, not asserted.
+
+        A backend that runs the hidden tests to a clean pass but does NOT
+        report ``is_sandbox is True`` must fail the sandbox_used gate and
+        invalidate the submission. Proves the gate verifies the sandbox
+        property instead of rubber-stamping a hardcoded 1.0.
+        """
+        _, case, case_dir, contract, tmp = bench
+        sub_dir = tmp / "sub_ns"
+        sub_dir.mkdir()
+        # Every hidden test passes, but the scoring backend is not a sandbox.
+        stub = StubBackend(report_xml=_junit_xml(total=3, failures=0, errors=0), is_sandbox=False)
+        result = score_coding(
+            case,
+            case_dir,
+            sub_dir,
+            contract,
+            backend_factory=lambda cd, sd: stub,
+            work_dir=tmp_path / "work",
+        )
+        assert result.gates["tests_all_pass"] is True  # tests genuinely passed
+        assert result.gates["sandbox_used"] is False  # but the sandbox gate bites
+        assert result.valid is False
+        assert result.score is None
+
+    def test_witness_sandbox_used_rejects_truthy_non_true(self, bench, tmp_path: Path) -> None:
+        """``is True`` strictness: a truthy-but-not-``True`` is_sandbox (1) still
+        fails, mirroring the Runner's non-boolean guard (test_sandbox_failclosed)."""
+        _, case, case_dir, contract, tmp = bench
+        sub_dir = tmp / "sub_truthy"
+        sub_dir.mkdir()
+        stub = StubBackend(report_xml=_junit_xml(total=3), is_sandbox=1)  # type: ignore[arg-type]
+        result = score_coding(
+            case,
+            case_dir,
+            sub_dir,
+            contract,
+            backend_factory=lambda cd, sd: stub,
+            work_dir=tmp_path / "work",
+        )
+        assert result.gates["sandbox_used"] is False
+        assert result.valid is False
 
     def test_partial_fail_valid_submission_no_score(self, bench, tmp_path: Path) -> None:
         _, case, case_dir, contract, tmp = bench

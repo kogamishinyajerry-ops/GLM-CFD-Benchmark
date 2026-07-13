@@ -60,6 +60,13 @@ td.mono,th.num{font-family:var(--mono);font-size:13px}
 .bucket table{margin:8px 0 0;background:transparent}
 .guard{color:var(--clay);font-style:italic}
 .ruler{color:var(--clay);font-weight:600}
+.dom{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  padding:1px 7px;border-radius:3px;border:1px solid #b0a692;color:var(--ink);
+  background:rgba(43,38,32,.05);white-space:nowrap}
+.gates{line-height:1.9}
+.gate{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:3px;
+  border:1px solid #ddd3c2;color:#6f675c;margin:1px 2px 1px 0;display:inline-block;white-space:nowrap}
+.gate.io{color:var(--clay);border-color:var(--clay);font-weight:600}
 footer{border-top:1px solid #d8ccb6;margin-top:56px;padding-top:18px;padding-bottom:44px}
 footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
 </style>
@@ -200,18 +207,24 @@ footer p{font-size:13px;color:#6f675c;margin:0 0 8px}
   <p class="lede">尺子编号 = contract.json 文件 sha256 前 8 位；冻结物渲染时重哈希——DRIFTED
     即改尺子，打分被拒（exit 3）；作废提交 score = None，绝不编分。
     账本（ledger.jsonl）为进程级 append-only 纪律，无密码学哈希链；
-    打分事件数 ≠ 唯一 submission 数——同一 submission 重复打分只算一个唯一提交。</p>
+    打分事件数 ≠ 唯一 submission 数——同一 submission 重复打分只算一个唯一提交。
+    <b>域</b>标出裁判所受理的任务类型（cfd / coding / agentic）；<b>判定门</b>列出该尺子冻结的
+    合法性门——coding 域的 <span class="gate io">io_oracle_pass</span>（受信重执行，R9）与
+    <span class="gate">tests_all_pass</span> AND 合取，把伪造从「写通过报告」逼到「在没见过的
+    输入上真算对」。（本页只呈现真实产物里已有的门与账本事实，不编造 completeness 综合分。）</p>
   {% if agentbench.contracts %}
   <table>
-    <thead><tr><th>Case</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th>
+    <thead><tr><th>Case</th><th>域</th><th>尺子编号</th><th>冻结项</th><th>冻结状态</th><th>判定门</th>
       <th>打分事件</th><th>唯一 attempt（按内容）</th><th>valid</th><th>INVALID</th><th>best score</th><th>备注</th></tr></thead>
     <tbody>
     {% for c in agentbench.contracts %}
     <tr>
       <td class="mono">{{ c.case_id or c.dir_name }}</td>
+      <td>{% if c.domain %}<span class="dom" data-domain="{{ c.domain }}">{{ c.domain }}</span>{% else %}—{% endif %}</td>
       <td class="mono ruler">#{{ c.ruler_id }}</td>
       <td class="mono">{% if c.frozen_total is not none %}{{ c.frozen_total }}{% else %}—{% endif %}</td>
       <td>{% if c.frozen_status %}<span class="badge {{ c.status_class }}" data-frozen="{{ c.frozen_status }}">{{ c.frozen_status }}</span>{% else %}—{% endif %}</td>
+      <td class="gates">{% for g in c.validity_gates %}<span class="gate{% if g == 'io_oracle_pass' %} io{% endif %}" data-gate="{{ g }}">{{ g }}</span>{% else %}—{% endfor %}</td>
       <td class="mono" data-events="{{ c.n_events }}">{{ c.n_events }}</td>
       <td class="mono" data-unique="{{ c.n_unique_submissions }}">{{ c.n_unique_submissions }}</td>
       <td class="mono">{{ c.n_valid }}</td>

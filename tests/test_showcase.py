@@ -35,11 +35,13 @@ from cfdb.reporting.showcase import (
     HONESTY_FOOTER,
     NO_CANDIDATE_COPY,
     VERIFICATION_BOUNDARY,
+    _collect_agentbench,
     assert_self_contained,
     render_showcase,
 )
 from cfdb.schema import MetricsResult, RunManifest, TimingSpec
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REAL_BADGE = 'data-honesty="REAL"'
 GUARD_TEXT = "pin the solver image digest before rerun"
 
@@ -65,9 +67,7 @@ def _write_case(cases_root: Path, case_id: str, *, citation: str | None) -> Path
     }
     (case_dir / "case.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
 
-    declaration: dict[str, object] = {
-        "file_hashes": {"reference/qoi.json": sha256_file(ref_path)}
-    }
+    declaration: dict[str, object] = {"file_hashes": {"reference/qoi.json": sha256_file(ref_path)}}
     if citation is not None:
         declaration["citation"] = citation
         declaration["retrieved"] = "1988-01-01"
@@ -153,9 +153,7 @@ def _build_populated_repo(root: Path) -> dict[str, Path]:
     fingerprint = library.records()[0].fingerprint
     library.annotate(fingerprint, GUARD_TEXT)
 
-    store = BaselineStore(
-        baselines_path=root / "baselines" / "baselines.json", runs_root=runs
-    )
+    store = BaselineStore(baselines_path=root / "baselines" / "baselines.json", runs_root=runs)
     store.promote("run_ok", engineer="Zhuanz")
 
     registry = CaseRegistry(cases)
@@ -165,9 +163,7 @@ def _build_populated_repo(root: Path) -> dict[str, Path]:
     submission = root / "submissions" / "sub_a"
     submission.mkdir(parents=True)
     (submission / "qoi.json").write_text(json.dumps({"cd": 0.41}), encoding="utf-8")
-    (submission / "manifest.json").write_text(
-        json.dumps({"wall_time_sec": 5.0}), encoding="utf-8"
-    )
+    (submission / "manifest.json").write_text(json.dumps({"wall_time_sec": 5.0}), encoding="utf-8")
     score_submission(
         contract,
         registry.load("case_real"),
@@ -198,9 +194,7 @@ def _render(root: Path, name: str = "showcase.html") -> str:
 
 
 class TestSelfContained:
-    def test_populated_page_has_no_external_references(
-        self, populated: dict[str, Path]
-    ) -> None:
+    def test_populated_page_has_no_external_references(self, populated: dict[str, Path]) -> None:
         html = _render(populated["root"])
         assert re.search(r"""(?:src|href)\s*=\s*["']https?://""", html, re.I) is None
         assert re.search(r"<link\b", html, re.I) is None
@@ -232,9 +226,7 @@ class TestSelfContained:
 
 
 class TestProvenanceSection:
-    def test_real_badge_only_for_cited_experimental(
-        self, populated: dict[str, Path]
-    ) -> None:
+    def test_real_badge_only_for_cited_experimental(self, populated: dict[str, Path]) -> None:
         html = _render(populated["root"])
         # Exactly one REAL badge in the provenance table: case_real only.
         assert html.count(REAL_BADGE) == 1
@@ -243,9 +235,7 @@ class TestProvenanceSection:
         assert 'data-honesty="DECLARED-NOT-VERIFIED"' in html
         assert "case_uncited" in html
 
-    def test_tampered_reference_byte_kills_real_badge(
-        self, populated: dict[str, Path]
-    ) -> None:
+    def test_tampered_reference_byte_kills_real_badge(self, populated: dict[str, Path]) -> None:
         """Tamper witness: one changed reference byte downgrades REAL on re-render."""
         html_before = _render(populated["root"])
         assert REAL_BADGE in html_before
@@ -269,9 +259,7 @@ class TestRegressionSection:
         assert "run_candidate" in html
         assert "Zhuanz" in html
 
-    def test_baseline_only_repo_renders_empty_state_never_self_pass(
-        self, tmp_path: Path
-    ) -> None:
+    def test_baseline_only_repo_renders_empty_state_never_self_pass(self, tmp_path: Path) -> None:
         """Honesty: with only the baseline run itself (plus non-qualifying
         dry-run/failed runs), the gate row shows an explicit empty state and
         never a vacuous run-vs-itself PASS."""
@@ -304,9 +292,7 @@ class TestRegressionSection:
             overall="fail",
             error="solver crashed",
         )
-        store = BaselineStore(
-            baselines_path=root / "baselines" / "baselines.json", runs_root=runs
-        )
+        store = BaselineStore(baselines_path=root / "baselines" / "baselines.json", runs_root=runs)
         store.promote("run_base", engineer="Zhuanz")
 
         html = _render(root)
@@ -315,9 +301,7 @@ class TestRegressionSection:
         # The row is explicitly marked not-evaluated, never a real verdict.
         assert 'data-verdict="NOT-EVALUATED"' in html
 
-    def test_tampered_baseline_metrics_shows_tampered(
-        self, populated: dict[str, Path]
-    ) -> None:
+    def test_tampered_baseline_metrics_shows_tampered(self, populated: dict[str, Path]) -> None:
         """Tamper witness: editing the anchored metrics.json must surface TAMPERED."""
         metrics_path = populated["baseline_metrics"]
         data = json.loads(metrics_path.read_text(encoding="utf-8"))
@@ -330,9 +314,7 @@ class TestRegressionSection:
 
 
 class TestFailuresSection:
-    def test_failure_bucket_and_guard_note_shown(
-        self, populated: dict[str, Path]
-    ) -> None:
+    def test_failure_bucket_and_guard_note_shown(self, populated: dict[str, Path]) -> None:
         html = _render(populated["root"])
         assert "case_real / mock" in html
         assert GUARD_TEXT in html
@@ -371,6 +353,37 @@ class TestAgentbenchSection:
         # The ledger-discipline caveat is stated right on the section.
         assert "打分事件数 ≠ 唯一 submission 数" in html
 
+    def test_domain_and_gate_columns_render(self, populated: dict[str, Path]) -> None:
+        # R9 enrichment: case_real is a cfd case — the domain badge and the
+        # frozen validity-gate tags must render in the agentbench table.
+        html = _render(populated["root"])
+        assert 'data-domain="cfd"' in html
+        assert "data-gate=" in html  # the frozen validity gates are listed
+
+    def test_io_oracle_gate_surfaced_for_shipped_coding_cases(self) -> None:
+        # Data-level guard against the REAL shipped cases (mirrors
+        # TestShippedIoOracleCases): a coding io_oracle case must carry
+        # domain=coding and expose io_oracle_pass beside tests_all_pass in its
+        # gate list, so the R9 second signal is visible on the trust surface.
+        data = _collect_agentbench(PROJECT_ROOT)
+        by_case = {r["case_id"]: r for r in data["contracts"]}
+        assert "kth_largest" in by_case, sorted(by_case)
+        row = by_case["kth_largest"]
+        assert row["domain"] == "coding"
+        assert row["has_io_oracle"] is True
+        assert "io_oracle_pass" in row["validity_gates"]
+        assert "tests_all_pass" in row["validity_gates"]  # both signals AND together
+
+    def test_io_oracle_pass_rendered_emphasized(self, tmp_path: Path) -> None:
+        # Integration: rendering the real repo surfaces io_oracle_pass with the
+        # clay emphasis class (gate io) and the coding/agentic domain badges.
+        out = render_showcase(PROJECT_ROOT, tmp_path / "showcase.html")
+        html = out.read_text(encoding="utf-8")
+        assert 'data-gate="io_oracle_pass"' in html
+        assert 'class="gate io"' in html
+        assert 'data-domain="coding"' in html
+        assert 'data-domain="agentic"' in html
+
 
 class TestEmptyStates:
     def test_all_sections_render_explicit_empty_copy(self, tmp_path: Path) -> None:
@@ -404,9 +417,7 @@ class TestEmptyStates:
 
 
 class TestTrustSection:
-    def test_radar_svg_inlined_for_case_with_runs(
-        self, populated: dict[str, Path]
-    ) -> None:
+    def test_radar_svg_inlined_for_case_with_runs(self, populated: dict[str, Path]) -> None:
         html = _render(populated["root"])
         assert EMPTY_STATE["trust"] not in html
         assert "case_real / mock" in html

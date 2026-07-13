@@ -325,6 +325,9 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
         row: dict[str, Any] = {
             "dir_name": case_dir.name,
             "case_id": None,
+            "domain": None,
+            "validity_gates": [],
+            "has_io_oracle": False,
             "ruler_id": hashlib.sha256(contract_path.read_bytes()).hexdigest()[:8],
             "frozen_total": None,
             "frozen_status": None,
@@ -349,6 +352,17 @@ def _collect_agentbench(repo_root: Path) -> dict[str, Any]:
 
         row["case_id"] = contract.case_id
         row["frozen_total"] = len(contract.frozen)
+        # Judging surface at a glance (R9): the domain and the frozen gate list.
+        # An io_oracle_pass gate beside tests_all_pass is the visible proof that
+        # a coding case is judged by BOTH the hidden-test signal and the trusted
+        # re-execution oracle (they AND together). Domain is read from the case
+        # spec, fail-closed to None (shown as "—") when the spec cannot load.
+        row["validity_gates"] = list(contract.validity_gates)
+        row["has_io_oracle"] = "io_oracle_pass" in contract.validity_gates
+        try:
+            row["domain"] = registry.load(contract.case_id).domain
+        except Exception:  # noqa: BLE001 — fail-closed: unresolvable domain shown as unknown
+            row["domain"] = None
         try:
             target_dir = registry.get_case_dir(contract.case_id)
         except KeyError:
